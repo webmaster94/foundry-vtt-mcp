@@ -87,6 +87,9 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.findPlayers`] = this.handleFindPlayers.bind(this);
     CONFIG.queries[`${modulePrefix}.findActor`] = this.handleFindActor.bind(this);
 
+    // WFRP4e actor stat-block update
+    CONFIG.queries[`${modulePrefix}.updateWfrp4eActor`] = this.handleUpdateWfrp4eActor.bind(this);
+
     // Token manipulation queries
     CONFIG.queries[`${modulePrefix}.moveToken`] = this.handleMoveToken.bind(this);
     CONFIG.queries[`${modulePrefix}.updateToken`] = this.handleUpdateToken.bind(this);
@@ -794,6 +797,31 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to set actor ownership: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Handle WFRP4e actor stat-block update request
+   */
+  async handleUpdateWfrp4eActor(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data.actor) {
+        throw new Error('actor (name or id) is required');
+      }
+
+      return await this.dataAccess.updateWfrp4eActor(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to update WFRP4e actor: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

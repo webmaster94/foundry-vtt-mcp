@@ -5972,6 +5972,113 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Update a WFRP4e actor's stat block (characteristics and/or wounds).
+   * Writes initial/advances/modifier and wounds value/max; WFRP4e recomputes
+   * the derived characteristic value/bonus on update.
+   */
+  async updateWfrp4eActor(data: {
+    actor: string;
+    characteristics?: Record<string, { initial?: number; advances?: number; modifier?: number }>;
+    wounds?: { value?: number; max?: number };
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const systemId = (game.system as any).id;
+    if (systemId !== 'wfrp4e') {
+      return {
+        success: false,
+        error: `wfrp4e-update-actor requires the WFRP4e system (current: "${systemId}")`,
+      };
+    }
+
+    // Resolve actor by id (16-char) or name
+    let actor: any;
+    if (data.actor.length === 16) {
+      actor = game.actors?.get(data.actor);
+    }
+    if (!actor) {
+      actor = game.actors?.find((a: any) => a.name?.toLowerCase() === data.actor.toLowerCase());
+    }
+    if (!actor) {
+      return { success: false, error: `Actor not found: ${data.actor}` };
+    }
+
+    const CHAR_KEYS = ['ws', 'bs', 's', 't', 'i', 'ag', 'dex', 'int', 'wp', 'fel'];
+    const FIELDS = ['initial', 'advances', 'modifier'] as const;
+    const sys = actor.system || {};
+    const update: Record<string, any> = {};
+    const applied: { characteristics: Record<string, any>; wounds: Record<string, any> } = {
+      characteristics: {},
+      wounds: {},
+    };
+    const warnings: string[] = [];
+
+    if (data.characteristics) {
+      for (const [rawKey, fields] of Object.entries(data.characteristics)) {
+        const key = rawKey.toLowerCase();
+        if (!CHAR_KEYS.includes(key)) {
+          warnings.push(`Unknown characteristic "${rawKey}" — skipped`);
+          continue;
+        }
+        const current = sys.characteristics?.[key] || {};
+        const record: Record<string, any> = {};
+        for (const field of FIELDS) {
+          const val = (fields as any)[field];
+          if (val !== undefined) {
+            update[`system.characteristics.${key}.${field}`] = val;
+            record[field] = { from: current[field], to: val };
+          }
+        }
+        if (Object.keys(record).length > 0) {
+          applied.characteristics[key.toUpperCase()] = record;
+        }
+      }
+    }
+
+    if (data.wounds) {
+      const current = sys.status?.wounds || {};
+      if (data.wounds.value !== undefined) {
+        update['system.status.wounds.value'] = data.wounds.value;
+        applied.wounds.value = { from: current.value, to: data.wounds.value };
+      }
+      if (data.wounds.max !== undefined) {
+        update['system.status.wounds.max'] = data.wounds.max;
+        applied.wounds.max = { from: current.max, to: data.wounds.max };
+      }
+    }
+
+    if (Object.keys(update).length === 0) {
+      return { success: false, error: 'No valid fields to update.', ...(warnings.length ? { warnings } : {}) };
+    }
+
+    try {
+      await actor.update(update);
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Error updating WFRP4e actor:`, error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+
+    // Read back recomputed characteristic totals as confirmation.
+    const after = actor.system || {};
+    const newTotals: Record<string, any> = {};
+    for (const key of CHAR_KEYS) {
+      if (applied.characteristics[key.toUpperCase()]) {
+        const c = after.characteristics?.[key];
+        if (c) newTotals[key.toUpperCase()] = { total: c.value, bonus: c.bonus };
+      }
+    }
+
+    return {
+      success: true,
+      actor: actor.name,
+      id: actor.id,
+      applied,
+      newCharacteristicTotals: newTotals,
+      ...(warnings.length ? { warnings } : {}),
+    };
+  }
+
+  /**
    * Get actor ownership information
    */
   async getActorOwnership(data: {

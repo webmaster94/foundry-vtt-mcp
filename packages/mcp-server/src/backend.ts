@@ -31,6 +31,7 @@ import { DiceRollTools } from './tools/dice-roll.js';
 import { CampaignManagementTools } from './tools/campaign-management.js';
 
 import { OwnershipTools } from './tools/ownership.js';
+import { WFRP4eUpdateActorTools } from './tools/wfrp4e/update-actor.js';
 
 import { MapGenerationTools } from './tools/map-generation.js';
 
@@ -1203,6 +1204,8 @@ async function startBackend(): Promise<void> {
 
   const tokenManipulationTools = new TokenManipulationTools({ foundryClient, logger });
 
+  const wfrp4eUpdateActorTools = new WFRP4eUpdateActorTools({ foundryClient, logger });
+
   // Initialize mapgen-style backend components for map generation
   let mapGenerationJobQueue: any = null;
   let mapGenerationComfyUIClient: any = null;
@@ -1422,6 +1425,8 @@ async function startBackend(): Promise<void> {
 
     ...ownershipTools.getToolDefinitions(),
 
+    ...wfrp4eUpdateActorTools.getToolDefinitions(),
+
     ...tokenManipulationTools.getToolDefinitions(),
 
     ...mapGenerationTools.getToolDefinitions(),
@@ -1565,6 +1570,11 @@ async function startBackend(): Promise<void> {
 
                 case 'get-compendium-entry-full':
                   result = await actorCreationTools.handleGetCompendiumEntryFull(args);
+
+                  break;
+
+                case 'wfrp4e-update-actor':
+                  result = await wfrp4eUpdateActorTools.handleUpdateActor(args);
 
                   break;
 
