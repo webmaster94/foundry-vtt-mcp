@@ -6069,16 +6069,20 @@ export class FoundryDataAccess {
           continue;
         }
         itemUpdates.push({ _id: item.id, 'system.advances.value': s.advances });
-        applied.skills[item.name] = { advances: { from: item.system?.advances?.value, to: s.advances } };
+        applied.skills[item.name] = {
+          advances: { from: item.system?.advances?.value, to: s.advances },
+        };
       }
     }
 
     if (data.career) {
       const target = actor.items.find(
-        (i: any) => i.type === 'career' && i.name?.toLowerCase() === data.career!.toLowerCase()
+        (i: any) => i.type === 'career' && i.name?.toLowerCase() === data.career?.toLowerCase()
       );
       if (!target) {
-        warnings.push(`Career "${data.career}" not on ${actor.name} — use wfrp4e-add-items to add it.`);
+        warnings.push(
+          `Career "${data.career}" not on ${actor.name} — use wfrp4e-add-items to add it.`
+        );
       } else {
         // Exactly one career is current; flip the target on and the rest off.
         for (const it of actor.items) {
@@ -6165,7 +6169,10 @@ export class FoundryDataAccess {
     }
 
     if (!Array.isArray(data.items) || data.items.length === 0) {
-      return { success: false, error: 'items array is required and must contain at least one entry' };
+      return {
+        success: false,
+        error: 'items array is required and must contain at least one entry',
+      };
     }
 
     const actor = this.findActorByIdentifier(data.actor);
@@ -6193,7 +6200,8 @@ export class FoundryDataAccess {
 
     const warnings: string[] = [];
     const notFound: string[] = [];
-    const ambiguous: Array<{ name: string; candidates: Array<{ pack: string; type: string }> }> = [];
+    const ambiguous: Array<{ name: string; candidates: Array<{ pack: string; type: string }> }> =
+      [];
 
     // Skill advances and gear quantity are baked into each item's creation data
     // (below) rather than patched afterwards, because createEmbeddedDocuments
@@ -6221,8 +6229,12 @@ export class FoundryDataAccess {
     const toCreate: Array<Record<string, any>> = [];
     // Keyed by `${type}::${name}` (the created doc's own name/type) so we can
     // match created documents back to their request without relying on order.
-    const plan: Array<{ nameLower: string; type: string; setCurrent: boolean | undefined; source: string }> =
-      [];
+    const plan: Array<{
+      nameLower: string;
+      type: string;
+      setCurrent: boolean | undefined;
+      source: string;
+    }> = [];
 
     // Find every compendium entry whose name (and optional type) matches, across
     // the candidate packs (their core-first order is preserved in the result).
@@ -6314,10 +6326,10 @@ export class FoundryDataAccess {
       }
 
       // matches preserves the core-first pack order, so [0] is the best source.
-      const chosen = matches[0]!;
+      const chosen = matches[0];
       const pack = (game.packs as any).get(chosen.packId);
       const sourceDoc = await pack.getDocument(chosen.entryId);
-      const obj = sourceDoc.toObject() as any;
+      const obj = sourceDoc.toObject();
       const finalName = nameOverride ?? obj.name;
       const clean: Record<string, any> = {
         name: finalName,
