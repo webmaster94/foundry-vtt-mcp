@@ -372,7 +372,7 @@ class PersistentCreatureIndex {
 
       // Convert Map data back from JSON
       const metadata = rawData.metadata;
-      if (metadata && metadata.packFingerprints) {
+      if (metadata?.packFingerprints) {
         metadata.packFingerprints = new Map(metadata.packFingerprints);
       }
 
@@ -561,7 +561,7 @@ class PersistentCreatureIndex {
     return {
       packId: pack.metadata.id,
       packLabel: pack.metadata.label,
-      lastModified: lastModified,
+      lastModified,
       documentCount: pack.index?.size || 0,
       checksum: this.generatePackChecksum(pack),
     };
@@ -925,13 +925,13 @@ class PersistentCreatureIndex {
           type: doc.type,
           pack: pack.metadata.id,
           packLabel: pack.metadata.label,
-          challengeRating: challengeRating,
+          challengeRating,
           creatureType: creatureType.toLowerCase(),
           size: size.toLowerCase(),
-          hitPoints: hitPoints,
-          armorClass: armorClass,
-          hasSpells: hasSpells,
-          hasLegendaryActions: hasLegendaryActions,
+          hitPoints,
+          armorClass,
+          hasSpells,
+          hasLegendaryActions,
           alignment: alignment.toLowerCase(),
           description: doc.system?.details?.biography || doc.system?.description || '',
           img: doc.img,
@@ -1173,14 +1173,14 @@ class PersistentCreatureIndex {
           type: doc.type,
           pack: pack.metadata.id,
           packLabel: pack.metadata.label,
-          level: level,
-          traits: traits,
-          creatureType: creatureType,
-          rarity: rarity,
-          size: size,
-          hitPoints: hitPoints,
-          armorClass: armorClass,
-          hasSpells: hasSpells,
+          level,
+          traits,
+          creatureType,
+          rarity,
+          size,
+          hitPoints,
+          armorClass,
+          hasSpells,
           alignment: alignment.toUpperCase(),
           description: system.details?.publicNotes || system.details?.biography || '',
           img: doc.img,
@@ -1555,7 +1555,7 @@ export class FoundryDataAccess {
         };
       }),
       effects: actor.effects.map(effect => {
-        const eff = effect as any;
+        const eff = effect;
         const dur = eff.duration;
         const durRaw = eff._source?.duration;
         return {
@@ -1602,7 +1602,7 @@ export class FoundryDataAccess {
     const itemToggles: any[] = [];
 
     actor.items.forEach(item => {
-      const itemAny = item as any;
+      const itemAny = item;
 
       // Extract rule element variants (e.g., weapon variants, stance toggles)
       if (itemAny.system?.rules) {
@@ -1612,7 +1612,7 @@ export class FoundryDataAccess {
             itemVariants.push({
               itemId: item.id,
               itemName: item.name,
-              ruleIndex: ruleIndex,
+              ruleIndex,
               ruleKey: rule.key,
               label: rule.label || rule.prompt,
               ...(rule.selection ? { selected: rule.selection } : {}),
@@ -1625,7 +1625,7 @@ export class FoundryDataAccess {
             itemToggles.push({
               itemId: item.id,
               itemName: item.name,
-              ruleIndex: ruleIndex,
+              ruleIndex,
               ruleKey: rule.key,
               label: rule.label,
               option: rule.option,
@@ -1713,7 +1713,7 @@ export class FoundryDataAccess {
       throw new Error(`Character not found: ${characterIdentifier}`);
     }
 
-    const actorAny = actor as any;
+    const actorAny = actor;
     const systemId = (game.system as any).id;
     const matches: Array<any> = [];
 
@@ -1737,7 +1737,7 @@ export class FoundryDataAccess {
 
     // Search items
     for (const item of actor.items) {
-      const itemSystem = item.system as any;
+      const itemSystem = item.system;
 
       // Check type filter
       if (!matchesType(item.type)) continue;
@@ -1760,13 +1760,13 @@ export class FoundryDataAccess {
         // Strip HTML and truncate
         const plainText = description.replace(/<[^>]*>/g, '').trim();
         result.description =
-          plainText.length > 300 ? plainText.substring(0, 300) + '...' : plainText;
+          plainText.length > 300 ? `${plainText.substring(0, 300)}...` : plainText;
       }
 
       // Spell-specific fields
       if (item.type === 'spell') {
         result.level = itemSystem?.level?.value ?? itemSystem?.level ?? itemSystem?.rank ?? 0;
-        const itemRaw = (item as any)._source?.system;
+        const itemRaw = item._source?.system;
         result.prepared =
           itemSystem?.prepared ?? itemRaw?.preparation?.prepared ?? itemSystem?.location?.prepared;
         result.expended = itemSystem?.location?.expended;
@@ -1832,7 +1832,7 @@ export class FoundryDataAccess {
         ['weapon', 'armour', 'trapping', 'ammunition', 'container'].includes(item.type)
       ) {
         result.quantity = itemSystem?.quantity?.value ?? 1;
-        result.equipped = itemSystem?.equipped?.value ?? (item as any).isEquipped ?? false;
+        result.equipped = itemSystem?.equipped?.value ?? item.isEquipped ?? false;
 
         if (searchCategory === 'equipped' && !result.equipped) continue;
       }
@@ -1900,7 +1900,7 @@ export class FoundryDataAccess {
       for (const effect of effects) {
         if (matches.length >= limit) break;
 
-        const effectAny = effect as any;
+        const effectAny = effect;
         if (!matchesQuery(effectAny.name || effectAny.label)) continue;
 
         matches.push({
@@ -1972,7 +1972,7 @@ export class FoundryDataAccess {
         // In PF2e, spells have a location property pointing to their spellcasting entry
         const entryId = entry.id;
         const associatedSpells = spellItems.filter((spell: any) => {
-          const spellSystem = spell.system as any;
+          const spellSystem = spell.system;
           return spellSystem?.location?.value === entryId || spellSystem?.location === entryId;
         });
 
@@ -2040,7 +2040,7 @@ export class FoundryDataAccess {
 
       // Also capture focus spells and innate spells that might not be in entries
       const focusSpells = spellItems.filter((spell: any) => {
-        const spellSystem = spell.system as any;
+        const spellSystem = spell.system;
         return (
           spellSystem?.traits?.value?.includes('focus') || spellSystem?.category?.value === 'focus'
         );
@@ -2052,7 +2052,7 @@ export class FoundryDataAccess {
           name: 'Focus Spells',
           type: 'focus',
           spells: focusSpells.map((spell: any) => {
-            const spellSystem = spell.system as any;
+            const spellSystem = spell.system;
             const targeting = this.extractPF2eSpellTargeting(spellSystem);
             return {
               id: spell.id || '',
@@ -2175,7 +2175,7 @@ export class FoundryDataAccess {
             : undefined,
           spells: astralSpells
             .map((spell: any) => {
-              const spellSystem = spell.system as any;
+              const spellSystem = spell.system;
               const targeting = this.extractDSA5SpellTargeting(spellSystem);
               return {
                 id: spell.id || '',
@@ -2205,7 +2205,7 @@ export class FoundryDataAccess {
             : undefined,
           spells: karmaSpells
             .map((spell: any) => {
-              const spellSystem = spell.system as any;
+              const spellSystem = spell.system;
               const targeting = this.extractDSA5SpellTargeting(spellSystem);
               return {
                 id: spell.id || '',
@@ -2230,7 +2230,7 @@ export class FoundryDataAccess {
           type: 'ritual',
           spells: rituals
             .map((spell: any) => {
-              const spellSystem = spell.system as any;
+              const spellSystem = spell.system;
               const targeting = this.extractDSA5SpellTargeting(spellSystem);
               return {
                 id: spell.id || '',
@@ -2617,8 +2617,7 @@ export class FoundryDataAccess {
             // Type assertion and comprehensive safety checks for entry properties
             const typedEntry = entry as any;
             if (
-              !typedEntry ||
-              !typedEntry.name ||
+              !typedEntry?.name ||
               typeof typedEntry.name !== 'string' ||
               typedEntry.name.trim().length === 0
             ) {
@@ -2945,9 +2944,9 @@ export class FoundryDataAccess {
       // Sort by power level then name for consistent ordering (system-aware).
       // Power-level dial: tier (cosmere), level (pf2e), challengeRating (dnd5e).
       const powerLevel = (c: EnhancedCreatureIndex): number => {
-        if ('tier' in c) return (c as CosmereRpgCreatureIndex).tier;
-        if ('level' in c) return (c as PF2eCreatureIndex).level;
-        return (c as DnD5eCreatureIndex).challengeRating;
+        if ('tier' in c) return c.tier;
+        if ('level' in c) return c.level;
+        return c.challengeRating;
       };
       filteredCreatures.sort((a, b) => {
         const powerA = powerLevel(a);
@@ -2980,7 +2979,7 @@ export class FoundryDataAccess {
         };
 
         if (isCosmere) {
-          const c = creature as CosmereRpgCreatureIndex;
+          const c = creature;
           return {
             ...base,
             summary: `Tier ${c.tier} ${c.role} ${c.creatureType} from ${c.packLabel}`,
@@ -3001,7 +3000,7 @@ export class FoundryDataAccess {
         }
 
         if (isPF2e) {
-          const p = creature as PF2eCreatureIndex;
+          const p = creature;
           return {
             ...base,
             armorClass: p.armorClass,
@@ -3054,7 +3053,7 @@ export class FoundryDataAccess {
           topPacks,
           totalCreaturesFound: results.length,
           resultsByPack: Object.fromEntries(packResults),
-          criteria: criteria,
+          criteria,
           indexMetadata: {
             totalIndexedCreatures: enhancedCreatures.length,
             searchMethod: 'enhanced_persistent_index',
@@ -3077,12 +3076,12 @@ export class FoundryDataAccess {
    */
   private passesEnhancedCriteria(creature: EnhancedCreatureIndex, criteria: any): boolean {
     if ('tier' in creature) {
-      return this.passesCosmereRpgCriteria(creature as CosmereRpgCreatureIndex, criteria);
+      return this.passesCosmereRpgCriteria(creature, criteria);
     }
     if ('level' in creature) {
-      return this.passesPF2eCriteria(creature as PF2eCreatureIndex, criteria);
+      return this.passesPF2eCriteria(creature, criteria);
     }
-    return this.passesDnD5eCriteria(creature as DnD5eCreatureIndex, criteria);
+    return this.passesDnD5eCriteria(creature, criteria);
   }
 
   /**
@@ -3323,7 +3322,7 @@ export class FoundryDataAccess {
         topPacks: [],
         totalCreaturesFound: basicResults.length,
         resultsByPack: {},
-        criteria: criteria,
+        criteria,
         fallback: true,
         searchMethod: 'basic_fallback',
       },
@@ -3692,7 +3691,7 @@ export class FoundryDataAccess {
         }
 
         // Recursively sanitize the value (read only after filter to avoid getter-triggered warnings)
-        sanitized[key] = this.removeSensitiveFields((obj as any)[key], visited, depth + 1);
+        sanitized[key] = this.removeSensitiveFields(obj[key], visited, depth + 1);
       }
 
       return sanitized;
@@ -3780,7 +3779,7 @@ export class FoundryDataAccess {
    * Validate that Foundry is ready and world is active
    */
   validateFoundryState(): void {
-    if (!game || !game.ready) {
+    if (!game?.ready) {
       throw new Error('Foundry VTT is not ready');
     }
 
@@ -4498,6 +4497,97 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Remove embedded Items from an existing Actor.
+   *
+   * Items can be named by id (exact, reliable) and/or by name (case-insensitive,
+   * optionally constrained to a `type` to disambiguate). Names that match nothing
+   * are reported back rather than silently ignored. This is the counterpart to
+   * `addActorItems` — useful for clearing stray items added with the wrong type.
+   */
+  async removeActorItems(params: {
+    actorIdentifier: string;
+    itemIds?: string[];
+    itemNames?: string[];
+    type?: string;
+  }): Promise<{
+    actorId: string;
+    actorName: string;
+    removed: Array<{ id: string; name: string; type: string }>;
+    notFound: string[];
+  }> {
+    this.validateFoundryState();
+
+    const { actorIdentifier, itemIds, itemNames, type } = params;
+
+    if (!actorIdentifier) {
+      throw new Error('actorIdentifier is required');
+    }
+    const hasIds = Array.isArray(itemIds) && itemIds.length > 0;
+    const hasNames = Array.isArray(itemNames) && itemNames.length > 0;
+    if (!hasIds && !hasNames) {
+      throw new Error('Provide itemIds and/or itemNames identifying the items to remove');
+    }
+
+    const actor = this.findActorByIdentifier(actorIdentifier);
+    if (!actor) {
+      throw new Error(`Actor not found: ${actorIdentifier}`);
+    }
+
+    const typeLower = type?.toLowerCase();
+    const toDelete = new Map<string, any>(); // id -> item (dedupes overlap)
+    const notFound: string[] = [];
+
+    if (hasIds) {
+      for (const id of itemIds) {
+        const item = actor.items.get(id);
+        if (item) toDelete.set(item.id, item);
+        else notFound.push(id);
+      }
+    }
+    if (hasNames) {
+      for (const name of itemNames) {
+        const nameLower = name.toLowerCase();
+        const item = actor.items.find(
+          (i: any) => i.name?.toLowerCase() === nameLower && (!typeLower || i.type === typeLower)
+        );
+        if (item) toDelete.set(item.id, item);
+        else notFound.push(name);
+      }
+    }
+
+    if (toDelete.size === 0) {
+      return { actorId: actor.id, actorName: actor.name, removed: [], notFound };
+    }
+
+    const removed = Array.from(toDelete.values()).map((i: any) => ({
+      id: i.id,
+      name: i.name,
+      type: i.type,
+    }));
+
+    try {
+      await actor.deleteEmbeddedDocuments(
+        'Item',
+        removed.map(r => r.id)
+      );
+      this.auditLog(
+        'removeActorItems',
+        { actorIdentifier, actorId: actor.id, count: removed.length },
+        'success'
+      );
+      return { actorId: actor.id, actorName: actor.name, removed, notFound };
+    } catch (error) {
+      this.auditLog(
+        'removeActorItems',
+        { actorIdentifier, actorId: actor.id, count: removed.length },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  /**
    * List world-level Item documents from the Items sidebar.
    * Optionally filters by type, folder (name or id), or a case-insensitive name substring.
    */
@@ -4873,7 +4963,7 @@ export class FoundryDataAccess {
             ...tokenDoc,
             x: position.x,
             y: position.y,
-            actorId: actorId,
+            actorId,
             hidden: placement.hidden,
           });
         } catch (error) {
@@ -4975,7 +5065,7 @@ export class FoundryDataAccess {
       // Organize created actors in a folder - use "Foundry MCP Creatures" for generic monsters
       const folderId = await this.getOrCreateFolder('Foundry MCP Creatures', 'Actor');
       if (folderId) {
-        (actorData as any).folder = folderId;
+        actorData.folder = folderId;
       }
 
       // Create the new actor
@@ -5004,7 +5094,7 @@ export class FoundryDataAccess {
 
     switch (placement) {
       case 'coordinates':
-        if (coordinates && coordinates[index]) {
+        if (coordinates?.[index]) {
           return coordinates[index];
         }
         // Fallback to grid if coordinates not provided or insufficient
@@ -5166,7 +5256,7 @@ export class FoundryDataAccess {
             rollButtons: {
               [buttonId]: {
                 rolled: false,
-                rollFormula: rollFormula,
+                rollFormula,
                 rollLabel: buttonLabel,
                 isPublic: data.isPublic,
                 characterId: playerInfo.character?.id || '',
@@ -5250,7 +5340,7 @@ export class FoundryDataAccess {
     // Try partial player name match (active and inactive users)
     if (!user) {
       user = allUsers.find((u: User) => {
-        return Boolean(u.name && u.name.toLowerCase().includes(searchTerm));
+        return Boolean(u.name?.toLowerCase().includes(searchTerm));
       });
 
       if (user) {
@@ -5293,9 +5383,7 @@ export class FoundryDataAccess {
     // If no exact character match, try partial match
     if (!character) {
       character = game.actors?.find((actor: Actor) => {
-        return Boolean(
-          actor.name && actor.name.toLowerCase().includes(searchTerm) && actor.hasPlayerOwner
-        );
+        return Boolean(actor.name?.toLowerCase().includes(searchTerm) && actor.hasPlayerOwner);
       });
 
       if (character) {
@@ -5642,7 +5730,7 @@ export class FoundryDataAccess {
         // Use roll.toMessage() with proper rollMode
         await roll.toMessage(messageData, {
           create: true,
-          rollMode: rollMode,
+          rollMode,
         });
 
         // Update the ChatMessage to reflect rolled state
@@ -5807,10 +5895,10 @@ export class FoundryDataAccess {
         if (game.socket) {
           game.socket.emit('module.foundry-mcp-bridge', {
             type: 'requestMessageUpdate',
-            buttonId: buttonId,
-            userId: userId,
-            rollLabel: rollLabel,
-            messageId: messageId,
+            buttonId,
+            userId,
+            rollLabel,
+            messageId,
             fromUserId: game.user.id,
             targetGM: onlineGM.id,
           });
@@ -5829,7 +5917,7 @@ export class FoundryDataAccess {
         ...rollButtons[buttonId],
         rolled: true,
         rolledBy: userId,
-        rolledByName: rolledByName,
+        rolledByName,
         timestamp: Date.now(),
       };
 
@@ -5848,7 +5936,7 @@ export class FoundryDataAccess {
           ...currentFlags,
           [MODULE_ID]: {
             ...moduleFlags,
-            rollButtons: rollButtons,
+            rollButtons,
           },
         },
       });
@@ -5982,6 +6070,8 @@ export class FoundryDataAccess {
     wounds?: { value?: number; max?: number };
     skills?: Array<{ name: string; advances: number }>;
     career?: string;
+    movement?: number;
+    biography?: string;
   }): Promise<any> {
     this.validateFoundryState();
 
@@ -6015,6 +6105,7 @@ export class FoundryDataAccess {
       wounds: Record<string, any>;
       skills: Record<string, any>;
       career?: string;
+      details?: Record<string, any>;
     } = {
       characteristics: {},
       wounds: {},
@@ -6054,6 +6145,18 @@ export class FoundryDataAccess {
         update['system.status.wounds.max'] = data.wounds.max;
         applied.wounds.max = { from: current.max, to: data.wounds.max };
       }
+    }
+
+    // Detail fields: base movement and the biography/notes text.
+    if (data.movement !== undefined) {
+      update['system.details.move.value'] = data.movement;
+      applied.details = applied.details || {};
+      applied.details.movement = { from: sys.details?.move?.value, to: data.movement };
+    }
+    if (data.biography !== undefined) {
+      update['system.details.biography.value'] = data.biography;
+      applied.details = applied.details || {};
+      applied.details.biography = { chars: data.biography.length };
     }
 
     // Existing embedded-item edits: bump advances on skills the actor already
@@ -6700,8 +6803,8 @@ export class FoundryDataAccess {
       // Create new folder
       const folderData = {
         name: folderName,
-        type: type,
-        description: description,
+        type,
+        description,
         color: type === 'Actor' ? '#4a90e2' : '#f39c12', // Blue for actors, orange for journals
         sort: 0,
         parent: null,
@@ -6751,8 +6854,8 @@ export class FoundryDataAccess {
         name: scene.name,
         active: scene.active,
         dimensions: {
-          width: scene.dimensions?.width || (scene as any).width || 0,
-          height: scene.dimensions?.height || (scene as any).height || 0,
+          width: scene.dimensions?.width || scene.width || 0,
+          height: scene.dimensions?.height || scene.height || 0,
         },
         gridSize: scene.grid?.size || 100,
         background: scene._source?.background?.src || scene.img || '',
@@ -7362,7 +7465,7 @@ export class FoundryDataAccess {
       throw new Error(`Item "${itemIdentifier}" not found on actor "${actor.name}"`);
     }
 
-    const itemAny = item as any;
+    const itemAny = item;
     const systemId = (game.system as any).id;
 
     // Handle targeting if targets are specified

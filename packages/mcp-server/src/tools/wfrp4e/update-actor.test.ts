@@ -25,12 +25,14 @@ describe('WFRP4eUpdateActorTools.getToolDefinitions', () => {
 });
 
 describe('WFRP4eUpdateActorTools.handleUpdateActor', () => {
-  it('forwards skills and career to the bridge', async () => {
+  it('forwards skills, career, movement and biography to the bridge', async () => {
     const { tools, query } = makeTools();
     const args = {
       actor: 'Tylo',
       skills: [{ name: 'Channelling (Hedgecraft)', advances: 5 }],
       career: 'Hedge Master',
+      movement: 5,
+      biography: 'A hedge wizard of the Reikwald.',
     };
 
     const result = await tools.handleUpdateActor(args);
@@ -42,7 +44,16 @@ describe('WFRP4eUpdateActorTools.handleUpdateActor', () => {
       wounds: undefined,
       skills: args.skills,
       career: 'Hedge Master',
+      movement: 5,
+      biography: 'A hedge wizard of the Reikwald.',
     });
+  });
+
+  it('accepts a biography-only update', async () => {
+    const { tools, query } = makeTools();
+    const result = await tools.handleUpdateActor({ actor: 'Tylo', biography: 'Notes.' });
+    expect(result).toEqual({ success: true });
+    expect(query).toHaveBeenCalled();
   });
 
   it('accepts career-only updates (not "nothing to update")', async () => {

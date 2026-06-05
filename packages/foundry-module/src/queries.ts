@@ -117,6 +117,7 @@ export class QueryHandlers {
 
     // Item authoring on actor sheets
     CONFIG.queries[`${modulePrefix}.addActorItems`] = this.handleAddActorItems.bind(this);
+    CONFIG.queries[`${modulePrefix}.removeActorItems`] = this.handleRemoveActorItems.bind(this);
 
     // World-level item CRUD
     CONFIG.queries[`${modulePrefix}.createWorldItems`] = this.handleCreateWorldItems.bind(this);
@@ -1062,7 +1063,7 @@ export class QueryHandlers {
         scene_name: data.scene_name.trim(),
         size: data.size || 'medium',
         grid_size: data.grid_size || 70,
-        quality: quality,
+        quality,
       };
 
       // Use ComfyUIManager to communicate with backend via WebSocket
@@ -1578,6 +1579,43 @@ export class QueryHandlers {
     }
   }
 
+  private async handleRemoveActorItems(data: {
+    actorIdentifier: string;
+    itemIds?: string[];
+    itemNames?: string[];
+    type?: string;
+  }): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation - writes to actor sheets are GM-only
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data?.actorIdentifier) {
+        throw new Error('actorIdentifier is required');
+      }
+      const hasIds = Array.isArray(data?.itemIds) && data.itemIds.length > 0;
+      const hasNames = Array.isArray(data?.itemNames) && data.itemNames.length > 0;
+      if (!hasIds && !hasNames) {
+        throw new Error('Provide itemIds and/or itemNames identifying the items to remove');
+      }
+
+      return await this.dataAccess.removeActorItems({
+        actorIdentifier: data.actorIdentifier,
+        ...(data.itemIds !== undefined ? { itemIds: data.itemIds } : {}),
+        ...(data.itemNames !== undefined ? { itemNames: data.itemNames } : {}),
+        ...(data.type !== undefined ? { type: data.type } : {}),
+      });
+    } catch (error) {
+      throw new Error(
+        `Failed to remove actor items: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
   private async handleUpdateWorldItems(data: {
     updates: Array<{
       id: string;
@@ -1601,7 +1639,9 @@ export class QueryHandlers {
 
       return await this.dataAccess.updateWorldItems({ updates: data.updates });
     } catch (error) {
-      throw new Error(`Failed to update world items: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to update world items: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -1624,7 +1664,9 @@ export class QueryHandlers {
         ...(data.nameFilter !== undefined ? { nameFilter: data.nameFilter } : {}),
       });
     } catch (error) {
-      throw new Error(`Failed to list world items: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to list world items: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -1911,5 +1953,4 @@ export class QueryHandlers {
       throw new Error(`Failed to add features from compendium: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-
 }
