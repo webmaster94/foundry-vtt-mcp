@@ -7224,12 +7224,15 @@ export class FoundryDataAccess {
         );
       }
 
-      // 2. Duplicate check by name
-      const existingActor = game.actors?.find((a: any) => a.name === data.name);
+      // 2. Duplicate check by name — only against other NPCs, so a player
+      //    character sharing the name does not block NPC creation.
+      const existingActor = game.actors?.find(
+        (a: any) => a.name === data.name && a.type === 'npc',
+      );
       if (existingActor) {
         throw new Error(
-          `Actor "${data.name}" already exists (id: ${existingActor.id}). ` +
-          `Use a different name or remove the existing actor first.`,
+          `NPC "${data.name}" already exists (id: ${existingActor.id}). ` +
+          `Use a different name or remove the existing NPC first.`,
         );
       }
 
@@ -7508,9 +7511,9 @@ export class FoundryDataAccess {
             },
           },
           type:        { value: data.weaponClass ?? 'natural', baseItem: '' },
-          properties:  Object.fromEntries((data.properties as string[]).map((p) => [p, true])),
+          properties:  (data.properties as string[]),
           proficient:  1,
-          magicalBonus: data.attackBonus > 0 ? data.attackBonus : null,
+          magicalBonus: null,
           ...masteryField,
           activities: {
             [activityId]: {
@@ -7542,7 +7545,7 @@ export class FoundryDataAccess {
               },
               attack: {
                 ability:   '',
-                bonus:     '',
+                bonus:     data.attackBonus > 0 ? String(data.attackBonus) : '',
                 critical:  { threshold: null },
                 flat:      false,
                 type: {
@@ -7983,9 +7986,9 @@ export class FoundryDataAccess {
             },
           },
           type:         { value: data.weaponClass ?? 'natural', baseItem: '' },
-          properties:   Object.fromEntries((data.properties as string[]).map((p) => [p, true])),
+          properties:   (data.properties as string[]),
           proficient:   1,
-          magicalBonus: data.attackBonus > 0 ? data.attackBonus : null,
+          magicalBonus: null,
           ...masteryField,
           activities: {
 
@@ -8015,7 +8018,7 @@ export class FoundryDataAccess {
               consumption: { targets: [], scaling: { allowed: false, max: '' }, spellSlot: true },
               attack: {
                 ability:  '',
-                bonus:    '',
+                bonus:    data.attackBonus > 0 ? String(data.attackBonus) : '',
                 critical: { threshold: null },
                 flat:     false,
                 type:     { value: data.attackType ?? 'melee', classification },

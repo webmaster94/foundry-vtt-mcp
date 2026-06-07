@@ -133,19 +133,25 @@ describe('isLockStale', () => {
 
 describe('isNodeProcess', () => {
 
-  it('returns true for "node" (Linux/macOS)', () => {
-    // Directly test the NODE_PROCESS_NAMES logic via a controlled getProcessName
-    // by testing known inputs to isNodeProcess using the real function but
-    // mocking at the execFileSync / fs level is complex in ESM.
-    // Instead we verify the helper accepts every expected node name.
-    // We call getProcessName indirectly through the exported helper by
-    // testing the boundary: process.pid (current process IS node).
-    const result = isNodeProcess(process.pid);
-    // The test runner itself is Node.js, so this must be true
-    expect(result).toBe(true);
+  it('returns true for every recognized node executable name', () => {
+    // Inject the name resolver so the result does not depend on the live
+    // runner's process name (macOS `ps -o comm=` reports the process title,
+    // which under vitest is "node (vitest N)", not "node").
+    for (const name of ['node', 'node.exe', 'nodejs', 'nodejs.exe']) {
+      expect(isNodeProcess(1234, () => name)).toBe(true);
+    }
   });
 
-  it('returns false for a non-existent PID', () => {
+  it('returns false for a non-node process name', () => {
+    expect(isNodeProcess(1234, () => 'chrome')).toBe(false);
+    expect(isNodeProcess(1234, () => 'node (vitest 1)')).toBe(false);
+  });
+
+  it('returns false when the process name cannot be resolved', () => {
+    expect(isNodeProcess(1234, () => null)).toBe(false);
+  });
+
+  it('returns false for a non-existent PID (real resolver)', () => {
     // Very large PID that is extremely unlikely to exist
     expect(isNodeProcess(9_999_999)).toBe(false);
   });

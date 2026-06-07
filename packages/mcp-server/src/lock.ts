@@ -84,9 +84,16 @@ export function getProcessName(pid: number): string | null {
 /**
  * Returns `true` if the given PID is running under a Node.js executable.
  * Returns `false` on any error (process not found, query failure, etc.).
+ *
+ * `getName` is injectable so the membership logic can be tested without
+ * depending on the live test runner's process name (which `ps -o comm=`
+ * reports as the process *title* on macOS, e.g. "node (vitest 1)").
  */
-export function isNodeProcess(pid: number): boolean {
-  const name = getProcessName(pid);
+export function isNodeProcess(
+  pid: number,
+  getName: (pid: number) => string | null = getProcessName,
+): boolean {
+  const name = getName(pid);
   return name !== null && NODE_PROCESS_NAMES.has(name);
 }
 
