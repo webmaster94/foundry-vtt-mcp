@@ -1,83 +1,6 @@
-# Foundry VTT MCP Bridge — D&D 5e NPC Creation Suite (Fork)
-
-> **This is a fork of [adambdooley/foundry-vtt-mcp](https://github.com/adambdooley/foundry-vtt-mcp).**
-> It extends the original project with **3 new MCP tools** for building complete D&D 5e NPCs directly from Claude Desktop — no manual Foundry UI required.
-> See the [What's New in This Fork](#whats-new-in-this-fork) section below.
-
----
-
-## What's New in This Fork
-
-Instead of manually editing actor sheets in Foundry, you can describe the NPC in natural language and have Claude build it piece by piece.
-
-### New Tools
-
-| Tool | Description |
-|------|-------------|
-| `dnd5e-create-npc` | Create an NPC actor from scratch with a full stat block (HP, AC, abilities, CR) |
-| `dnd5e-add-feature` | Add any feature type via `featureType` selector: `passive`, `save`, `attack`, `attack-with-save`, `aura`, `spellcasting`, `spells` |
-| `dnd5e-add-features-from-compendium` | Import official compendium features by name onto any actor |
-
-### Example Workflow
-
-Build a complete NPC in a single conversation:
-
-```
-1. "Create Frater Velreth, a corrupted monk, CR 8, 110 HP, AC 16"
-   → dnd5e-create-npc
-
-2. "Add Multiattack: two Corrupting Touch attacks"
-   → dnd5e-add-feature (featureType: passive)
-
-3. "Add Corrupting Touch: melee 5ft, +7 to hit, 2d8 psychic,
-    secondary WIS save DC 14 or 3d6 extra"
-   → dnd5e-add-feature (featureType: attack-with-save)
-
-4. "Add Signal Aura: 10ft radius, 1d6 psychic automatic each turn"
-   → dnd5e-add-feature (featureType: aura)
-
-5. "Make him a CHA-based caster, 5th level"
-   → dnd5e-add-feature (featureType: spellcasting)
-
-6. "Give him Disguise Self, Mirror Image, Hypnotic Pattern"
-   → dnd5e-add-feature (featureType: spells)
-```
-
-### Architecture
-
-Each tool follows the existing 4-layer pattern of the project:
-- `mcp-server/src/tools/dnd5e/` — Zod schema + JSON Schema + tool description
-- `mcp-server/src/backend.ts` — registration and handler routing
-- `foundry-module/src/queries.ts` — query handler + registration
-- `foundry-module/src/data-access.ts` — Foundry data layer
-
-Tool descriptions use explicit **negative routing** (USE THIS WHEN / DO NOT USE THIS FOR) to help Claude choose the correct tool in ambiguous cases.
-
-### Known Limitations
-
-End-to-end testing via Claude Desktop + Foundry VTT is pending. Both packages build green on v0.8.1.
-
-### Manual Installation (required for this fork)
-
-```bash
-# Clone this fork
-git clone https://github.com/LManfre/foundry-vtt-mcp.git
-cd foundry-vtt-mcp
-
-# Install dependencies and build
-npm install
-npm run build
-```
-
-Then copy `packages/foundry-module/dist/` to your Foundry modules directory and follow the Configure Claude Desktop step below.
-
-Developed with the assistance of Claude Code.
-
----
-
 # Foundry VTT MCP Bridge
 
-Connect Foundry VTT to Claude Desktop for AI-powered campaign management through the Model Context Protocol (MCP). It currently supports Dungeons and Dragons Fifth Edition and Pathfinder Second Edition. The majority of MCP tools are system agnostic but character creation and compendium tools are only able to work with D&D5e and PF2E.
+Connect Foundry VTT to Claude Desktop for AI-powered campaign management through the Model Context Protocol (MCP). It currently supports Dungeons and Dragons Fifth Edition, Pathfinder Second Edition, Das Schwarze Augen Fifth Edition, Cosmere RPG System, & Warhammer Fantasy Roleplay 4th Edition. The majority of MCP tools are system agnostic or have features that are aware of the system it is working with, excluding some DSA 5 specific tools. 
 
 ## Overview
 
@@ -91,8 +14,6 @@ The Foundry MCP Bridge enables natural AI conversations with your Foundry VTT ga
 - **Dice Coordination**: Interactive roll requests with player targeting
 - **Campaign Management**: Multi-part quest and campaign tracking
 - **Map Generation**: Create maps from prompts and automatically upload them into scenes in Foundry VTT using the optional ComfyUI component
-
-This project was built with the assistance of Claude Code. If you like this project, consider [supporting it on Patreon](https://www.patreon.com/c/Adambdooley).
 
 ## Installation
 
@@ -117,13 +38,13 @@ This project was built with the assistance of Claude Code. If you like this proj
 
 ### Option 2: Mac Installer
 
-1. Download the latest `FoundryMCPServer-vx.x.x.dmg` from [Releases](https://github.com/adambdooley/foundry-vtt-mcp/releases)
-2. Run the package installer inside the dmg - it will:
-   - Open DMG and double-click the PKG installer
-   - Configure the Claude Desktop MCP server settings
-   - Optionally install the Foundry module and ComfyUI Map Generation to your Foundry VTT installation
-3. Restart Claude Desktop
-4. Enable "Foundry MCP Bridge" in your Foundry Module Management
+1.  Download the latest `FoundryMCPServer-vx.x.x.dmg` from [Releases](https://github.com/adambdooley/foundry-vtt-mcp/releases)
+2.  Run the package installer inside the dmg - it will:
+    - Open DMG and double-click the PKG installer
+    - Configure the Claude Desktop MCP server settings
+    - Optionally install the Foundry module and ComfyUI Map Generation to your Foundry VTT installation
+3.  Restart Claude Desktop
+4.  Enable "Foundry MCP Bridge" in your Foundry Module Management
 
 ### Option 3: Manual Installation
 
@@ -145,6 +66,7 @@ cd foundry-vtt-mcp
 # Install dependencies and build
 npm install
 npm run build
+
 ```
 
 #### Configure Claude Desktop
@@ -168,6 +90,10 @@ Add this to your Claude Desktop configuration (claude_desktop_config.json) file:
 
 Starting Claude Desktop will start the MCP Server.
 
+> **Windows Store / MSIX installs:** If you installed Claude Desktop from the Microsoft Store, it reads its config from a virtualised path, not `%APPDATA%\Claude\`. Edit `claude_desktop_config.json` here instead:
+> `%LOCALAPPDATA%\Packages\<...Claude...>\LocalCache\Roaming\Claude\claude_desktop_config.json`
+> The automated Windows installer (v0.8.1+) writes to both locations for you. Note that a major Claude Desktop update can reset this container — if your tools disappear after an update, re-run the installer or re-add the `mcpServers` block at that path.
+
 ### Getting Started
 
 1. Start Foundry VTT and load your world
@@ -178,50 +104,51 @@ Starting Claude Desktop will start the MCP Server.
 
 Once connected, ask Claude Desktop:
 
-- *"Show me my character Clark's stats"*
-- *"Find all CR 12 humanoid creatures for an encounter"*
-- *"Create a quest about investigating missing villagers"*
-- *"Roll a stealth check for Tulkas"*
-- *"What's in the current Foundry scene?"*
-- *"Create me a small map of a Riverside Cottage in Foundry"*
-- *"Create a CR 8 corrupted monk NPC with an aura and spellcasting"* *(this fork)*
+- _"Show me my character Clark's stats"_
+- _"Find all CR 12 humanoid creatures for an encounter"_
+- _"Create a quest about investigating missing villagers"_
+- _"Roll a stealth check for Tulkas"_
+- _"What's in the current Foundry scene?"_
+- _"Create me a small map of a Riverside Cottage in Foundry"_
 
 ## Features
 
-- **40 MCP Tools** (37 original + 3 new D&D 5e NPC tools in this fork)
-- **D&D 5e NPC Creation Suite**: Build complete NPCs from prompts — stat block, attacks, saves, auras, spellcasting *(this fork)*
+- **40 MCP Tools** that allow Claude to interact with Foundry
+- **D&D 5e NPC Creation Suite**: Build complete NPCs from prompts — stat block, attacks, saves, auras, and spellcasting
+- **WFRP4e Support**: Character reading for Warhammer Fantasy Roleplay 4e
 - **Character Management**: Access stats, abilities, inventory, and detailed entity information
 - **Token Manipulation**: Move, update, delete tokens and manage status conditions
 - **Enhanced Compendium Search**: Instant filtering by CR, type, abilities, and more
-- **Content Creation**: Generate actors, NPCs, and quest journals
+- **Content Creation**: Generate actors, NPCs, and quest journals (with optional folder organisation)
+- **World Item Management**: Create, list, and update world-level Items; attach items directly to actors
 - **Campaign Management**: Multi-part quest tracking with progress dashboards
 - **Interactive Dice System**: Send different dice roll requests to players from Claude
 - **Actor Ownership**: Manage player permissions for characters and tokens
 - **GM-Only**: MCP Bridge only connects to Game Master users
 - **Map Generation**: A portable ComfyUI backend that generates battlemaps from prompts
 - **Remote Connections**: WebRTC connections initiated through browser (Tested with Google Chrome) to MCP server and ComfyUI
-- **Windows and Mac Installers**: Automated installation of Foundry MCP Server for Claude Desktop, Foundry MCP Bridge Foundry VTT Module, and ComfyUI backend with dependencies
+- **Windows and Mac Installers** Automated installation of Foundry MCP Server for Claude Dekstop, Foundry MCP Bridge Foundry VTT Module, and ComfyUI backend with dependencies
 
 ## MCP Tools
 
 - **1** get-world-info
 - **2** list-scenes
 - **3** get-current-scene
-- **4** get-available-conditions
+- **4** get-available-conditions  
 - **5** list-compendium-packs
 - **6** list-characters
-- **7** get-character
-- **8** search-character-items
+- **7** get-character  
+- **8** search-character-items  
 - **9** get-character-entity
 - **10** get-token-details
-- **11** toggle-token-condition (add)
+- **11** toggle-token-condition (add)  
 - **12** toggle-token-condition (remove)
 - **13** update-token
 - **14** search-compendium
 - **15** get-compendium-item
 - **16** get-compendium-entry-full
-- **17** list-creatures-by-criteria
-- **18** list-journals
+- **17** list-creatures-by-criteria  
+- **18** list-journals  
 - **19** create-quest-journal
 - **20** update-quest-journal
 - **21** search-journals
@@ -235,23 +162,25 @@ Once connected, ask Claude Desktop:
 - **29** generate-map
 - **30** check-map-status
 - **31** cancel-map-job
-- **32** switch-scene
+- **32** switch-scene  
 - **33** create-actor-from-compendium
 - **34** list-dsa5-archetypes (DSA5 Only)
 - **35** create-dsa5-character-from-archetype (DSA5 Only)
 - **36** create-campaign-dashboard
-- **37** manage-world-items
-- **38** dnd5e-create-npc *(this fork)*
-- **39** dnd5e-add-feature *(this fork)*
-- **40** dnd5e-add-features-from-compendium *(this fork)*
+- **37** manage-world-items (create / list / update world items, add items to actor)
+- **38** dnd5e-create-npc (D&D 5e Only)
+- **39** dnd5e-add-feature (D&D 5e Only)
+- **40** dnd5e-add-features-from-compendium (D&D 5e Only)
 
 ## Settings
+
+<img width="964" height="803" alt="image" src="https://github.com/user-attachments/assets/bfd435d5-2df4-40a6-a79b-87e98121db3f" />
 
 - **Enhanced Creature Index** Configure Enhanced Index button leads to Enhanced Creature Index sub-menu (Details below)
 - **Map Generation Service Configuration** Configure Map Generation button leads to Map Generation Service sub-menu (Details below)
 - **Enable MCP Bridge** This should be checked by default and the status should show as connected. It can be used to turn off the MCP Bridge connection within the game without the need to disable the add-on itself.
 - **Connection Type** Can be set to Auto for automatic detection of connection type. Can also be set to force either WebRTC for Internet connections or Websocket for Local connections.
-- **Websocket Server Host** IP Address of Claude Desktop MCP Server location. Only used for local network websocket connections. Remote Servers use WebRTC. Defaults to localhost.
+- **Websocket Server Host** IP Address of Claude Desktop MCP Server location. Only used for local network websocket connections. Remote Servers use WebRT. Defaults to localhost.
 - **Allow Write Operations** This will prevent Claude from making any changes to world content and restrict it to reading only
 - **Max Actors Per Request** This is a failsafe to stop a massive amount of actors being created from one single request. It does not limit the amount of characters being created by multiple requests
 - **Show Connection Messages** This can turn off the banner messages for connections for Foundry MCP Bridge
@@ -260,15 +189,19 @@ Once connected, ask Claude Desktop:
 
 ### Enhanced Creature Index Sub-menu
 
+<img width="497" height="604" alt="image" src="https://github.com/user-attachments/assets/bf1a6fdb-9bd5-4256-b922-d28cf65b1e7d" />
+
 - **Rebuild Creature Index** This button will rebuild the creature index if there is an issue or it is out of sync with changes in your compendiums
 - **Enable Enhanced Creature Index** This should be left on as Claude builds additional metadata in the world files to give it better searches
 - **Auto-Rebuild Index on Pack Changes** Experimental feature that hasn't been fully tested yet
 
 ### Map Generation Service Sub-menu
 
+<img width="489" height="779" alt="image" src="https://github.com/user-attachments/assets/a43d3a3d-266f-41c9-b40a-236d14cfcba9" />
+
 - **Service Status** There are three buttons for Check Status, Start Service, and Stop Service. These buttons help monitor and control the connection from the Foundry MCP Bridge to the ComfyUI backend which is started by the Claude Desktop application.
 - **Auto-start Map Generation Service** Controls whether ComfyUI service connection is automatically connected at startup of the Foundry world.
-- **Generation Quality** Controls the quality of the maps generated by the SDXL checkpoints with ComfyUI. Low uses 8 steps of generation, Medium uses 20 steps of generation, and High uses 35 steps. The D&D Battlemaps SDXL Upscale v1.0 Checkpoint used in this image generation recommends using 35 steps but on low end GPUs or GPUs without CUDA, this generation will take several minutes.
+- **Generation Quality** Controls the quality of the maps generated by the SDXL checkpoints wiht ComfyUI. Low uses 8 steps of generation, Medium uses 20 steps of generation, and High uses 35 steps. The D&D Battlemaps SDXL Upscale v1.0 Checkpoint used in this image generation recommends using 35 steps but on low end GPUs or GPUs with out CUDA, this generation will take several minutes. These options can give you a trade off to have maps generated faster at the expense of quality.
 
 ## Architecture
 
@@ -292,11 +225,11 @@ Claude Desktop ↔ MCP Protocol ↔ MCP Server ↔ WebSocket ↔ Foundry Module 
 
 ## System Requirements
 
-- **Foundry VTT**: Version 13 or 14
+- **Foundry VTT**: Version 13
 - **Claude Desktop**: Latest version with MCP support
 - **Claude Pro/Max Plan**: Required to connect to MCP servers
-- **Operating System**: Windows 10/11 (installer), or other OSes with Node.js 18+ (manual)
-- **GPU Requirements**: A GPU with at least 8GB of VRAM (for map generation)
+- **Operating System**: Windows 10/11 (installer), or other OSes/manual Windows install with Node.js 18+ (manual)
+- **GPU Requirements**: A GPU with at least 8GB of VRAM
 
 ## Schema Smoke Test
 
@@ -309,7 +242,7 @@ npm run test:mcp:schema
 
 ## Support & Development
 
-- **Original project issues**: [GitHub Issues (upstream)](https://github.com/adambdooley/foundry-vtt-mcp/issues)
-- **Fork-specific issues**: Open an issue on this repository
+- **Issues**: Report bugs on [GitHub Issues](https://github.com/adambdooley/foundry-vtt-mcp/issues)
 - **YouTube Channel**: [Subscribe for updates and tutorials](https://www.youtube.com/channel/UCVrSC-FzuAk5AgvfboJj0WA)
-- **License**: MIT
+- **Documentation**: Built with TypeScript, comprehensive documentation included
+- **License**: MIT License (Additional Third Party licenses are included for bundled components for the installers)
