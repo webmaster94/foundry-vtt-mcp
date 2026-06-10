@@ -113,9 +113,9 @@ Once connected, ask Claude Desktop:
 
 ## Features
 
-- **40 MCP Tools** that allow Claude to interact with Foundry
+- **42 MCP Tools** that allow Claude to interact with Foundry
 - **D&D 5e NPC Creation Suite**: Build complete NPCs from prompts — stat block, attacks, saves, auras, and spellcasting
-- **WFRP4e Support**: Character reading for Warhammer Fantasy Roleplay 4e
+- **WFRP4e Support**: Character reading plus editing — update characteristics, wounds, skills and careers, and add or remove items on existing actors
 - **Character Management**: Access stats, abilities, inventory, and detailed entity information
 - **Token Manipulation**: Move, update, delete tokens and manage status conditions
 - **Enhanced Compendium Search**: Instant filtering by CR, type, abilities, and more
