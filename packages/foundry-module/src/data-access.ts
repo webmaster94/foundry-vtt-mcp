@@ -7712,7 +7712,7 @@ export class FoundryDataAccess {
       if ((game.system as any).id !== 'dnd5e') {
         throw new Error(
           `addSaveFeatureToActor requires D&D 5e. ` +
-          `Current system: "${(game.system as any).id}".`,
+            `Current system: "${(game.system as any).id}".`
         );
       }
 
@@ -7721,7 +7721,7 @@ export class FoundryDataAccess {
       if (existing) {
         throw new Error(
           `Feature "${data.featureName}" already exists on actor "${actor.name}" ` +
-          `(id: ${existing.id}). Use a different name or remove the existing feature first.`,
+            `(id: ${existing.id}). Use a different name or remove the existing feature first.`
         );
       }
 
@@ -7790,7 +7790,7 @@ export class FoundryDataAccess {
               },
               damage: {
                 onSave: data.halfOnSave ? 'half' : 'none',
-                parts: data.damageParts.map((p) => ({
+                parts: data.damageParts.map(p => ({
                   custom: { enabled: false, formula: '' },
                   number: p.number,
                   denomination: p.denomination,
@@ -7813,24 +7813,27 @@ export class FoundryDataAccess {
       };
 
       // 7. Create embedded item
-      const [created] = await actor.createEmbeddedDocuments('Item', [itemData]) as any[];
+      const [created] = (await actor.createEmbeddedDocuments('Item', [itemData])) as any[];
 
-      this.auditLog('addSaveFeatureToActor', { actorId: actor.id, featureName: data.featureName }, 'success');
+      this.auditLog(
+        'addSaveFeatureToActor',
+        { actorId: actor.id, featureName: data.featureName },
+        'success'
+      );
 
       // 8. Return structured result
       return {
         success: true,
-        item:  { id: created.id,    name: created.name },
-        actor: { id: actor.id,      name: actor.name },
+        item: { id: created.id, name: created.name },
+        actor: { id: actor.id, name: actor.name },
       };
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed to add save feature to actor`, error);
       this.auditLog(
         'addSaveFeatureToActor',
         { actorIdentifier: data.actorIdentifier, featureName: data.featureName },
         'failure',
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : 'Unknown error'
       );
       throw error;
     }
@@ -7880,29 +7883,26 @@ export class FoundryDataAccess {
       // 1. System guard
       if ((game.system as any).id !== 'dnd5e') {
         throw new Error(
-          `createNpcActor requires D&D 5e. ` +
-          `Current system: "${(game.system as any).id}".`,
+          `createNpcActor requires D&D 5e. ` + `Current system: "${(game.system as any).id}".`
         );
       }
 
       // 2. Duplicate check by name — only against other NPCs, so a player
       //    character sharing the name does not block NPC creation.
-      const existingActor = game.actors?.find(
-        (a: any) => a.name === data.name && a.type === 'npc',
-      );
+      const existingActor = game.actors?.find((a: any) => a.name === data.name && a.type === 'npc');
       if (existingActor) {
         throw new Error(
           `NPC "${data.name}" already exists (id: ${existingActor.id}). ` +
-          `Use a different name or remove the existing NPC first.`,
+            `Use a different name or remove the existing NPC first.`
         );
       }
 
       // 3. Soft validation — collect warnings, do NOT block creation
       const warnings: string[] = [];
       const allDamageValues: Array<{ field: string; value: string }> = [
-        ...data.damageImmunities.map((v) => ({ field: 'damageImmunities', value: v })),
-        ...data.damageResistances.map((v) => ({ field: 'damageResistances', value: v })),
-        ...data.damageVulnerabilities.map((v) => ({ field: 'damageVulnerabilities', value: v })),
+        ...data.damageImmunities.map(v => ({ field: 'damageImmunities', value: v })),
+        ...data.damageResistances.map(v => ({ field: 'damageResistances', value: v })),
+        ...data.damageVulnerabilities.map(v => ({ field: 'damageVulnerabilities', value: v })),
       ];
       for (const { field, value } of allDamageValues) {
         if (!NPC_DAMAGE_CANONICAL.has(value)) {
@@ -7937,9 +7937,8 @@ export class FoundryDataAccess {
       };
 
       // 7. AC block — omit flat when mode is "default"
-      const acBlock = data.acMode === 'flat'
-        ? { calc: 'flat', flat: data.acValue }
-        : { calc: 'default' };
+      const acBlock =
+        data.acMode === 'flat' ? { calc: 'flat', flat: data.acValue } : { calc: 'default' };
 
       // 8. Build full actor data
       const actorData: any = {
@@ -7950,60 +7949,60 @@ export class FoundryDataAccess {
           attributes: {
             ac: acBlock,
             hp: {
-              value:   data.hpAverage,
-              max:     data.hpAverage,
-              temp:    0,
+              value: data.hpAverage,
+              max: data.hpAverage,
+              temp: 0,
               tempmax: 0,
               formula: data.hpFormula,
             },
             movement: {
-              walk:    data.walkSpeed,
-              fly:     data.flySpeed,
-              swim:    data.swimSpeed,
-              climb:   data.climbSpeed,
-              burrow:  data.burrowSpeed,
-              units:   'ft',
-              hover:   data.hover,
+              walk: data.walkSpeed,
+              fly: data.flySpeed,
+              swim: data.swimSpeed,
+              climb: data.climbSpeed,
+              burrow: data.burrowSpeed,
+              units: 'ft',
+              hover: data.hover,
               special: '',
             },
             senses: {
-              darkvision:  data.darkvision,
-              blindsight:  data.blindsight,
+              darkvision: data.darkvision,
+              blindsight: data.blindsight,
               tremorsense: data.tremorsense,
-              truesight:   data.truesight,
-              units:       'ft',
-              special:     data.specialSenses,
+              truesight: data.truesight,
+              units: 'ft',
+              special: data.specialSenses,
             },
           },
           details: {
-            cr:        normalizedCR,
+            cr: normalizedCR,
             type: {
-              value:   data.creatureType,
+              value: data.creatureType,
               subtype: data.creatureSubtype,
             },
             alignment: data.alignment,
             biography: {
-              value:  data.biography,
+              value: data.biography,
               public: '',
             },
             source: {
               revision: 1,
-              rules:    data.sourceRules,
-              book:     data.sourceBook,
-              page:     data.sourcePage,
-              custom:   '',
-              license:  '',
+              rules: data.sourceRules,
+              book: data.sourceBook,
+              page: data.sourcePage,
+              custom: '',
+              license: '',
             },
           },
           traits: {
             size: NPC_SIZE_MAP[data.size] ?? 'med',
-            di:   { value: data.damageImmunities,      custom: '', bypasses: [] },
-            dr:   { value: data.damageResistances,     custom: '', bypasses: [] },
-            dv:   { value: data.damageVulnerabilities, custom: '', bypasses: [] },
-            ci:   { value: data.conditionImmunities,   custom: '' },
+            di: { value: data.damageImmunities, custom: '', bypasses: [] },
+            dr: { value: data.damageResistances, custom: '', bypasses: [] },
+            dv: { value: data.damageVulnerabilities, custom: '', bypasses: [] },
+            ci: { value: data.conditionImmunities, custom: '' },
             languages: {
-              value:         data.languages,
-              custom:        data.languagesCustom,
+              value: data.languages,
+              custom: data.languagesCustom,
               communication: {},
             },
           },
@@ -8028,21 +8027,20 @@ export class FoundryDataAccess {
       return {
         success: true,
         actor: {
-          id:     actor.id,
-          name:   actor.name,
-          cr:     npcFormatCR(normalizedCR),
+          id: actor.id,
+          name: actor.name,
+          cr: npcFormatCR(normalizedCR),
           folder: folderId ?? null,
         },
         warnings,
       };
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed to create NPC actor`, error);
       this.auditLog(
         'createNpcActor',
         { name: data.name },
         'failure',
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : 'Unknown error'
       );
       throw error;
     }
@@ -8068,26 +8066,30 @@ export class FoundryDataAccess {
 
       // 2. Duplicate check
       const existing = actor.items.find(
-        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase(),
+        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase()
       );
       if (existing) {
         throw new Error(
           `An item named "${data.featureName}" already exists on actor "${actor.name}". ` +
-          `Remove or rename it first.`,
+            `Remove or rename it first.`
         );
       }
 
       // 3. Soft validation — collect warnings, never block
       const warnings: string[] = [];
 
-      for (const part of (data.damageParts as Array<{ number: number; denomination: number; type: string }>)) {
+      for (const part of data.damageParts as Array<{
+        number: number;
+        denomination: number;
+        type: string;
+      }>) {
         if (!ATTACK_DAMAGE_CANONICAL.has(part.type)) {
           const msg = `Unknown damage type "${part.type}" — verify it matches dnd5e system values`;
           warnings.push(msg);
           console.warn(`[${MODULE_ID}] ${msg}`);
         }
       }
-      for (const prop of (data.properties as string[])) {
+      for (const prop of data.properties as string[]) {
         if (!ATTACK_PROPERTY_CANONICAL.has(prop)) {
           const msg = `Unknown weapon property "${prop}" — verify it matches dnd5e system values`;
           warnings.push(msg);
@@ -8099,27 +8101,30 @@ export class FoundryDataAccess {
       const activityId: string = (foundry.utils as any).randomID(16);
 
       // 5. Damage parts for the activity (all except the first — which is system.damage.base)
-      const activityDamageParts = (data.damageParts as Array<{ number: number; denomination: number; type: string }>)
+      const activityDamageParts = (
+        data.damageParts as Array<{ number: number; denomination: number; type: string }>
+      )
         .slice(1)
-        .map((p) => ({
-          types:        [p.type],
-          number:       p.number,
+        .map(p => ({
+          types: [p.type],
+          number: p.number,
           denomination: p.denomination,
-          bonus:        '',
-          scaling:      { mode: '', number: 1 },
-          custom:       { enabled: false },
+          bonus: '',
+          scaling: { mode: '', number: 1 },
+          custom: { enabled: false },
         }));
 
       // 6. Range object (system-level — holds the real range/reach)
-      const rangeObj = data.attackType === 'melee'
-        ? { value: data.reachFt ?? 5, long: null,                         units: 'ft' }
-        : { value: data.rangeFt,       long: data.longRangeFt ?? null,     units: 'ft' };
+      const rangeObj =
+        data.attackType === 'melee'
+          ? { value: data.reachFt ?? 5, long: null, units: 'ft' }
+          : { value: data.rangeFt, long: data.longRangeFt ?? null, units: 'ft' };
 
       // 7. Conditional 2024-only fields
       const sourceRules: string = data.sourceRules ?? '2014';
-      const masteryField    = sourceRules === '2024' ? { mastery: '' }                   : {};
-      const abilityField    = sourceRules === '2024' ? { ability: data.effectiveAbility } : {};
-      const classification  = sourceRules === '2014' ? 'weapon'                           : '';
+      const masteryField = sourceRules === '2024' ? { mastery: '' } : {};
+      const abilityField = sourceRules === '2024' ? { ability: data.effectiveAbility } : {};
+      const classification = sourceRules === '2014' ? 'weapon' : '';
 
       // 8. Build item data
       const itemData: Record<string, any> = {
@@ -8127,101 +8132,117 @@ export class FoundryDataAccess {
         type: 'weapon',
         system: {
           description: {
-            value:  data.description ?? '',
-            chat:   '',
+            value: data.description ?? '',
+            chat: '',
             unidentified: '',
           },
           source: {
             custom: '',
-            book:   data.sourceBook ?? '',
-            page:   data.sourcePage ?? '',
+            book: data.sourceBook ?? '',
+            page: data.sourcePage ?? '',
             license: '',
-            rules:  sourceRules,
+            rules: sourceRules,
           },
-          quantity:  1,
-          weight:    { value: 0, units: 'lb' },
-          price:     { value: 0, denomination: 'gp' },
+          quantity: 1,
+          weight: { value: 0, units: 'lb' },
+          price: { value: 0, denomination: 'gp' },
           attunement: '',
-          equipped:   data.equipped !== false,
-          rarity:     '',
+          equipped: data.equipped !== false,
+          rarity: '',
           identified: true,
-          activation:  {
-            type:      data.activationType ?? 'action',
-            value:     1,
+          activation: {
+            type: data.activationType ?? 'action',
+            value: 1,
             condition: '',
-            override:  false,
+            override: false,
           },
-          duration:   { value: '',  units: '' },
-          cover:      null,
-          target:     {
-            template:   { count: '', contiguous: false, type: '', size: '', width: '', height: '', units: '' },
-            affects:    { count: '', type: '', choice: false, special: '' },
-            prompt:     true,
-            override:   false,
+          duration: { value: '', units: '' },
+          cover: null,
+          target: {
+            template: {
+              count: '',
+              contiguous: false,
+              type: '',
+              size: '',
+              width: '',
+              height: '',
+              units: '',
+            },
+            affects: { count: '', type: '', choice: false, special: '' },
+            prompt: true,
+            override: false,
           },
-          range:       rangeObj,
-          uses:        { value: null, max: '', recovery: [], prompt: true },
-          damage:      {
+          range: rangeObj,
+          uses: { value: null, max: '', recovery: [], prompt: true },
+          damage: {
             base: {
-              types:        [(data.damageParts as any[])[0].type],
-              number:       (data.damageParts as any[])[0].number,
+              types: [(data.damageParts as any[])[0].type],
+              number: (data.damageParts as any[])[0].number,
               denomination: (data.damageParts as any[])[0].denomination,
-              bonus:        '',
-              scaling:      { mode: '', number: 1 },
-              custom:       { enabled: false },
+              bonus: '',
+              scaling: { mode: '', number: 1 },
+              custom: { enabled: false },
             },
           },
-          type:        { value: data.weaponClass ?? 'natural', baseItem: '' },
-          properties:  (data.properties as string[]),
-          proficient:  1,
+          type: { value: data.weaponClass ?? 'natural', baseItem: '' },
+          properties: data.properties as string[],
+          proficient: 1,
           magicalBonus: null,
           ...masteryField,
           activities: {
             [activityId]: {
-              _id:          activityId,
-              type:         'attack',
-              name:         '',
-              img:          '',
-              sort:         0,
-              description:  {},
-              activation:   {
-                type:      data.activationType ?? 'action',
-                value:     1,
+              _id: activityId,
+              type: 'attack',
+              name: '',
+              img: '',
+              sort: 0,
+              description: {},
+              activation: {
+                type: data.activationType ?? 'action',
+                value: 1,
                 condition: '',
-                override:  false,
+                override: false,
               },
-              duration:     { units: '', value: '', override: false },
-              target:       {
-                template:  { count: '', contiguous: false, type: '', size: '', width: '', height: '', units: '' },
-                affects:   { count: '', type: '', choice: false, special: '' },
-                prompt:    true,
-                override:  false,
+              duration: { units: '', value: '', override: false },
+              target: {
+                template: {
+                  count: '',
+                  contiguous: false,
+                  type: '',
+                  size: '',
+                  width: '',
+                  height: '',
+                  units: '',
+                },
+                affects: { count: '', type: '', choice: false, special: '' },
+                prompt: true,
+                override: false,
               },
-              range:        { units: 'self', override: false },
-              uses:         { spent: 0, max: '', recovery: [] },
-              consumption:  {
-                targets:   [],
-                scaling:   { allowed: false, max: '' },
+              range: { units: 'self', override: false },
+              uses: { spent: 0, max: '', recovery: [] },
+              consumption: {
+                targets: [],
+                scaling: { allowed: false, max: '' },
                 spellSlot: true,
               },
               attack: {
-                ability:   '',
-                bonus:     data.attackBonus > 0 ? String(data.attackBonus) : '',
-                critical:  { threshold: null },
-                flat:      false,
+                ability: '',
+                bonus: data.attackBonus > 0 ? String(data.attackBonus) : '',
+                critical: { threshold: null },
+                flat: false,
                 type: {
-                  value:         data.attackType ?? 'melee',
+                  value: data.attackType ?? 'melee',
                   classification: classification,
                 },
                 ...abilityField,
               },
               damage: {
-                critical:    { bonus: '' },
+                critical: { bonus: '' },
                 includeBase: true,
-                parts:       activityDamageParts,
+                parts: activityDamageParts,
               },
-              effects:  [],
-              save:     { ability: '', dc: { formula: '', calculation: '' } },
+              effects: [],
+              save: { ability: '', dc: { formula: '', calculation: '' } },
             },
           },
         },
@@ -8230,25 +8251,30 @@ export class FoundryDataAccess {
       // 9. Create the item on the actor
       const created = (await actor.createEmbeddedDocuments('Item', [itemData]))[0];
       if (!created) {
-        throw new Error(`Failed to create attack item "${data.featureName}" on actor "${actor.name}"`);
+        throw new Error(
+          `Failed to create attack item "${data.featureName}" on actor "${actor.name}"`
+        );
       }
 
-      this.auditLog('addAttackToActor', { actorId: actor.id, featureName: data.featureName }, 'success');
+      this.auditLog(
+        'addAttackToActor',
+        { actorId: actor.id, featureName: data.featureName },
+        'success'
+      );
 
       return {
-        success:  true,
-        actor:    { id: actor.id,    name: actor.name },
-        item:     { id: created.id,  name: created.name, type: 'weapon' },
+        success: true,
+        actor: { id: actor.id, name: actor.name },
+        item: { id: created.id, name: created.name, type: 'weapon' },
         warnings,
       };
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed to add attack to actor`, error);
       this.auditLog(
         'addAttackToActor',
         { actorIdentifier: data.actorIdentifier, featureName: data.featureName },
         'failure',
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : 'Unknown error'
       );
       throw error;
     }
@@ -8275,19 +8301,23 @@ export class FoundryDataAccess {
 
       // 2. Duplicate check (case-insensitive name match)
       const existing = actor.items.find(
-        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase(),
+        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase()
       );
       if (existing) {
         throw new Error(
           `An item named "${data.featureName}" already exists on actor "${actor.name}". ` +
-          `Remove or rename it first.`,
+            `Remove or rename it first.`
         );
       }
 
       // 3. Soft validation — collect warnings, never block
       const warnings: string[] = [];
 
-      for (const part of (data.damageParts as Array<{ number: number; denomination: number; type: string }>)) {
+      for (const part of data.damageParts as Array<{
+        number: number;
+        denomination: number;
+        type: string;
+      }>) {
         if (!AURA_DAMAGE_CANONICAL.has(part.type)) {
           const msg = `Unknown damage type "${part.type}" — verify it matches dnd5e system values`;
           warnings.push(msg);
@@ -8309,80 +8339,82 @@ export class FoundryDataAccess {
       const itemData = {
         name: data.featureName,
         type: 'feat',
-        img:  'systems/dnd5e/icons/svg/items/feature.svg',
+        img: 'systems/dnd5e/icons/svg/items/feature.svg',
         system: {
           description: { value: data.description ?? '', chat: '' },
           identifier,
           source: {
             revision: 1,
-            rules:    data.sourceRules ?? '2014',
-            custom:   '',
-            book:     data.sourceBook  ?? '',
-            page:     data.sourcePage  ?? '',
-            license:  '',
+            rules: data.sourceRules ?? '2014',
+            custom: '',
+            book: data.sourceBook ?? '',
+            page: data.sourcePage ?? '',
+            license: '',
           },
-          type:          { value: 'monster', subtype: '' },
-          uses:          { spent: 0, recovery: [], max: '' },
-          advancement:   [],
-          crewed:        false,
-          enchant:       {},
+          type: { value: 'monster', subtype: '' },
+          uses: { spent: 0, recovery: [], max: '' },
+          advancement: [],
+          crewed: false,
+          enchant: {},
           prerequisites: { items: [], repeatable: false, level: null },
-          properties:    [],
-          requirements:  '',
+          properties: [],
+          requirements: '',
           activities: {
             [activityId]: {
-              _id:  activityId,
-              type: 'damage',           // activity type: damage — no attack roll, no save
+              _id: activityId,
+              type: 'damage', // activity type: damage — no attack roll, no save
               name: '',
               sort: 0,
               activation: {
-                type:     data.activationType ?? 'action',
-                value:    1,
+                type: data.activationType ?? 'action',
+                value: 1,
                 override: false,
                 // NO condition — not present in real dnd5e 5.1.8 schema
               },
               consumption: {
-                scaling:   { allowed: false },
-                spellSlot: true,        // confirmed: true in real Banshee Wail schema
-                targets:   [],          // no uses management in V1
+                scaling: { allowed: false },
+                spellSlot: true, // confirmed: true in real Banshee Wail schema
+                targets: [], // no uses management in V1
               },
-              description: {},          // empty object — confirmed from real schema
+              description: {}, // empty object — confirmed from real schema
               duration: {
-                units:         'inst',
+                units: 'inst',
                 concentration: false,
-                override:      false,
+                override: false,
               },
               effects: [],
-              range:   { units: 'self', override: false }, // NO value, NO special
-              uses:    { spent: 0, recovery: [] },          // NO max field
+              range: { units: 'self', override: false }, // NO value, NO special
+              uses: { spent: 0, recovery: [] }, // NO max field
               target: {
                 template: {
                   contiguous: false,
-                  units:      data.areaUnits ?? 'ft',
-                  count:      '',
-                  type:       mappedAreaType,
-                  size:       String(data.areaSize),
-                  width:      '',
-                  height:     '',
+                  units: data.areaUnits ?? 'ft',
+                  count: '',
+                  type: mappedAreaType,
+                  size: String(data.areaSize),
+                  width: '',
+                  height: '',
                 },
                 affects: {
-                  count:   '',
-                  type:    data.affectsType ?? 'creature',
-                  choice:  false,
+                  count: '',
+                  type: data.affectsType ?? 'creature',
+                  choice: false,
                   special: '',
                 },
                 override: false,
-                prompt:   true,
+                prompt: true,
               },
               damage: {
-                critical: { allow: false },  // only this key — no bonus, no dice
-                parts: (data.damageParts as Array<{ number: number; denomination: number; type: string }>).map((p) => ({
-                  types:        [p.type],
-                  number:       p.number,
+                critical: { allow: false }, // only this key — no bonus, no dice
+                parts: (
+                  data.damageParts as Array<{ number: number; denomination: number; type: string }>
+                ).map(p => ({
+                  types: [p.type],
+                  number: p.number,
                   denomination: p.denomination,
-                  bonus:        '',
-                  scaling:      { mode: '', number: 1 }, // mode: '' required — from real schema
-                  custom:       { enabled: false },       // NO formula field
+                  bonus: '',
+                  scaling: { mode: '', number: 1 }, // mode: '' required — from real schema
+                  custom: { enabled: false }, // NO formula field
                 })),
                 // NO onSave — damage activity has no save concept
               },
@@ -8395,29 +8427,32 @@ export class FoundryDataAccess {
       };
 
       // 7. Create embedded item
-      const [created] = await actor.createEmbeddedDocuments('Item', [itemData]) as any[];
+      const [created] = (await actor.createEmbeddedDocuments('Item', [itemData])) as any[];
       if (!created) {
         throw new Error(
-          `Failed to create aura item "${data.featureName}" on actor "${actor.name}"`,
+          `Failed to create aura item "${data.featureName}" on actor "${actor.name}"`
         );
       }
 
-      this.auditLog('addAuraToActor', { actorId: actor.id, featureName: data.featureName }, 'success');
+      this.auditLog(
+        'addAuraToActor',
+        { actorId: actor.id, featureName: data.featureName },
+        'success'
+      );
 
       return {
-        success:  true,
-        actor:    { id: actor.id,    name: actor.name },
-        item:     { id: created.id,  name: created.name, type: 'feat' },
+        success: true,
+        actor: { id: actor.id, name: actor.name },
+        item: { id: created.id, name: created.name, type: 'feat' },
         warnings,
       };
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed to add aura to actor`, error);
       this.auditLog(
         'addAuraToActor',
         { actorIdentifier: data.actorIdentifier, featureName: data.featureName },
         'failure',
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : 'Unknown error'
       );
       throw error;
     }
@@ -8444,12 +8479,12 @@ export class FoundryDataAccess {
 
       // 2. Duplicate check (case-insensitive)
       const existing = actor.items.find(
-        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase(),
+        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase()
       );
       if (existing) {
         throw new Error(
           `An item named "${data.featureName}" already exists on actor "${actor.name}". ` +
-          `Remove or rename it first.`,
+            `Remove or rename it first.`
         );
       }
 
@@ -8460,54 +8495,57 @@ export class FoundryDataAccess {
       const itemData = {
         name: data.featureName,
         type: 'feat',
-        img:  'systems/dnd5e/icons/svg/items/feature.svg',
+        img: 'systems/dnd5e/icons/svg/items/feature.svg',
         system: {
           description: { value: data.description ?? '', chat: '' },
           identifier,
           source: {
             revision: 1,
-            rules:    data.sourceRules ?? '2014',
-            custom:   '',
-            book:     data.sourceBook  ?? '',
-            page:     data.sourcePage  ?? '',
-            license:  '',
+            rules: data.sourceRules ?? '2014',
+            custom: '',
+            book: data.sourceBook ?? '',
+            page: data.sourcePage ?? '',
+            license: '',
           },
-          type:          { value: 'monster', subtype: '' },
-          uses:          { spent: 0, recovery: [], max: '' },
-          advancement:   [],
-          crewed:        false,
-          enchant:       {},
+          type: { value: 'monster', subtype: '' },
+          uses: { spent: 0, recovery: [], max: '' },
+          advancement: [],
+          crewed: false,
+          enchant: {},
           prerequisites: { items: [], repeatable: false, level: null },
-          properties:    [],
-          requirements:  '',
-          activities:    {},  // empty — passive feature has no mechanical activity
+          properties: [],
+          requirements: '',
+          activities: {}, // empty — passive feature has no mechanical activity
         },
         effects: [],
       };
 
       // 5. Create embedded item
-      const [created] = await actor.createEmbeddedDocuments('Item', [itemData]) as any[];
+      const [created] = (await actor.createEmbeddedDocuments('Item', [itemData])) as any[];
       if (!created) {
         throw new Error(
-          `Failed to create passive feature "${data.featureName}" on actor "${actor.name}"`,
+          `Failed to create passive feature "${data.featureName}" on actor "${actor.name}"`
         );
       }
 
-      this.auditLog('addPassiveFeatureToActor', { actorId: actor.id, featureName: data.featureName }, 'success');
+      this.auditLog(
+        'addPassiveFeatureToActor',
+        { actorId: actor.id, featureName: data.featureName },
+        'success'
+      );
 
       return {
         success: true,
-        actor:   { id: actor.id,    name: actor.name },
-        item:    { id: created.id,  name: created.name, type: 'feat' },
+        actor: { id: actor.id, name: actor.name },
+        item: { id: created.id, name: created.name, type: 'feat' },
       };
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed to add passive feature to actor`, error);
       this.auditLog(
         'addPassiveFeatureToActor',
         { actorIdentifier: data.actorIdentifier, featureName: data.featureName },
         'failure',
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : 'Unknown error'
       );
       throw error;
     }
@@ -8535,19 +8573,19 @@ export class FoundryDataAccess {
 
       // 2. Duplicate check
       const existing = actor.items.find(
-        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase(),
+        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase()
       );
       if (existing) {
         throw new Error(
           `An item named "${data.featureName}" already exists on actor "${actor.name}". ` +
-          `Remove or rename it first.`,
+            `Remove or rename it first.`
         );
       }
 
       // 3. Soft validation — both damage groups unified
       const warnings: string[] = [];
       const allParts = [
-        ...(data.damageParts     as Array<{ type: string }>),
+        ...(data.damageParts as Array<{ type: string }>),
         ...(data.saveDamageParts as Array<{ type: string }>),
       ];
       for (const part of allParts) {
@@ -8560,41 +8598,45 @@ export class FoundryDataAccess {
 
       // 4. Generate two distinct activity IDs
       const attackActivityId: string = (foundry.utils as any).randomID(16);
-      const saveActivityId:   string = (foundry.utils as any).randomID(16);
+      const saveActivityId: string = (foundry.utils as any).randomID(16);
 
       // 5. Attack activity damage parts: damageParts[1+] (base is in system.damage.base)
-      const activityDamageParts = (data.damageParts as Array<{ number: number; denomination: number; type: string }>)
+      const activityDamageParts = (
+        data.damageParts as Array<{ number: number; denomination: number; type: string }>
+      )
         .slice(1)
-        .map((p) => ({
-          types:        [p.type],
-          number:       p.number,
+        .map(p => ({
+          types: [p.type],
+          number: p.number,
           denomination: p.denomination,
-          bonus:        '',
-          scaling:      { mode: '', number: 1 },
-          custom:       { enabled: false },
+          bonus: '',
+          scaling: { mode: '', number: 1 },
+          custom: { enabled: false },
         }));
 
       // 6. Save activity damage parts: ALL saveDamageParts (no base — independent)
-      const saveActivityDamageParts = (data.saveDamageParts as Array<{ number: number; denomination: number; type: string }>)
-        .map((p) => ({
-          types:        [p.type],
-          number:       p.number,
-          denomination: p.denomination,
-          bonus:        '',
-          scaling:      { mode: '', number: 1 },
-          custom:       { enabled: false },
-        }));
+      const saveActivityDamageParts = (
+        data.saveDamageParts as Array<{ number: number; denomination: number; type: string }>
+      ).map(p => ({
+        types: [p.type],
+        number: p.number,
+        denomination: p.denomination,
+        bonus: '',
+        scaling: { mode: '', number: 1 },
+        custom: { enabled: false },
+      }));
 
       // 7. System-level range (real reach/range — activity range is always 'self')
-      const rangeObj = data.attackType === 'melee'
-        ? { value: data.reachFt ?? 5, long: null,                     units: 'ft' }
-        : { value: data.rangeFt,       long: data.longRangeFt ?? null, units: 'ft' };
+      const rangeObj =
+        data.attackType === 'melee'
+          ? { value: data.reachFt ?? 5, long: null, units: 'ft' }
+          : { value: data.rangeFt, long: data.longRangeFt ?? null, units: 'ft' };
 
       // 8. Conditional 2024-only fields (same rules as Tipo A)
       const sourceRules: string = data.sourceRules ?? '2014';
-      const masteryField   = sourceRules === '2024' ? { mastery: '' }                   : {};
-      const abilityField   = sourceRules === '2024' ? { ability: data.effectiveAbility } : {};
-      const classification = sourceRules === '2014' ? 'weapon'                           : '';
+      const masteryField = sourceRules === '2024' ? { mastery: '' } : {};
+      const abilityField = sourceRules === '2024' ? { ability: data.effectiveAbility } : {};
+      const classification = sourceRules === '2014' ? 'weapon' : '';
 
       // 9. Build item data
       const itemData: Record<string, any> = {
@@ -8602,136 +8644,155 @@ export class FoundryDataAccess {
         type: 'weapon',
         system: {
           description: {
-            value:        data.description ?? '',
-            chat:         '',
+            value: data.description ?? '',
+            chat: '',
             unidentified: '',
           },
           source: {
-            custom:  '',
-            book:    data.sourceBook ?? '',
-            page:    data.sourcePage ?? '',
+            custom: '',
+            book: data.sourceBook ?? '',
+            page: data.sourcePage ?? '',
             license: '',
-            rules:   sourceRules,
+            rules: sourceRules,
           },
-          quantity:   1,
-          weight:     { value: 0, units: 'lb' },
-          price:      { value: 0, denomination: 'gp' },
+          quantity: 1,
+          weight: { value: 0, units: 'lb' },
+          price: { value: 0, denomination: 'gp' },
           attunement: '',
-          equipped:   data.equipped !== false,
-          rarity:     '',
+          equipped: data.equipped !== false,
+          rarity: '',
           identified: true,
           activation: {
-            type:      data.activationType ?? 'action',
-            value:     1,
+            type: data.activationType ?? 'action',
+            value: 1,
             condition: '',
-            override:  false,
-          },
-          duration: { value: '', units: '' },
-          cover:    null,
-          target:   {
-            template: { count: '', contiguous: false, type: '', size: '', width: '', height: '', units: '' },
-            affects:  { count: '', type: '', choice: false, special: '' },
-            prompt:   true,
             override: false,
           },
-          range:    rangeObj,
-          uses:     { value: null, max: '', recovery: [], prompt: true },
-          damage:   {
+          duration: { value: '', units: '' },
+          cover: null,
+          target: {
+            template: {
+              count: '',
+              contiguous: false,
+              type: '',
+              size: '',
+              width: '',
+              height: '',
+              units: '',
+            },
+            affects: { count: '', type: '', choice: false, special: '' },
+            prompt: true,
+            override: false,
+          },
+          range: rangeObj,
+          uses: { value: null, max: '', recovery: [], prompt: true },
+          damage: {
             base: {
-              types:        [(data.damageParts as any[])[0].type],
-              number:       (data.damageParts as any[])[0].number,
+              types: [(data.damageParts as any[])[0].type],
+              number: (data.damageParts as any[])[0].number,
               denomination: (data.damageParts as any[])[0].denomination,
-              bonus:        '',
-              scaling:      { mode: '', number: 1 },
-              custom:       { enabled: false },
+              bonus: '',
+              scaling: { mode: '', number: 1 },
+              custom: { enabled: false },
             },
           },
-          type:         { value: data.weaponClass ?? 'natural', baseItem: '' },
-          properties:   (data.properties as string[]),
-          proficient:   1,
+          type: { value: data.weaponClass ?? 'natural', baseItem: '' },
+          properties: data.properties as string[],
+          proficient: 1,
           magicalBonus: null,
           ...masteryField,
           activities: {
-
             // ── Activity 1: attack (sort 0) ───────────────────────────────
             [attackActivityId]: {
-              _id:         attackActivityId,
-              type:        'attack',
-              name:        '',
-              img:         '',
-              sort:        0,
+              _id: attackActivityId,
+              type: 'attack',
+              name: '',
+              img: '',
+              sort: 0,
               description: {},
-              activation:  {
-                type:      data.activationType ?? 'action',
-                value:     1,
+              activation: {
+                type: data.activationType ?? 'action',
+                value: 1,
                 condition: '',
-                override:  false,
-              },
-              duration:    { units: '', value: '', override: false },
-              target:      {
-                template: { count: '', contiguous: false, type: '', size: '', width: '', height: '', units: '' },
-                affects:  { count: '', type: '', choice: false, special: '' },
-                prompt:   true,
                 override: false,
               },
-              range:       { units: 'self', override: false },
-              uses:        { spent: 0, max: '', recovery: [] },
+              duration: { units: '', value: '', override: false },
+              target: {
+                template: {
+                  count: '',
+                  contiguous: false,
+                  type: '',
+                  size: '',
+                  width: '',
+                  height: '',
+                  units: '',
+                },
+                affects: { count: '', type: '', choice: false, special: '' },
+                prompt: true,
+                override: false,
+              },
+              range: { units: 'self', override: false },
+              uses: { spent: 0, max: '', recovery: [] },
               consumption: { targets: [], scaling: { allowed: false, max: '' }, spellSlot: true },
               attack: {
-                ability:  '',
-                bonus:    data.attackBonus > 0 ? String(data.attackBonus) : '',
+                ability: '',
+                bonus: data.attackBonus > 0 ? String(data.attackBonus) : '',
                 critical: { threshold: null },
-                flat:     false,
-                type:     { value: data.attackType ?? 'melee', classification },
+                flat: false,
+                type: { value: data.attackType ?? 'melee', classification },
                 ...abilityField,
               },
               damage: {
-                critical:    { bonus: '' },
+                critical: { bonus: '' },
                 includeBase: true,
-                parts:       activityDamageParts,
+                parts: activityDamageParts,
               },
               effects: [],
-              save:    { ability: '', dc: { formula: '', calculation: '' } },
+              save: { ability: '', dc: { formula: '', calculation: '' } },
             },
 
             // ── Activity 2: save (sort 1) ─────────────────────────────────
             [saveActivityId]: {
-              _id:         saveActivityId,
-              type:        'save',
-              name:        '',
-              sort:        1,
-              description: {},           // {} — not { chatFlavor: '' } (real schema confirmed)
-              activation:  {
-                type:     data.activationType ?? 'action',
-                value:    1,
+              _id: saveActivityId,
+              type: 'save',
+              name: '',
+              sort: 1,
+              description: {}, // {} — not { chatFlavor: '' } (real schema confirmed)
+              activation: {
+                type: data.activationType ?? 'action',
+                value: 1,
                 override: false,
                 // NO condition — per real schema
               },
-              duration:    { units: 'inst', concentration: false, override: false },
-              effects:     [],
-              range:       { units: 'self', override: false },
-              uses:        { spent: 0, recovery: [] },  // NO max
+              duration: { units: 'inst', concentration: false, override: false },
+              effects: [],
+              range: { units: 'self', override: false },
+              uses: { spent: 0, recovery: [] }, // NO max
               consumption: { scaling: { allowed: false }, spellSlot: true, targets: [] },
-              target:      {
+              target: {
                 template: {
-                  count: '', contiguous: false, type: '', size: '',
-                  width: '', height: '', units: '',
+                  count: '',
+                  contiguous: false,
+                  type: '',
+                  size: '',
+                  width: '',
+                  height: '',
+                  units: '',
                 },
-                affects:  { count: '1', type: 'creature', choice: false, special: '' },
+                affects: { count: '1', type: 'creature', choice: false, special: '' },
                 override: false,
-                prompt:   true,
+                prompt: true,
               },
               damage: {
                 onSave: data.saveOnSave ?? 'none',
-                parts:  saveActivityDamageParts,
+                parts: saveActivityDamageParts,
                 // NO includeBase — save damage is independent from weapon base damage
               },
               save: {
                 ability: [data.saveAbility],
-                dc:      { calculation: '', formula: String(data.saveDC) },
+                dc: { calculation: '', formula: String(data.saveDC) },
               },
             },
-
           },
         },
       };
@@ -8740,26 +8801,29 @@ export class FoundryDataAccess {
       const created = (await actor.createEmbeddedDocuments('Item', [itemData]))[0];
       if (!created) {
         throw new Error(
-          `Failed to create attack+save item "${data.featureName}" on actor "${actor.name}"`,
+          `Failed to create attack+save item "${data.featureName}" on actor "${actor.name}"`
         );
       }
 
-      this.auditLog('addAttackWithSaveToActor', { actorId: actor.id, featureName: data.featureName }, 'success');
+      this.auditLog(
+        'addAttackWithSaveToActor',
+        { actorId: actor.id, featureName: data.featureName },
+        'success'
+      );
 
       return {
-        success:  true,
-        actor:    { id: actor.id,    name: actor.name },
-        item:     { id: created.id,  name: created.name, type: 'weapon' },
+        success: true,
+        actor: { id: actor.id, name: actor.name },
+        item: { id: created.id, name: created.name, type: 'weapon' },
         warnings,
       };
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed to add attack+save to actor`, error);
       this.auditLog(
         'addAttackWithSaveToActor',
         { actorIdentifier: data.actorIdentifier, featureName: data.featureName },
         'failure',
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : 'Unknown error'
       );
       throw error;
     }
@@ -8783,10 +8847,10 @@ export class FoundryDataAccess {
         throw new Error(`Actor not found: "${data.actorIdentifier}"`);
       }
 
-      const cls        = data.spellcastingClass  as string;
-      const lvl        = data.spellcastingLevel  as number;
-      const ability    = data.effectiveAbility   as string;
-      const idx        = lvl - 1; // 0-based index into slot tables
+      const cls = data.spellcastingClass as string;
+      const lvl = data.spellcastingLevel as number;
+      const ability = data.effectiveAbility as string;
+      const idx = lvl - 1; // 0-based index into slot tables
       const warnings: string[] = [];
 
       // 2. Build flat updates object for a single actor.update() call
@@ -8799,14 +8863,13 @@ export class FoundryDataAccess {
         // ── Pact Magic ────────────────────────────────────────────────────────
         // All regular slots set to 0; pact slots from table
         for (let i = 1; i <= 9; i++) {
-          updates[`system.spells.spell${i}.max`]   = 0;
+          updates[`system.spells.spell${i}.max`] = 0;
           updates[`system.spells.spell${i}.value`] = 0;
         }
         const pact = WARLOCK_PACT_TABLE[idx];
-        updates['system.spells.pact.max']   = pact.max;
+        updates['system.spells.pact.max'] = pact.max;
         updates['system.spells.pact.value'] = pact.max;
         updates['system.spells.pact.level'] = pact.level;
-
       } else {
         // ── Regular spell slots ───────────────────────────────────────────────
         let slotRow: number[];
@@ -8817,7 +8880,7 @@ export class FoundryDataAccess {
           slotRow = HALF_CASTER_SLOTS[idx];
           if (lvl === 1) {
             warnings.push(
-              `${cls} level 1 has no spell slots — use level 2+ to unlock spellcasting`,
+              `${cls} level 1 has no spell slots — use level 2+ to unlock spellcasting`
             );
           }
         } else {
@@ -8827,7 +8890,7 @@ export class FoundryDataAccess {
 
         for (let i = 1; i <= 9; i++) {
           const n = slotRow[i - 1];
-          updates[`system.spells.spell${i}.max`]   = n;
+          updates[`system.spells.spell${i}.max`] = n;
           updates[`system.spells.spell${i}.value`] = n;
         }
       }
@@ -8841,11 +8904,12 @@ export class FoundryDataAccess {
         const pact = WARLOCK_PACT_TABLE[idx];
         slots['pact'] = { max: pact.max, level: pact.level };
       } else {
-        const slotRow = cls === 'artificer'
-          ? ARTIFICER_SLOTS[idx]
-          : (cls === 'paladin' || cls === 'ranger')
-            ? HALF_CASTER_SLOTS[idx]
-            : FULL_CASTER_SLOTS[idx];
+        const slotRow =
+          cls === 'artificer'
+            ? ARTIFICER_SLOTS[idx]
+            : cls === 'paladin' || cls === 'ranger'
+              ? HALF_CASTER_SLOTS[idx]
+              : FULL_CASTER_SLOTS[idx];
 
         for (let i = 1; i <= 9; i++) {
           (slots as Record<string, number>)[`spell${i}`] = slotRow[i - 1];
@@ -8855,18 +8919,17 @@ export class FoundryDataAccess {
       this.auditLog('setActorSpellcasting', { actorId: actor.id, cls, lvl, ability }, 'success');
 
       return {
-        actor:        { id: actor.id, name: actor.name },
+        actor: { id: actor.id, name: actor.name },
         spellcasting: { ability, slots },
         warnings,
       };
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed to set actor spellcasting`, error);
       this.auditLog(
         'setActorSpellcasting',
         { actorIdentifier: data.actorIdentifier, spellcastingClass: data.spellcastingClass },
         'failure',
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : 'Unknown error'
       );
       throw error;
     }
@@ -8890,13 +8953,13 @@ export class FoundryDataAccess {
         throw new Error(`Actor not found: "${data.actorIdentifier}"`);
       }
 
-      const spellNames:      string[] = data.spellNames;
+      const spellNames: string[] = data.spellNames;
       const compendiumPacks: string[] = data.compendiumPacks ?? ['dnd5e.spells'];
-      const warnings:        string[] = [];
+      const warnings: string[] = [];
 
       // ── Phase A: deduplicate input (case-insensitive) ─────────────────────
-      const seen            = new Set<string>();
-      const unique:  string[] = [];
+      const seen = new Set<string>();
+      const unique: string[] = [];
       const skipped: Array<{ name: string; reason: string }> = [];
 
       for (const name of spellNames) {
@@ -8911,9 +8974,9 @@ export class FoundryDataAccess {
 
       // ── Phase B: build pack index maps (once per pack) ────────────────────
       interface PackMap {
-        packId:    string;
+        packId: string;
         packLabel: string;
-        nameMap:   Map<string, string>; // lowercase name → _id
+        nameMap: Map<string, string>; // lowercase name → _id
       }
       const packMaps: PackMap[] = [];
 
@@ -8927,7 +8990,7 @@ export class FoundryDataAccess {
         // Q6: type guard — Item packs only
         if (pack.metadata.type !== 'Item') {
           warnings.push(
-            `Pack "${packId}" has type "${pack.metadata.type}", expected "Item" — skipped`,
+            `Pack "${packId}" has type "${pack.metadata.type}", expected "Item" — skipped`
           );
           continue;
         }
@@ -8949,21 +9012,21 @@ export class FoundryDataAccess {
       if (packMaps.length === 0) {
         throw new Error(
           'No valid compendium packs available — check the compendiumPacks parameter. ' +
-          'Valid pack IDs for D&D 5e: "dnd5e.spells" (2014) or "dnd5e.spells24" (2024).',
+            'Valid pack IDs for D&D 5e: "dnd5e.spells" (2014) or "dnd5e.spells24" (2024).'
         );
       }
 
       // ── Phase C: per-spell search + import ───────────────────────────────
-      const added:    Array<{ name: string; packId: string; packLabel: string; itemId: string }> = [];
+      const added: Array<{ name: string; packId: string; packLabel: string; itemId: string }> = [];
       const notFound: string[] = [];
-      const failed:   Array<{ name: string; error: string }> = [];
+      const failed: Array<{ name: string; error: string }> = [];
 
       for (const name of unique) {
         const normalizedName = name.toLowerCase();
 
         // 1. Duplicate check on actor (only items of type 'spell')
         const existing = (actor.items as any[]).find(
-          (i: any) => i.type === 'spell' && i.name?.toLowerCase() === normalizedName,
+          (i: any) => i.type === 'spell' && i.name?.toLowerCase() === normalizedName
         );
         if (existing) {
           skipped.push({ name, reason: 'already on actor' });
@@ -8986,13 +9049,15 @@ export class FoundryDataAccess {
         }
 
         // 3. Fetch full document from compendium
-        const pack     = game.packs.get(found.packId);
+        const pack = game.packs.get(found.packId);
         const document = await (pack as any).getDocument(found.entryId);
 
         if (!document) {
           // Entry was in index but document is missing (shouldn't happen, defensive)
           notFound.push(name);
-          warnings.push(`"${name}" found in index but document missing in pack "${found.packId}" — skipped`);
+          warnings.push(
+            `"${name}" found in index but document missing in pack "${found.packId}" — skipped`
+          );
           continue;
         }
 
@@ -9002,12 +9067,12 @@ export class FoundryDataAccess {
 
         // 5. Embed individually — per-spell error isolation
         try {
-          const [created] = await actor.createEmbeddedDocuments('Item', [spellData]) as any[];
+          const [created] = (await actor.createEmbeddedDocuments('Item', [spellData])) as any[];
           added.push({
             name,
-            packId:    found.packId,
+            packId: found.packId,
             packLabel: found.packLabel,
-            itemId:    created.id,
+            itemId: created.id,
           });
         } catch (embedErr) {
           failed.push({
@@ -9018,30 +9083,33 @@ export class FoundryDataAccess {
       }
 
       // ── Phase D: audit + return ───────────────────────────────────────────
-      this.auditLog('addSpellsToActor', {
-        actorId:  actor.id,
-        added:    added.length,
-        skipped:  skipped.length,
-        notFound: notFound.length,
-        failed:   failed.length,
-      }, 'success');
+      this.auditLog(
+        'addSpellsToActor',
+        {
+          actorId: actor.id,
+          added: added.length,
+          skipped: skipped.length,
+          notFound: notFound.length,
+          failed: failed.length,
+        },
+        'success'
+      );
 
       return {
-        actor:    { id: actor.id, name: actor.name },
+        actor: { id: actor.id, name: actor.name },
         added,
         skipped,
         notFound,
         failed,
         warnings,
       };
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed to add spells to actor`, error);
       this.auditLog(
         'addSpellsToActor',
         { actorIdentifier: data.actorIdentifier },
         'failure',
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : 'Unknown error'
       );
       throw error;
     }
@@ -9065,13 +9133,16 @@ export class FoundryDataAccess {
         throw new Error(`Actor not found: "${data.actorIdentifier}"`);
       }
 
-      const featureNames:    string[] = data.featureNames;
-      const compendiumPacks: string[] = data.compendiumPacks ?? ['dnd5e.monsterfeatures', 'dnd5e.classfeatures'];
-      const warnings:        string[] = [];
+      const featureNames: string[] = data.featureNames;
+      const compendiumPacks: string[] = data.compendiumPacks ?? [
+        'dnd5e.monsterfeatures',
+        'dnd5e.classfeatures',
+      ];
+      const warnings: string[] = [];
 
       // ── Phase A: deduplicate input (case-insensitive) ─────────────────────
-      const seen            = new Set<string>();
-      const unique:  string[] = [];
+      const seen = new Set<string>();
+      const unique: string[] = [];
       const skipped: Array<{ name: string; reason: string }> = [];
 
       for (const name of featureNames) {
@@ -9086,9 +9157,9 @@ export class FoundryDataAccess {
 
       // ── Phase B: build pack index maps (once per pack) ────────────────────
       interface PackMap {
-        packId:    string;
+        packId: string;
         packLabel: string;
-        nameMap:   Map<string, string>; // lowercase name → _id
+        nameMap: Map<string, string>; // lowercase name → _id
       }
       const packMaps: PackMap[] = [];
 
@@ -9102,7 +9173,7 @@ export class FoundryDataAccess {
         // Type guard — Item packs only
         if (pack.metadata.type !== 'Item') {
           warnings.push(
-            `Pack "${packId}" has type "${pack.metadata.type}", expected "Item" — skipped`,
+            `Pack "${packId}" has type "${pack.metadata.type}", expected "Item" — skipped`
           );
           continue;
         }
@@ -9124,16 +9195,16 @@ export class FoundryDataAccess {
       if (packMaps.length === 0) {
         throw new Error(
           'No valid compendium packs available — check the compendiumPacks parameter. ' +
-          'Valid pack IDs for D&D 5e: "dnd5e.monsterfeatures" or "dnd5e.classfeatures" (2014), ' +
-          '"dnd5e.monsterfeatures24" (2024 monster features). ' +
-          'Note: 2024 class features are embedded in class items and cannot be imported with this tool.',
+            'Valid pack IDs for D&D 5e: "dnd5e.monsterfeatures" or "dnd5e.classfeatures" (2014), ' +
+            '"dnd5e.monsterfeatures24" (2024 monster features). ' +
+            'Note: 2024 class features are embedded in class items and cannot be imported with this tool.'
         );
       }
 
       // ── Phase C: per-feature search + import ─────────────────────────────
-      const added:    Array<{ name: string; packId: string; packLabel: string; itemId: string }> = [];
+      const added: Array<{ name: string; packId: string; packLabel: string; itemId: string }> = [];
       const notFound: string[] = [];
-      const failed:   Array<{ name: string; error: string }> = [];
+      const failed: Array<{ name: string; error: string }> = [];
 
       for (const name of unique) {
         const normalizedName = name.toLowerCase();
@@ -9141,7 +9212,7 @@ export class FoundryDataAccess {
         // 1. Duplicate check on actor — name-only, any item type
         //    (feature names are semantically unique on an actor regardless of stored type)
         const existing = (actor.items as any[]).find(
-          (i: any) => i.name?.toLowerCase() === normalizedName,
+          (i: any) => i.name?.toLowerCase() === normalizedName
         );
         if (existing) {
           skipped.push({ name, reason: 'already on actor' });
@@ -9164,13 +9235,15 @@ export class FoundryDataAccess {
         }
 
         // 3. Fetch full document from compendium
-        const pack     = game.packs.get(found.packId);
+        const pack = game.packs.get(found.packId);
         const document = await (pack as any).getDocument(found.entryId);
 
         if (!document) {
           // Entry was in index but document is missing (shouldn't happen, defensive)
           notFound.push(name);
-          warnings.push(`"${name}" found in index but document missing in pack "${found.packId}" — skipped`);
+          warnings.push(
+            `"${name}" found in index but document missing in pack "${found.packId}" — skipped`
+          );
           continue;
         }
 
@@ -9180,12 +9253,12 @@ export class FoundryDataAccess {
 
         // 5. Embed individually — per-feature error isolation
         try {
-          const [created] = await actor.createEmbeddedDocuments('Item', [featureData]) as any[];
+          const [created] = (await actor.createEmbeddedDocuments('Item', [featureData])) as any[];
           added.push({
             name,
-            packId:    found.packId,
+            packId: found.packId,
             packLabel: found.packLabel,
-            itemId:    created.id,
+            itemId: created.id,
           });
         } catch (embedErr) {
           failed.push({
@@ -9196,35 +9269,37 @@ export class FoundryDataAccess {
       }
 
       // ── Phase D: audit + return ───────────────────────────────────────────
-      this.auditLog('addFeaturesFromCompendium', {
-        actorId:  actor.id,
-        added:    added.length,
-        skipped:  skipped.length,
-        notFound: notFound.length,
-        failed:   failed.length,
-      }, 'success');
+      this.auditLog(
+        'addFeaturesFromCompendium',
+        {
+          actorId: actor.id,
+          added: added.length,
+          skipped: skipped.length,
+          notFound: notFound.length,
+          failed: failed.length,
+        },
+        'success'
+      );
 
       return {
-        actor:    { id: actor.id, name: actor.name },
+        actor: { id: actor.id, name: actor.name },
         added,
         skipped,
         notFound,
         failed,
         warnings,
       };
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed to add features from compendium`, error);
       this.auditLog(
         'addFeaturesFromCompendium',
         { actorIdentifier: data.actorIdentifier },
         'failure',
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : 'Unknown error'
       );
       throw error;
     }
   }
-
 }
 
 // =============================================================================
@@ -9247,44 +9322,67 @@ function slugify(name: string, fallback = 'feature'): string {
 // =============================================================================
 
 const NPC_DAMAGE_CANONICAL = new Set([
-  'acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning',
-  'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder',
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
 ]);
 
 const NPC_CONDITION_CANONICAL = new Set([
-  'blinded', 'charmed', 'deafened', 'exhaustion', 'frightened', 'grappled',
-  'incapacitated', 'invisible', 'paralyzed', 'petrified', 'poisoned',
-  'prone', 'restrained', 'stunned', 'unconscious',
+  'blinded',
+  'charmed',
+  'deafened',
+  'exhaustion',
+  'frightened',
+  'grappled',
+  'incapacitated',
+  'invisible',
+  'paralyzed',
+  'petrified',
+  'poisoned',
+  'prone',
+  'restrained',
+  'stunned',
+  'unconscious',
 ]);
 
 const NPC_SIZE_MAP: Record<string, string> = {
-  tiny:       'tiny',
-  small:      'sm',
-  medium:     'med',
-  large:      'lg',
-  huge:       'huge',
+  tiny: 'tiny',
+  small: 'sm',
+  medium: 'med',
+  large: 'lg',
+  huge: 'huge',
   gargantuan: 'grg',
 };
 
 const NPC_SKILL_MAP: Record<string, string> = {
-  'Acrobatics':      'acr',
+  Acrobatics: 'acr',
   'Animal Handling': 'ani',
-  'Arcana':          'arc',
-  'Athletics':       'ath',
-  'Deception':       'dec',
-  'History':         'his',
-  'Insight':         'ins',
-  'Intimidation':    'itm',
-  'Investigation':   'inv',
-  'Medicine':        'med',
-  'Nature':          'nat',
-  'Perception':      'prc',
-  'Performance':     'prf',
-  'Persuasion':      'per',
-  'Religion':        'rel',
+  Arcana: 'arc',
+  Athletics: 'ath',
+  Deception: 'dec',
+  History: 'his',
+  Insight: 'ins',
+  Intimidation: 'itm',
+  Investigation: 'inv',
+  Medicine: 'med',
+  Nature: 'nat',
+  Perception: 'prc',
+  Performance: 'prf',
+  Persuasion: 'per',
+  Religion: 'rel',
   'Sleight of Hand': 'slt',
-  'Stealth':         'ste',
-  'Survival':        'sur',
+  Stealth: 'ste',
+  Survival: 'sur',
 };
 
 function npcNormalizeCR(input: string | number): number {
@@ -9297,15 +9395,15 @@ function npcNormalizeCR(input: string | number): number {
 }
 
 function npcFormatCR(value: number): string {
-  if (value === 0)     return '0';
+  if (value === 0) return '0';
   if (value === 0.125) return '1/8';
-  if (value === 0.25)  return '1/4';
-  if (value === 0.5)   return '1/2';
+  if (value === 0.25) return '1/4';
+  if (value === 0.5) return '1/2';
   return String(Math.round(value));
 }
 
 function npcBuildSkillsBlock(
-  skills: Array<{ skill: string; proficiency: string }>,
+  skills: Array<{ skill: string; proficiency: string }>
 ): Record<string, { value: number }> {
   const result: Record<string, { value: number }> = {};
   for (const { skill, proficiency } of skills) {
@@ -9322,13 +9420,37 @@ function npcBuildSkillsBlock(
 // =============================================================================
 
 const ATTACK_DAMAGE_CANONICAL = new Set([
-  'acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning',
-  'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder',
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
 ]);
 
 const ATTACK_PROPERTY_CANONICAL = new Set([
-  'ada', 'amm', 'fin', 'fir', 'foc', 'hvy', 'lgt', 'lod', 'mgc',
-  'rch', 'ret', 'spc', 'thr', 'two', 'ver',
+  'ada',
+  'amm',
+  'fin',
+  'fir',
+  'foc',
+  'hvy',
+  'lgt',
+  'lod',
+  'mgc',
+  'rch',
+  'ret',
+  'spc',
+  'thr',
+  'two',
+  'ver',
 ]);
 
 // =============================================================================
@@ -9336,8 +9458,19 @@ const ATTACK_PROPERTY_CANONICAL = new Set([
 // =============================================================================
 
 const AURA_DAMAGE_CANONICAL = new Set([
-  'acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning',
-  'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder',
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
 ]);
 
 // =============================================================================
@@ -9345,8 +9478,19 @@ const AURA_DAMAGE_CANONICAL = new Set([
 // =============================================================================
 
 const ATTACK_WITH_SAVE_DAMAGE_CANONICAL = new Set([
-  'acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning',
-  'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder',
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
 ]);
 
 // =============================================================================

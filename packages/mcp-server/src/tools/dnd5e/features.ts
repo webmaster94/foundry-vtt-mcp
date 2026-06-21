@@ -93,16 +93,18 @@ export class DnD5eFeaturesFromCompendiumTools {
   async handleAddFeaturesFromCompendium(args: any): Promise<any> {
     const schema = z.object({
       actorIdentifier: z.string().min(1, 'actorIdentifier cannot be empty'),
-      featureNames:    z.array(z.string().min(1)).min(1).max(50),
-      compendiumPacks: z.array(z.string().min(1)).default(['dnd5e.monsterfeatures', 'dnd5e.classfeatures']),
+      featureNames: z.array(z.string().min(1)).min(1).max(50),
+      compendiumPacks: z
+        .array(z.string().min(1))
+        .default(['dnd5e.monsterfeatures', 'dnd5e.classfeatures']),
     });
 
     const parsed = schema.parse(args);
 
     this.logger.info('Adding features to D&D 5e actor from compendium', {
       actorIdentifier: parsed.actorIdentifier,
-      featureCount:    parsed.featureNames.length,
-      packs:           parsed.compendiumPacks,
+      featureCount: parsed.featureNames.length,
+      packs: parsed.compendiumPacks,
     });
 
     try {
@@ -110,21 +112,21 @@ export class DnD5eFeaturesFromCompendiumTools {
       if (system !== 'dnd5e') {
         throw new Error(
           `dnd5e-add-features-from-compendium requires D&D 5e. ` +
-          `Detected system: "${getCachedSystemId() ?? 'unknown'}".`,
+            `Detected system: "${getCachedSystemId() ?? 'unknown'}".`
         );
       }
 
       const result = await this.foundryClient.query(
         'foundry-mcp-bridge.addFeaturesFromCompendium',
-        parsed,
+        parsed
       );
 
       this.logger.info('Features import complete', {
-        actorId:  result.actor?.id,
-        added:    result.added?.length,
-        skipped:  result.skipped?.length,
+        actorId: result.actor?.id,
+        added: result.added?.length,
+        skipped: result.skipped?.length,
         notFound: result.notFound?.length,
-        failed:   result.failed?.length,
+        failed: result.failed?.length,
       });
 
       return this.formatResponse(result, parsed);
@@ -132,26 +134,31 @@ export class DnD5eFeaturesFromCompendiumTools {
       this.errorHandler.handleToolError(
         error,
         'dnd5e-add-features-from-compendium',
-        'feature import',
+        'feature import'
       );
     }
   }
 
   private formatResponse(result: any, params: any): any {
-    const added    = result.added    as Array<{ name: string; packId: string; packLabel: string; itemId: string }>;
-    const skipped  = result.skipped  as Array<{ name: string; reason: string }>;
+    const added = result.added as Array<{
+      name: string;
+      packId: string;
+      packLabel: string;
+      itemId: string;
+    }>;
+    const skipped = result.skipped as Array<{ name: string; reason: string }>;
     const notFound = result.notFound as string[];
-    const failed   = result.failed   as Array<{ name: string; error: string }>;
+    const failed = result.failed as Array<{ name: string; error: string }>;
     const warnings = result.warnings as string[];
 
     const totalRequested = (params.featureNames as string[]).length;
 
     // ── Summary line ──────────────────────────────────────────────────────────
     const parts: string[] = [];
-    if (added.length > 0)    parts.push(`${added.length} added`);
-    if (skipped.length > 0)  parts.push(`${skipped.length} skipped`);
+    if (added.length > 0) parts.push(`${added.length} added`);
+    if (skipped.length > 0) parts.push(`${skipped.length} skipped`);
     if (notFound.length > 0) parts.push(`${notFound.length} not found`);
-    if (failed.length > 0)   parts.push(`${failed.length} failed`);
+    if (failed.length > 0) parts.push(`${failed.length} failed`);
 
     const statusIcon = failed.length > 0 ? '⚠️' : notFound.length > 0 ? '🔍' : '✅';
     const summary =
@@ -201,14 +208,14 @@ export class DnD5eFeaturesFromCompendiumTools {
 
     return {
       summary,
-      success:  added.length > 0 || (notFound.length === 0 && failed.length === 0),
-      actor:    result.actor,
+      success: added.length > 0 || (notFound.length === 0 && failed.length === 0),
+      actor: result.actor,
       added,
       skipped,
       notFound,
       failed,
       warnings,
-      message:  `${summary}\n\n${lines.join('\n')}`,
+      message: `${summary}\n\n${lines.join('\n')}`,
     };
   }
 }

@@ -11,21 +11,26 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { evaluateLockFile, isLockStale, isNodeProcess, getProcessName, LOCK_MAX_AGE_MS } from './lock.js';
+import {
+  evaluateLockFile,
+  isLockStale,
+  isNodeProcess,
+  getProcessName,
+  LOCK_MAX_AGE_MS,
+} from './lock.js';
 
 // ---------------------------------------------------------------------------
 // evaluateLockFile — the four core scenarios from the bug report
 // ---------------------------------------------------------------------------
 
 describe('evaluateLockFile', () => {
-
   const FAKE_LOCK = '/tmp/test-foundry-backend.lock';
 
   // Test 1: PID belongs to a non-Node process (e.g. GameInputRedistService)
   it('returns "orphaned" when process is not node.exe (PID reuse by OS service)', () => {
     const result = evaluateLockFile(26188, FAKE_LOCK, {
-      checkProcessName: (_pid) => false,   // not a node process
-      checkStaleness:   (_p)   => false,   // lock file is fresh
+      checkProcessName: _pid => false, // not a node process
+      checkStaleness: _p => false, // lock file is fresh
     });
     expect(result).toBe('orphaned');
   });
@@ -33,8 +38,8 @@ describe('evaluateLockFile', () => {
   // Test 2: PID belongs to a live node process with a fresh lock file
   it('returns "valid" when process is node.exe and lock file is fresh', () => {
     const result = evaluateLockFile(12345, FAKE_LOCK, {
-      checkProcessName: (_pid) => true,    // node process alive
-      checkStaleness:   (_p)   => false,   // lock file is fresh
+      checkProcessName: _pid => true, // node process alive
+      checkStaleness: _p => false, // lock file is fresh
     });
     expect(result).toBe('valid');
   });
@@ -45,8 +50,8 @@ describe('evaluateLockFile', () => {
   // "non-existent PID" gracefully if checkProcessName returns false.
   it('returns "orphaned" when checkProcessName returns false for a non-existent PID', () => {
     const result = evaluateLockFile(99999, FAKE_LOCK, {
-      checkProcessName: (_pid) => false,   // getProcessName would return null for dead PIDs
-      checkStaleness:   (_p)   => false,
+      checkProcessName: _pid => false, // getProcessName would return null for dead PIDs
+      checkStaleness: _p => false,
     });
     expect(result).toBe('orphaned');
   });
@@ -54,8 +59,8 @@ describe('evaluateLockFile', () => {
   // Test 4: Lock file older than 60 minutes (stale), even if process is node
   it('returns "orphaned" when lock file is stale (> 60 min) even if process is node.exe', () => {
     const result = evaluateLockFile(12345, FAKE_LOCK, {
-      checkProcessName: (_pid) => true,    // node process alive
-      checkStaleness:   (_p)   => true,    // lock file is stale
+      checkProcessName: _pid => true, // node process alive
+      checkStaleness: _p => true, // lock file is stale
     });
     expect(result).toBe('orphaned');
   });
@@ -64,7 +69,7 @@ describe('evaluateLockFile', () => {
   it('returns "orphaned" when process is not node AND lock file is stale', () => {
     const result = evaluateLockFile(26188, FAKE_LOCK, {
       checkProcessName: () => false,
-      checkStaleness:   () => true,
+      checkStaleness: () => true,
     });
     expect(result).toBe('orphaned');
   });
@@ -79,7 +84,6 @@ describe('evaluateLockFile', () => {
     });
     expect(checkStaleness).toHaveBeenCalledWith(FAKE_LOCK, 999);
   });
-
 });
 
 // ---------------------------------------------------------------------------
@@ -87,7 +91,6 @@ describe('evaluateLockFile', () => {
 // ---------------------------------------------------------------------------
 
 describe('isLockStale', () => {
-
   let tmpFile: string;
 
   beforeEach(() => {
@@ -96,7 +99,9 @@ describe('isLockStale', () => {
   });
 
   afterEach(() => {
-    try { fs.unlinkSync(tmpFile); } catch {}
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {}
   });
 
   it('returns false for a freshly created file', () => {
@@ -124,7 +129,6 @@ describe('isLockStale', () => {
     // Should use the 60-min default
     expect(isLockStale(tmpFile)).toBe(true);
   });
-
 });
 
 // ---------------------------------------------------------------------------
@@ -132,7 +136,6 @@ describe('isLockStale', () => {
 // ---------------------------------------------------------------------------
 
 describe('isNodeProcess', () => {
-
   it('returns true for every recognized node executable name', () => {
     // Inject the name resolver so the result does not depend on the live
     // runner's process name (macOS `ps -o comm=` reports the process title,
@@ -155,7 +158,6 @@ describe('isNodeProcess', () => {
     // Very large PID that is extremely unlikely to exist
     expect(isNodeProcess(9_999_999)).toBe(false);
   });
-
 });
 
 // ---------------------------------------------------------------------------
@@ -163,7 +165,6 @@ describe('isNodeProcess', () => {
 // ---------------------------------------------------------------------------
 
 describe('getProcessName', () => {
-
   it('returns a node-related name for the current process PID', () => {
     const name = getProcessName(process.pid);
     // The test runner is Node.js; the process name must be node/node.exe/nodejs
@@ -173,5 +174,4 @@ describe('getProcessName', () => {
   it('returns null for a non-existent PID', () => {
     expect(getProcessName(9_999_999)).toBeNull();
   });
-
 });

@@ -42,11 +42,11 @@ const NODE_PROCESS_NAMES = new Set(['node', 'node.exe', 'nodejs', 'nodejs.exe'])
 export function getProcessName(pid: number): string | null {
   try {
     if (process.platform === 'win32') {
-      const output = execFileSync(
-        'tasklist',
-        ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'],
-        { encoding: 'utf8', timeout: 3_000, windowsHide: true },
-      );
+      const output = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+        encoding: 'utf8',
+        timeout: 3_000,
+        windowsHide: true,
+      });
       // A matching row looks like: "node.exe","12345","Console","1","3,028 K"
       // Non-matching output:       INFO: No tasks are running…
       const match = output.match(/^"([^"]+)"/m);
@@ -64,13 +64,12 @@ export function getProcessName(pid: number): string | null {
     }
 
     // macOS + Linux fallback
-    const output = execFileSync(
-      'ps', ['-p', String(pid), '-o', 'comm='],
-      { encoding: 'utf8', timeout: 3_000 },
-    );
+    const output = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], {
+      encoding: 'utf8',
+      timeout: 3_000,
+    });
     // On macOS, comm= can be a full path; extract the basename
     return path.basename(output.trim()).toLowerCase();
-
   } catch {
     // Process not found, permission denied, tool missing, etc.
     return null;
@@ -91,7 +90,7 @@ export function getProcessName(pid: number): string | null {
  */
 export function isNodeProcess(
   pid: number,
-  getName: (pid: number) => string | null = getProcessName,
+  getName: (pid: number) => string | null = getProcessName
 ): boolean {
   const name = getName(pid);
   return name !== null && NODE_PROCESS_NAMES.has(name);
@@ -107,10 +106,7 @@ export function isNodeProcess(
  *
  * Returns `false` if the file cannot be stat'd (missing, permission error).
  */
-export function isLockStale(
-  lockFilePath: string,
-  maxAgeMs: number = LOCK_MAX_AGE_MS,
-): boolean {
+export function isLockStale(lockFilePath: string, maxAgeMs: number = LOCK_MAX_AGE_MS): boolean {
   try {
     const stat = fs.statSync(lockFilePath);
     return Date.now() - stat.mtimeMs >= maxAgeMs;
@@ -142,14 +138,14 @@ export function evaluateLockFile(
   lockPid: number,
   lockFilePath: string,
   {
-    maxAgeMs         = LOCK_MAX_AGE_MS,
+    maxAgeMs = LOCK_MAX_AGE_MS,
     checkProcessName = isNodeProcess,
-    checkStaleness   = isLockStale,
+    checkStaleness = isLockStale,
   }: {
-    maxAgeMs?:         number;
+    maxAgeMs?: number;
     checkProcessName?: (pid: number) => boolean;
-    checkStaleness?:   (filePath: string, maxAgeMs?: number) => boolean;
-  } = {},
+    checkStaleness?: (filePath: string, maxAgeMs?: number) => boolean;
+  } = {}
 ): 'valid' | 'orphaned' {
   if (!checkProcessName(lockPid)) {
     return 'orphaned';

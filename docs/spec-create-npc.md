@@ -6,11 +6,13 @@ Repository: `adambdooley/foundry-vtt-mcp` (fork locale in
 `C:\Users\lucam\Documents\Progetti\foundry-vtt-mcp`)
 
 Stack:
+
 - `packages/mcp-server/` — Node.js MCP server in TypeScript
 - `packages/foundry-module/` — modulo Foundry VTT (browser)
 - `packages/shared/` — tipi condivisi (workspace dep)
 
 Pattern architetturale a 4 layer (seguito da tutti i tool esistenti):
+
 1. **Server tool class** (`mcp-server/src/tools/…`) — Zod validation, query dispatch
 2. **Backend registration** (`mcp-server/src/backend.ts`) — import, instantiate, allTools, switch
 3. **Query handler** (`foundry-module/src/queries.ts`) — GM check, validation, call data-access
@@ -36,35 +38,35 @@ immunities, CR, biography). **Nessun item/azione/feature/spell nell'Actor.**
 
 ### Identità
 
-| Campo             | Tipo    | Req | Default | Validazione |
-|-------------------|---------|-----|---------|-------------|
-| `name`            | string  | ✅  | —       | min 1 |
-| `creatureType`    | enum    | ✅  | —       | humanoid / undead / beast / dragon / aberration / construct / elemental / fey / fiend / giant / monstrosity / ooze / plant / celestial / swarm |
-| `creatureSubtype` | string  | ❌  | `""`    | — |
-| `size`            | enum    | ✅  | —       | tiny / small / medium / large / huge / gargantuan |
-| `alignment`       | string  | ❌  | `""`    | — |
-| `cr`              | string\|number | ✅ | — | string: `/^\d+(\/(2\|4\|8))?$/`; number: finite ≥ 0 |
+| Campo             | Tipo           | Req | Default | Validazione                                                                                                                                    |
+| ----------------- | -------------- | --- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`            | string         | ✅  | —       | min 1                                                                                                                                          |
+| `creatureType`    | enum           | ✅  | —       | humanoid / undead / beast / dragon / aberration / construct / elemental / fey / fiend / giant / monstrosity / ooze / plant / celestial / swarm |
+| `creatureSubtype` | string         | ❌  | `""`    | —                                                                                                                                              |
+| `size`            | enum           | ✅  | —       | tiny / small / medium / large / huge / gargantuan                                                                                              |
+| `alignment`       | string         | ❌  | `""`    | —                                                                                                                                              |
+| `cr`              | string\|number | ✅  | —       | string: `/^\d+(\/(2\|4\|8))?$/`; number: finite ≥ 0                                                                                            |
 
 ### Stat block
 
-| Campo          | Tipo | Req | Default | Validazione |
-|----------------|------|-----|---------|-------------|
-| `abilities`    | oggetto | ✅ | — | 6 chiavi: str/dex/con/int/wis/cha, ognuna int 1–30 |
-| `savingThrows` | string[] | ❌ | `[]` | ogni elemento in: str/dex/con/int/wis/cha |
-| `hpAverage`    | int  | ✅  | —       | ≥ 1 |
-| `hpFormula`    | string | ✅ | —     | min 1 (es. "2d6", "3d8+9") — non validato sintatticamente |
+| Campo          | Tipo     | Req | Default | Validazione                                               |
+| -------------- | -------- | --- | ------- | --------------------------------------------------------- |
+| `abilities`    | oggetto  | ✅  | —       | 6 chiavi: str/dex/con/int/wis/cha, ognuna int 1–30        |
+| `savingThrows` | string[] | ❌  | `[]`    | ogni elemento in: str/dex/con/int/wis/cha                 |
+| `hpAverage`    | int      | ✅  | —       | ≥ 1                                                       |
+| `hpFormula`    | string   | ✅  | —       | min 1 (es. "2d6", "3d8+9") — non validato sintatticamente |
 
 ### CA — superRefine: `acValue` obbligatorio quando `acMode === "flat"`
 
-| Campo     | Tipo  | Req | Default | Validazione |
-|-----------|-------|-----|---------|-------------|
-| `acMode`  | enum  | ✅  | —       | "default" / "flat" |
-| `acValue` | int   | ❌  | —       | 0–30 — obbligatorio se acMode==="flat" |
+| Campo     | Tipo | Req | Default | Validazione                            |
+| --------- | ---- | --- | ------- | -------------------------------------- |
+| `acMode`  | enum | ✅  | —       | "default" / "flat"                     |
+| `acValue` | int  | ❌  | —       | 0–30 — obbligatorio se acMode==="flat" |
 
 ### Movimento
 
 | Campo         | Tipo | Req | Default |
-|---------------|------|-----|---------|
+| ------------- | ---- | --- | ------- |
 | `walkSpeed`   | int  | ❌  | `30`    |
 | `flySpeed`    | int  | ❌  | `0`     |
 | `swimSpeed`   | int  | ❌  | `0`     |
@@ -76,20 +78,20 @@ Tutti i campi velocità: ≥ 0.
 
 ### Sensi
 
-| Campo          | Tipo   | Req | Default |
-|----------------|--------|-----|---------|
-| `darkvision`   | int    | ❌  | `0`     |
-| `blindsight`   | int    | ❌  | `0`     |
-| `tremorsense`  | int    | ❌  | `0`     |
-| `truesight`    | int    | ❌  | `0`     |
-| `specialSenses`| string | ❌  | `""`    |
+| Campo           | Tipo   | Req | Default |
+| --------------- | ------ | --- | ------- |
+| `darkvision`    | int    | ❌  | `0`     |
+| `blindsight`    | int    | ❌  | `0`     |
+| `tremorsense`   | int    | ❌  | `0`     |
+| `truesight`     | int    | ❌  | `0`     |
+| `specialSenses` | string | ❌  | `""`    |
 
 Tutti i campi distanza: ≥ 0.
 
 ### Competenze
 
-| Campo    | Tipo  | Req | Default | Validazione |
-|----------|-------|-----|---------|-------------|
+| Campo    | Tipo  | Req | Default | Validazione                                                                |
+| -------- | ----- | --- | ------- | -------------------------------------------------------------------------- |
 | `skills` | array | ❌  | `[]`    | ogni elemento: `{ skill: SkillEnum, proficiency: "proficient"\|"expert" }` |
 
 SkillEnum (18 valori): Acrobatics / Animal Handling / Arcana / Athletics /
@@ -99,14 +101,14 @@ Stealth / Survival
 
 ### Traits
 
-| Campo                    | Tipo     | Req | Default | Note |
-|--------------------------|----------|-----|---------|------|
-| `damageImmunities`       | string[] | ❌  | `[]`    | soft validation (vedi sotto) |
-| `damageResistances`      | string[] | ❌  | `[]`    | soft validation |
-| `damageVulnerabilities`  | string[] | ❌  | `[]`    | soft validation |
-| `conditionImmunities`    | string[] | ❌  | `[]`    | soft validation |
-| `languages`              | string[] | ❌  | `[]`    | — |
-| `languagesCustom`        | string   | ❌  | `""`    | — |
+| Campo                   | Tipo     | Req | Default | Note                         |
+| ----------------------- | -------- | --- | ------- | ---------------------------- |
+| `damageImmunities`      | string[] | ❌  | `[]`    | soft validation (vedi sotto) |
+| `damageResistances`     | string[] | ❌  | `[]`    | soft validation              |
+| `damageVulnerabilities` | string[] | ❌  | `[]`    | soft validation              |
+| `conditionImmunities`   | string[] | ❌  | `[]`    | soft validation              |
+| `languages`             | string[] | ❌  | `[]`    | —                            |
+| `languagesCustom`       | string   | ❌  | `""`    | —                            |
 
 **Soft validation:** valori fuori dai set canonici non bloccano la creazione,
 ma vengono raccolti in `warnings: string[]` nella risposta.
@@ -128,12 +130,12 @@ a `warnings[]`. La creazione procede comunque.
 
 ### Biografia e source
 
-| Campo         | Tipo  | Req | Default  | Validazione |
-|---------------|-------|-----|----------|-------------|
-| `biography`   | string | ❌ | `""`    | — |
-| `sourceBook`  | string | ❌ | `""`    | — |
-| `sourcePage`  | string | ❌ | `""`    | — |
-| `sourceRules` | enum   | ❌ | `"2014"` | "2014" / "2024" |
+| Campo         | Tipo   | Req | Default  | Validazione     |
+| ------------- | ------ | --- | -------- | --------------- |
+| `biography`   | string | ❌  | `""`     | —               |
+| `sourceBook`  | string | ❌  | `""`     | —               |
+| `sourcePage`  | string | ❌  | `""`     | —               |
+| `sourceRules` | enum   | ❌  | `"2014"` | "2014" / "2024" |
 
 ---
 
@@ -273,48 +275,56 @@ Banshee (CR 4).
 
 ## 3. Decisioni di design confermate
 
-| # | Decisione |
-|---|-----------|
-| 1 | `acValue` obbligatorio via `superRefine` solo quando `acMode === "flat"` |
-| 2 | `flat` omesso dall'oggetto ac quando `acMode === "default"` |
-| 3 | Soft validation per damage/condition values — warning non bloccante |
-| 4 | `hpFormula` non validato sintatticamente — stringa non vuota |
-| 5 | `attributes.prof` non settato — auto-derivato dal CR da Foundry |
-| 6 | Saving throws: `abilities[x].proficient: 1` per le abilities in `savingThrows[]` |
-| 7 | Skills: solo le skill fornite incluse in `system.skills`, le altre al default |
-| 8 | `bypasses: []` incluso in di/dr/dv (come nello schema reale), ma non esposto in input (V1) |
-| 9 | CR accetta string fraction ("1/4", "1/2") o number — normalizzato a float internamente |
-| 10 | Folder: `getOrCreateFolder('Foundry MCP Creatures', 'Actor')` — stesso degli altri tool |
-| 11 | `sourceRules` default `"2014"` |
-| 12 | `detectGameSystem()` guard — errore se sistema non è dnd5e |
+| #   | Decisione                                                                                  |
+| --- | ------------------------------------------------------------------------------------------ |
+| 1   | `acValue` obbligatorio via `superRefine` solo quando `acMode === "flat"`                   |
+| 2   | `flat` omesso dall'oggetto ac quando `acMode === "default"`                                |
+| 3   | Soft validation per damage/condition values — warning non bloccante                        |
+| 4   | `hpFormula` non validato sintatticamente — stringa non vuota                               |
+| 5   | `attributes.prof` non settato — auto-derivato dal CR da Foundry                            |
+| 6   | Saving throws: `abilities[x].proficient: 1` per le abilities in `savingThrows[]`           |
+| 7   | Skills: solo le skill fornite incluse in `system.skills`, le altre al default              |
+| 8   | `bypasses: []` incluso in di/dr/dv (come nello schema reale), ma non esposto in input (V1) |
+| 9   | CR accetta string fraction ("1/4", "1/2") o number — normalizzato a float internamente     |
+| 10  | Folder: `getOrCreateFolder('Foundry MCP Creatures', 'Actor')` — stesso degli altri tool    |
+| 11  | `sourceRules` default `"2014"`                                                             |
+| 12  | `detectGameSystem()` guard — errore se sistema non è dnd5e                                 |
 
 ---
 
 ## 4. File da creare / modificare (4 layer)
 
 ### Layer 1 — CREATE
+
 **`packages/mcp-server/src/tools/dnd5e/npc.ts`**  
 Nuova classe `DnD5eNpcTools`. Metodi:
+
 - `getToolDefinitions()` → definizione tool con JSON Schema
 - `handleCreateNpc(args)` → Zod parse → soft validation warnings → query dispatch → format response
 
 ### Layer 2 — MODIFY
+
 **`packages/mcp-server/src/backend.ts`**  
 4 touch point:
+
 1. `import { DnD5eNpcTools } from './tools/dnd5e/npc.js';`
 2. `const dnd5eNpcTools = new DnD5eNpcTools({ foundryClient, logger });` (dopo `dnd5eFeatureTools`)
 3. `...dnd5eNpcTools.getToolDefinitions(),` in `allTools` (dopo la riga `dnd5eFeatureTools`)
 4. `case 'dnd5e-create-npc':` nel blocco switch D&D 5e (dopo il case `dnd5e-add-feature-with-save`)
 
 ### Layer 3 — MODIFY
+
 **`packages/foundry-module/src/queries.ts`**  
 2 touch point:
+
 1. In `registerHandlers()`: `CONFIG.queries[\`${modulePrefix}.createNpcActor\`] = this.handleCreateNpcActor.bind(this);`
 2. Nuovo metodo privato `handleCreateNpcActor(data)`: GM check → validateFoundryState → validazione base (name, cr) → `this.dataAccess.createNpcActor(data)`
 
 ### Layer 4 — MODIFY
+
 **`packages/foundry-module/src/data-access.ts`**  
 Nuovo metodo pubblico `createNpcActor(data)`:
+
 - `this.validateFoundryState()` (fuori dal try)
 - System guard: `(game.system as any).id !== 'dnd5e'`
 - `normalizeCR`, `buildSkillsBlock`, `SIZE_MAP` come funzioni/const locali nel file
