@@ -87,6 +87,10 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.findPlayers`] = this.handleFindPlayers.bind(this);
     CONFIG.queries[`${modulePrefix}.findActor`] = this.handleFindActor.bind(this);
 
+    // WFRP4e actor stat-block update
+    CONFIG.queries[`${modulePrefix}.updateWfrp4eActor`] = this.handleUpdateWfrp4eActor.bind(this);
+    CONFIG.queries[`${modulePrefix}.addWfrp4eItems`] = this.handleAddWfrp4eItems.bind(this);
+
     // Token manipulation queries
     CONFIG.queries[`${modulePrefix}.moveToken`] = this.handleMoveToken.bind(this);
     CONFIG.queries[`${modulePrefix}.updateToken`] = this.handleUpdateToken.bind(this);
@@ -113,6 +117,7 @@ export class QueryHandlers {
 
     // Item authoring on actor sheets
     CONFIG.queries[`${modulePrefix}.addActorItems`] = this.handleAddActorItems.bind(this);
+    CONFIG.queries[`${modulePrefix}.removeActorItems`] = this.handleRemoveActorItems.bind(this);
 
     // World-level item CRUD
     CONFIG.queries[`${modulePrefix}.createWorldItems`] = this.handleCreateWorldItems.bind(this);
@@ -799,6 +804,60 @@ export class QueryHandlers {
   }
 
   /**
+   * Handle WFRP4e actor stat-block update request
+   */
+  async handleUpdateWfrp4eActor(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data.actor) {
+        throw new Error('actor (name or id) is required');
+      }
+
+      return await this.dataAccess.updateWfrp4eActor(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to update WFRP4e actor: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Add items (skills, talents, careers, trappings, …) to a WFRP4e actor,
+   * resolved from the installed compendiums. GM-only.
+   */
+  async handleAddWfrp4eItems(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data.actor) {
+        throw new Error('actor (name or id) is required');
+      }
+      if (!Array.isArray(data.items) || data.items.length === 0) {
+        throw new Error('items array is required and must contain at least one entry');
+      }
+
+      return await this.dataAccess.addWfrp4eItems(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to add WFRP4e items: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
    * Handle get actor ownership request
    */
   async handleGetActorOwnership(data: any): Promise<any> {
@@ -1004,7 +1063,7 @@ export class QueryHandlers {
         scene_name: data.scene_name.trim(),
         size: data.size || 'medium',
         grid_size: data.grid_size || 70,
-        quality: quality,
+        quality,
       };
 
       // Use ComfyUIManager to communicate with backend via WebSocket
@@ -1520,6 +1579,43 @@ export class QueryHandlers {
     }
   }
 
+  private async handleRemoveActorItems(data: {
+    actorIdentifier: string;
+    itemIds?: string[];
+    itemNames?: string[];
+    type?: string;
+  }): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation - writes to actor sheets are GM-only
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data?.actorIdentifier) {
+        throw new Error('actorIdentifier is required');
+      }
+      const hasIds = Array.isArray(data?.itemIds) && data.itemIds.length > 0;
+      const hasNames = Array.isArray(data?.itemNames) && data.itemNames.length > 0;
+      if (!hasIds && !hasNames) {
+        throw new Error('Provide itemIds and/or itemNames identifying the items to remove');
+      }
+
+      return await this.dataAccess.removeActorItems({
+        actorIdentifier: data.actorIdentifier,
+        ...(data.itemIds !== undefined ? { itemIds: data.itemIds } : {}),
+        ...(data.itemNames !== undefined ? { itemNames: data.itemNames } : {}),
+        ...(data.type !== undefined ? { type: data.type } : {}),
+      });
+    } catch (error) {
+      throw new Error(
+        `Failed to remove actor items: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
   private async handleUpdateWorldItems(data: {
     updates: Array<{
       id: string;
@@ -1543,7 +1639,9 @@ export class QueryHandlers {
 
       return await this.dataAccess.updateWorldItems({ updates: data.updates });
     } catch (error) {
-      throw new Error(`Failed to update world items: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to update world items: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -1566,7 +1664,9 @@ export class QueryHandlers {
         ...(data.nameFilter !== undefined ? { nameFilter: data.nameFilter } : {}),
       });
     } catch (error) {
-      throw new Error(`Failed to list world items: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to list world items: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -1853,5 +1953,4 @@ export class QueryHandlers {
       throw new Error(`Failed to add features from compendium: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-
 }
