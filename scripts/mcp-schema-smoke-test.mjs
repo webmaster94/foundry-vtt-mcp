@@ -23,7 +23,7 @@ const importDist = async (relativePath) =>
 const [{ config }, { Logger }, { FoundryClient }, { CharacterTools }, { CompendiumTools }, { SceneTools },
   { ActorCreationTools }, { QuestCreationTools }, { DiceRollTools }, { CampaignManagementTools },
   { OwnershipTools }, { TokenManipulationTools }, { MapGenerationTools }, { getSystemRegistry },
-  { DnD5eAdapter }, { PF2eAdapter }, { DSA5Adapter }] = await Promise.all([
+  { DnD5eAdapter }, { PF2eAdapter }, { DSA5Adapter }, { CosmereRpgAdapter }] = await Promise.all([
   importDist('config.js'),
   importDist('logger.js'),
   importDist('foundry-client.js'),
@@ -41,6 +41,7 @@ const [{ config }, { Logger }, { FoundryClient }, { CharacterTools }, { Compendi
   importDist('systems/dnd5e/adapter.js'),
   importDist('systems/pf2e/adapter.js'),
   importDist('systems/dsa5/adapter.js'),
+  importDist('systems/cosmere-rpg/adapter.js'),
 ]);
 
 const logger = new Logger({ level: 'error', enableConsole: false, enableFile: false });
@@ -50,6 +51,7 @@ const systemRegistry = getSystemRegistry(logger);
 systemRegistry.register(new DnD5eAdapter());
 systemRegistry.register(new PF2eAdapter());
 systemRegistry.register(new DSA5Adapter());
+systemRegistry.register(new CosmereRpgAdapter());
 
 const tools = [
   ...new CharacterTools({ foundryClient, logger, systemRegistry }).getToolDefinitions(),

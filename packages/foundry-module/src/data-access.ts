@@ -101,10 +101,10 @@ interface PF2eCreatureIndex {
   type: string;
   pack: string;
   packLabel: string;
-  level: number;                    // PF2e: -1 to 25+
-  traits: string[];                 // PF2e: ['dragon', 'fire', 'amphibious']
-  creatureType: string;             // Primary trait extracted from traits array
-  rarity: string;                   // PF2e: 'common', 'uncommon', 'rare', 'unique'
+  level: number; // PF2e: -1 to 25+
+  traits: string[]; // PF2e: ['dragon', 'fire', 'amphibious']
+  creatureType: string; // Primary trait extracted from traits array
+  rarity: string; // PF2e: 'common', 'uncommon', 'rare', 'unique'
   size: string;
   hitPoints: number;
   armorClass: number;
@@ -114,15 +114,45 @@ interface PF2eCreatureIndex {
   img?: string;
 }
 
-// Union type for both systems
-type EnhancedCreatureIndex = DnD5eCreatureIndex | PF2eCreatureIndex;
+// Cosmere RPG (Plotweaver) Enhanced Creature Index
+//
+// Plotweaver categorises adversaries by `tier` (1-4) and `role`
+// (minion/rival/boss) rather than CR or level — those are the primary
+// encounter-design dials. Defenses are split into phy/cog/spi instead
+// of a single AC, and Investiture is the Surge/Stormlight resource.
+interface CosmereRpgCreatureIndex {
+  id: string;
+  name: string;
+  type: string; // 'adversary' for compendium creatures
+  pack: string;
+  packLabel: string;
+  tier: number; // 1-4
+  role: string; // minion | rival | boss | (system-extended)
+  creatureType: string; // humanoid | animal | spren | …
+  subtype: string; // free-form secondary type
+  size: string;
+  hitPoints: number; // resources.hea.max (override-aware)
+  focus: number; // resources.foc.max
+  investiture: number; // resources.inv.max — typically 0
+  hasInvestiture: boolean;
+  defensePhysical: number;
+  defenseCognitive: number;
+  defenseSpiritual: number;
+  deflect: number;
+  walkSpeed: number;
+  description?: string;
+  img?: string;
+}
+
+// Union type across all supported systems
+type EnhancedCreatureIndex = DnD5eCreatureIndex | PF2eCreatureIndex | CosmereRpgCreatureIndex;
 
 interface PersistentIndexMetadata {
   version: string;
   timestamp: number;
   packFingerprints: Map<string, PackFingerprint>;
   totalCreatures: number;
-  gameSystem: string;  // 'dnd5e' or 'pf2e'
+  gameSystem: string; // 'dnd5e' or 'pf2e'
 }
 
 interface PackFingerprint {
@@ -292,11 +322,11 @@ class PersistentCreatureIndex {
   async getEnhancedIndex(): Promise<EnhancedCreatureIndex[]> {
     // Check if we have a valid persistent index
     const existingIndex = await this.loadPersistedIndex();
-    
+
     if (existingIndex && this.isIndexValid(existingIndex)) {
       return existingIndex.creatures;
     }
-    
+
     // Build new index if needed
     return await this.buildEnhancedIndex();
   }
@@ -314,11 +344,13 @@ class PersistentCreatureIndex {
   private async loadPersistedIndex(): Promise<PersistentEnhancedIndex | null> {
     try {
       const filePath = this.getIndexFilePath();
-      
+
       // Check if file exists using Foundry's FilePicker
       let fileExists = false;
       try {
-        const browseResult = await (foundry as any).applications.apps.FilePicker.implementation.browse('data', `worlds/${game.world.id}`);
+        const browseResult = await (
+          foundry as any
+        ).applications.apps.FilePicker.implementation.browse('data', `worlds/${game.world.id}`);
         fileExists = browseResult.files.some((f: any) => f.endsWith(this.INDEX_FILENAME));
       } catch (error) {
         // Directory doesn't exist or other error, return null
@@ -337,11 +369,10 @@ class PersistentCreatureIndex {
       }
 
       const rawData = await response.json();
-      
 
       // Convert Map data back from JSON
       const metadata = rawData.metadata;
-      if (metadata && metadata.packFingerprints) {
+      if (metadata?.packFingerprints) {
         metadata.packFingerprints = new Map(metadata.packFingerprints);
       }
 
@@ -362,17 +393,19 @@ class PersistentCreatureIndex {
         ...index,
         metadata: {
           ...index.metadata,
-          packFingerprints: Array.from(index.metadata.packFingerprints.entries())
-        }
+          packFingerprints: Array.from(index.metadata.packFingerprints.entries()),
+        },
       };
 
       const jsonContent = JSON.stringify(saveData, null, 2);
 
       // Create a File object and upload it using Foundry's file system
       const file = new File([jsonContent], this.INDEX_FILENAME, { type: 'application/json' });
-      
+
       // Upload the file to the world directory
-      const uploadResponse = await (foundry as any).applications.apps.FilePicker.implementation.upload('data', `worlds/${game.world.id}`, file);
+      const uploadResponse = await (
+        foundry as any
+      ).applications.apps.FilePicker.implementation.upload('data', `worlds/${game.world.id}`, file);
 
       if (uploadResponse) {
       } else {
@@ -396,21 +429,25 @@ class PersistentCreatureIndex {
     // NEW: Check system compatibility
     const currentSystem = (game as any).system.id;
     if (existingIndex.metadata.gameSystem !== currentSystem) {
-      console.log(`[${this.moduleId}] System changed from ${existingIndex.metadata.gameSystem} to ${currentSystem}, index invalidated`);
+      console.log(
+        `[${this.moduleId}] System changed from ${existingIndex.metadata.gameSystem} to ${currentSystem}, index invalidated`
+      );
       return false;
     }
 
     // Check each pack fingerprint
-    const actorPacks = Array.from(game.packs.values()).filter(pack => pack.metadata.type === 'Actor');
-    
+    const actorPacks = Array.from(game.packs.values()).filter(
+      pack => pack.metadata.type === 'Actor'
+    );
+
     for (const pack of actorPacks) {
       const currentFingerprint = this.generatePackFingerprint(pack);
       const savedFingerprint = existingIndex.metadata.packFingerprints.get(pack.metadata.id);
-      
+
       if (!savedFingerprint) {
         return false;
       }
-      
+
       if (!this.fingerprintsMatch(currentFingerprint, savedFingerprint)) {
         return false;
       }
@@ -434,19 +471,28 @@ class PersistentCreatureIndex {
 
     // Listen for compendium document changes
     Hooks.on('createDocument', (document: any) => {
-      if (document.pack && (document.type === 'npc' || document.type === 'character' || document.type === 'creature')) {
+      if (
+        document.pack &&
+        (document.type === 'npc' || document.type === 'character' || document.type === 'creature')
+      ) {
         this.invalidateIndex();
       }
     });
 
     Hooks.on('updateDocument', (document: any) => {
-      if (document.pack && (document.type === 'npc' || document.type === 'character' || document.type === 'creature')) {
+      if (
+        document.pack &&
+        (document.type === 'npc' || document.type === 'character' || document.type === 'creature')
+      ) {
         this.invalidateIndex();
       }
     });
 
     Hooks.on('deleteDocument', (document: any) => {
-      if (document.pack && (document.type === 'npc' || document.type === 'character' || document.type === 'creature')) {
+      if (
+        document.pack &&
+        (document.type === 'npc' || document.type === 'character' || document.type === 'creature')
+      ) {
         this.invalidateIndex();
       }
     });
@@ -474,19 +520,21 @@ class PersistentCreatureIndex {
     try {
       // Check if auto-rebuild is enabled
       const autoRebuild = game.settings.get(this.moduleId, 'autoRebuildIndex');
-      
+
       if (!autoRebuild) {
         return;
       }
 
       // Delete the index file to force rebuild
       const filePath = this.getIndexFilePath();
-      
+
       try {
         // Check if file exists first by trying to browse to the world directory
-        const browseResult = await (foundry as any).applications.apps.FilePicker.implementation.browse('data', `worlds/${game.world.id}`);
+        const browseResult = await (
+          foundry as any
+        ).applications.apps.FilePicker.implementation.browse('data', `worlds/${game.world.id}`);
         const fileExists = browseResult.files.some((f: any) => f.endsWith(this.INDEX_FILENAME));
-        
+
         if (fileExists) {
           // File exists, delete it using fetch with DELETE method
           await fetch(filePath, { method: 'DELETE' });
@@ -513,9 +561,9 @@ class PersistentCreatureIndex {
     return {
       packId: pack.metadata.id,
       packLabel: pack.metadata.label,
-      lastModified: lastModified,
+      lastModified,
       documentCount: pack.index?.size || 0,
-      checksum: this.generatePackChecksum(pack)
+      checksum: this.generatePackChecksum(pack),
     };
   }
 
@@ -532,8 +580,7 @@ class PersistentCreatureIndex {
    * Compare two pack fingerprints
    */
   private fingerprintsMatch(current: PackFingerprint, saved: PackFingerprint): boolean {
-    return current.documentCount === saved.documentCount && 
-           current.checksum === saved.checksum;
+    return current.documentCount === saved.documentCount && current.checksum === saved.checksum;
   }
 
   /**
@@ -554,8 +601,12 @@ class PersistentCreatureIndex {
       return await this.buildPF2eIndex(force);
     } else if (gameSystem === 'dnd5e') {
       return await this.buildDnD5eIndex(force);
+    } else if (gameSystem === 'cosmere-rpg') {
+      return await this.buildCosmereRpgIndex(force);
     } else {
-      throw new Error(`Enhanced creature index not supported for system: ${gameSystem}. Only D&D 5e and Pathfinder 2e are currently supported.`);
+      throw new Error(
+        `Enhanced creature index not supported for system: ${gameSystem}. Only D&D 5e, Pathfinder 2e, and Cosmere RPG are currently supported.`
+      );
     }
   }
 
@@ -570,18 +621,21 @@ class PersistentCreatureIndex {
     let totalErrors = 0; // Track extraction errors
 
     try {
-
-      const actorPacks = Array.from(game.packs.values()).filter(pack => pack.metadata.type === 'Actor');
+      const actorPacks = Array.from(game.packs.values()).filter(
+        pack => pack.metadata.type === 'Actor'
+      );
       const enhancedCreatures: DnD5eCreatureIndex[] = [];
       const packFingerprints = new Map<string, PackFingerprint>();
 
       // Show initial progress notification
-      ui.notifications?.info(`Starting enhanced creature index build from ${actorPacks.length} packs...`);
+      ui.notifications?.info(
+        `Starting enhanced creature index build from ${actorPacks.length} packs...`
+      );
 
       for (let i = 0; i < actorPacks.length; i++) {
         const pack = actorPacks[i];
         const progressPercent = Math.round((i / actorPacks.length) * 100);
-        
+
         // Update progress notification every few packs or for important packs
         if (i % 3 === 0 || pack.metadata.label.toLowerCase().includes('monster')) {
           if (progressNotification) {
@@ -591,7 +645,6 @@ class PersistentCreatureIndex {
             `Building creature index... ${progressPercent}% (${i + 1}/${actorPacks.length}) Processing: ${pack.metadata.label}`
           );
         }
-
 
         try {
           // Ensure pack index is loaded
@@ -630,11 +683,12 @@ class PersistentCreatureIndex {
               `Index Progress: ${i + 1}/${actorPacks.length} packs complete, ${totalCreaturesSoFar} creatures indexed`
             );
           }
-
         } catch (error) {
           console.warn(`[${this.moduleId}] Failed to process pack ${pack.metadata.label}:`, error);
           // Show error notification for pack failures
-          ui.notifications?.warn(`Warning: Failed to index pack "${pack.metadata.label}" - continuing with other packs`);
+          ui.notifications?.warn(
+            `Warning: Failed to index pack "${pack.metadata.label}" - continuing with other packs`
+          );
         }
       }
 
@@ -642,7 +696,9 @@ class PersistentCreatureIndex {
       if (progressNotification) {
         progressNotification.remove();
       }
-      ui.notifications?.info(`Saving enhanced index to world database... (${enhancedCreatures.length} creatures)`);
+      ui.notifications?.info(
+        `Saving enhanced index to world database... (${enhancedCreatures.length} creatures)`
+      );
 
       // Create persistent index structure
       const persistentIndex: PersistentEnhancedIndex = {
@@ -651,9 +707,9 @@ class PersistentCreatureIndex {
           timestamp: Date.now(),
           packFingerprints,
           totalCreatures: enhancedCreatures.length,
-          gameSystem: 'dnd5e'  // Mark as D&D 5e index
+          gameSystem: 'dnd5e', // Mark as D&D 5e index
         },
-        creatures: enhancedCreatures
+        creatures: enhancedCreatures,
       };
 
       // Save to world flags
@@ -662,26 +718,24 @@ class PersistentCreatureIndex {
       const buildTimeSeconds = Math.round((Date.now() - startTime) / 1000);
       const errorText = totalErrors > 0 ? ` (${totalErrors} extraction errors)` : '';
       const successMessage = `Enhanced creature index complete! ${enhancedCreatures.length} creatures indexed from ${actorPacks.length} packs in ${buildTimeSeconds}s${errorText}`;
-      
+
       ui.notifications?.info(successMessage);
 
       return enhancedCreatures;
-
     } catch (error) {
       // Clear any progress notifications on error
       if (progressNotification) {
         progressNotification.remove();
       }
-      
+
       const errorMessage = `Failed to build enhanced creature index: ${error instanceof Error ? error.message : 'Unknown error'}`;
       console.error(`[${this.moduleId}] ${errorMessage}`);
       ui.notifications?.error(errorMessage);
-      
+
       throw error;
-      
     } finally {
       this.buildInProgress = false;
-      
+
       // Ensure progress notification is cleared
       if (progressNotification) {
         progressNotification.remove();
@@ -692,14 +746,16 @@ class PersistentCreatureIndex {
   /**
    * Extract D&D 5e data from all documents in a pack
    */
-  private async extractDnD5eDataFromPack(pack: any): Promise<{ creatures: DnD5eCreatureIndex[], errors: number }> {
+  private async extractDnD5eDataFromPack(
+    pack: any
+  ): Promise<{ creatures: DnD5eCreatureIndex[]; errors: number }> {
     const creatures: DnD5eCreatureIndex[] = [];
     let errors = 0;
 
     try {
       // Load all documents from pack
       const documents = await pack.getDocuments();
-      
+
       for (const doc of documents) {
         try {
           // Only process NPCs, characters, and creatures
@@ -712,15 +768,19 @@ class PersistentCreatureIndex {
             creatures.push(result.creature);
             errors += result.errors;
           }
-
         } catch (error) {
-          console.warn(`[${this.moduleId}] Failed to extract data from ${doc.name} in ${pack.metadata.label}:`, error);
+          console.warn(
+            `[${this.moduleId}] Failed to extract data from ${doc.name} in ${pack.metadata.label}:`,
+            error
+          );
           errors++;
         }
       }
-
     } catch (error) {
-      console.warn(`[${this.moduleId}] Failed to load documents from ${pack.metadata.label}:`, error);
+      console.warn(
+        `[${this.moduleId}] Failed to load documents from ${pack.metadata.label}:`,
+        error
+      );
       errors++;
     }
 
@@ -730,97 +790,130 @@ class PersistentCreatureIndex {
   /**
    * Extract D&D 5e creature data from a single document
    */
-  private extractDnD5eCreatureData(doc: any, pack: any): { creature: DnD5eCreatureIndex, errors: number } | null {
+  private extractDnD5eCreatureData(
+    doc: any,
+    pack: any
+  ): { creature: DnD5eCreatureIndex; errors: number } | null {
     try {
       const system = doc.system || {};
-      
-      
+
       // Extract challenge rating with comprehensive fallbacks
       // Based on debug logs: system.details.cr contains the actual value
-      let challengeRating = system.details?.cr ?? 
-                           system.details?.cr?.value ?? 
-                           system.cr?.value ?? system.cr ?? 
-                           system.attributes?.cr?.value ?? system.attributes?.cr ??
-                           system.challenge?.rating ?? system.challenge?.cr ?? 0;
-      
+      let challengeRating =
+        system.details?.cr ??
+        system.details?.cr?.value ??
+        system.cr?.value ??
+        system.cr ??
+        system.attributes?.cr?.value ??
+        system.attributes?.cr ??
+        system.challenge?.rating ??
+        system.challenge?.cr ??
+        0;
+
       // Handle null values (spell effects, etc.)
       if (challengeRating === null || challengeRating === undefined) {
         challengeRating = 0;
       }
-      
+
       if (typeof challengeRating === 'string') {
         if (challengeRating === '1/8') challengeRating = 0.125;
         else if (challengeRating === '1/4') challengeRating = 0.25;
         else if (challengeRating === '1/2') challengeRating = 0.5;
         else challengeRating = parseFloat(challengeRating) || 0;
       }
-      
+
       // Ensure it's a number
       challengeRating = Number(challengeRating) || 0;
 
       // Extract creature type with proper type checking
       // Based on debug logs: system.details.type.value contains the actual value
-      let creatureType = system.details?.type?.value ?? 
-                         system.details?.type ?? 
-                         system.type?.value ?? system.type ?? 
-                         system.race?.value ?? system.race ??
-                         system.details?.race ?? 'unknown';
-      
+      let creatureType =
+        system.details?.type?.value ??
+        system.details?.type ??
+        system.type?.value ??
+        system.type ??
+        system.race?.value ??
+        system.race ??
+        system.details?.race ??
+        'unknown';
+
       // Handle null/undefined values properly
       if (creatureType === null || creatureType === undefined || creatureType === '') {
         creatureType = 'unknown';
       }
-      
+
       // Ensure creatureType is a string before calling toLowerCase()
       if (typeof creatureType !== 'string') {
         creatureType = String(creatureType || 'unknown');
       }
 
       // Extract size with proper type checking
-      let size = system.traits?.size?.value || system.traits?.size || 
-                 system.size?.value || system.size || 
-                 system.details?.size || 'medium';
-      
+      let size =
+        system.traits?.size?.value ||
+        system.traits?.size ||
+        system.size?.value ||
+        system.size ||
+        system.details?.size ||
+        'medium';
+
       // Ensure size is a string
       if (typeof size !== 'string') {
         size = String(size || 'medium');
       }
 
       // Extract hit points with more fallbacks
-      const hitPoints = system.attributes?.hp?.max || system.hp?.max || 
-                       system.attributes?.hp?.value || system.hp?.value || 
-                       system.health?.max || system.health?.value || 0;
+      const hitPoints =
+        system.attributes?.hp?.max ||
+        system.hp?.max ||
+        system.attributes?.hp?.value ||
+        system.hp?.value ||
+        system.health?.max ||
+        system.health?.value ||
+        0;
 
       // Extract armor class with more fallbacks
-      const armorClass = system.attributes?.ac?.value || system.ac?.value || 
-                        system.attributes?.ac || system.ac || 
-                        system.armor?.value || system.armor || 10;
+      const armorClass =
+        system.attributes?.ac?.value ||
+        system.ac?.value ||
+        system.attributes?.ac ||
+        system.ac ||
+        system.armor?.value ||
+        system.armor ||
+        10;
 
       // Extract alignment with proper type checking
-      let alignment = system.details?.alignment?.value || system.details?.alignment || 
-                      system.alignment?.value || system.alignment || 'unaligned';
-      
+      let alignment =
+        system.details?.alignment?.value ||
+        system.details?.alignment ||
+        system.alignment?.value ||
+        system.alignment ||
+        'unaligned';
+
       // Ensure alignment is a string
       if (typeof alignment !== 'string') {
         alignment = String(alignment || 'unaligned');
       }
 
       // Check for spells with more comprehensive detection
-      const hasSpells = !!(system.spells || 
-                          system.attributes?.spellcasting || 
-                          (system.details?.spellLevel && system.details.spellLevel > 0) ||
-                          (system.resources?.spell && system.resources.spell.max > 0) ||
-                          system.spellcasting ||
-                          (system.traits?.spellcasting) ||
-                          (system.details?.spellcaster));
+      const hasSpells = !!(
+        system.spells ||
+        system.attributes?.spellcasting ||
+        (system.details?.spellLevel && system.details.spellLevel > 0) ||
+        (system.resources?.spell && system.resources.spell.max > 0) ||
+        system.spellcasting ||
+        system.traits?.spellcasting ||
+        system.details?.spellcaster
+      );
 
       // Check for legendary actions with more comprehensive detection
-      const hasLegendaryActions = !!(system.resources?.legact || 
-                                    system.legendary || 
-                                    (system.resources?.legres && system.resources.legres.value > 0) ||
-                                    system.details?.legendary ||
-                                    system.traits?.legendary ||
-                                    (system.resources?.legendary && system.resources.legendary.max > 0));
+      const hasLegendaryActions = !!(
+        system.resources?.legact ||
+        system.legendary ||
+        (system.resources?.legres && system.resources.legres.value > 0) ||
+        system.details?.legendary ||
+        system.traits?.legendary ||
+        (system.resources?.legendary && system.resources.legendary.max > 0)
+      );
 
       // DEBUG: Log what we extracted for comparison
 
@@ -832,23 +925,22 @@ class PersistentCreatureIndex {
           type: doc.type,
           pack: pack.metadata.id,
           packLabel: pack.metadata.label,
-          challengeRating: challengeRating,
+          challengeRating,
           creatureType: creatureType.toLowerCase(),
           size: size.toLowerCase(),
-          hitPoints: hitPoints,
-          armorClass: armorClass,
-          hasSpells: hasSpells,
-          hasLegendaryActions: hasLegendaryActions,
+          hitPoints,
+          armorClass,
+          hasSpells,
+          hasLegendaryActions,
           alignment: alignment.toLowerCase(),
           description: doc.system?.details?.biography || doc.system?.description || '',
-          img: doc.img
+          img: doc.img,
         },
-        errors: 0
+        errors: 0,
       };
-
     } catch (error) {
       console.warn(`[${this.moduleId}] Failed to extract enhanced data from ${doc.name}:`, error);
-      
+
       // Return a basic fallback record with error count instead of null to avoid losing creatures
       return {
         creature: {
@@ -866,9 +958,9 @@ class PersistentCreatureIndex {
           hasLegendaryActions: false,
           alignment: 'unaligned',
           description: 'Data extraction failed',
-          img: doc.img || ''
+          img: doc.img || '',
         },
-        errors: 1
+        errors: 1,
       };
     }
   }
@@ -884,11 +976,15 @@ class PersistentCreatureIndex {
     let totalErrors = 0;
 
     try {
-      const actorPacks = Array.from(game.packs.values()).filter(pack => pack.metadata.type === 'Actor');
+      const actorPacks = Array.from(game.packs.values()).filter(
+        pack => pack.metadata.type === 'Actor'
+      );
       const enhancedCreatures: PF2eCreatureIndex[] = [];
       const packFingerprints = new Map<string, PackFingerprint>();
 
-      ui.notifications?.info(`Starting PF2e creature index build from ${actorPacks.length} packs...`);
+      ui.notifications?.info(
+        `Starting PF2e creature index build from ${actorPacks.length} packs...`
+      );
 
       let currentPack = 0;
       for (const pack of actorPacks) {
@@ -912,7 +1008,9 @@ class PersistentCreatureIndex {
       if (progressNotification) {
         progressNotification.remove();
       }
-      ui.notifications?.info(`Saving PF2e index to world database... (${enhancedCreatures.length} creatures)`);
+      ui.notifications?.info(
+        `Saving PF2e index to world database... (${enhancedCreatures.length} creatures)`
+      );
 
       const persistentIndex: PersistentEnhancedIndex = {
         metadata: {
@@ -920,9 +1018,9 @@ class PersistentCreatureIndex {
           timestamp: Date.now(),
           packFingerprints,
           totalCreatures: enhancedCreatures.length,
-          gameSystem: 'pf2e'  // Mark as PF2e index
+          gameSystem: 'pf2e', // Mark as PF2e index
         },
-        creatures: enhancedCreatures
+        creatures: enhancedCreatures,
       };
 
       await this.savePersistedIndex(persistentIndex);
@@ -934,7 +1032,6 @@ class PersistentCreatureIndex {
       ui.notifications?.info(successMessage);
 
       return enhancedCreatures;
-
     } catch (error) {
       if (progressNotification) {
         progressNotification.remove();
@@ -945,7 +1042,6 @@ class PersistentCreatureIndex {
       ui.notifications?.error(errorMessage);
 
       throw error;
-
     } finally {
       this.buildInProgress = false;
 
@@ -958,7 +1054,9 @@ class PersistentCreatureIndex {
   /**
    * Extract PF2e creature data from all documents in a pack
    */
-  private async extractPF2eDataFromPack(pack: any): Promise<{ creatures: PF2eCreatureIndex[], errors: number }> {
+  private async extractPF2eDataFromPack(
+    pack: any
+  ): Promise<{ creatures: PF2eCreatureIndex[]; errors: number }> {
     const creatures: PF2eCreatureIndex[] = [];
     let errors = 0;
 
@@ -977,15 +1075,19 @@ class PersistentCreatureIndex {
             creatures.push(result.creature);
             errors += result.errors;
           }
-
         } catch (error) {
-          console.warn(`[${this.moduleId}] Failed to extract PF2e data from ${doc.name} in ${pack.metadata.label}:`, error);
+          console.warn(
+            `[${this.moduleId}] Failed to extract PF2e data from ${doc.name} in ${pack.metadata.label}:`,
+            error
+          );
           errors++;
         }
       }
-
     } catch (error) {
-      console.warn(`[${this.moduleId}] Failed to load documents from ${pack.metadata.label}:`, error);
+      console.warn(
+        `[${this.moduleId}] Failed to load documents from ${pack.metadata.label}:`,
+        error
+      );
       errors++;
     }
 
@@ -995,7 +1097,10 @@ class PersistentCreatureIndex {
   /**
    * Extract Pathfinder 2e creature data from a single document
    */
-  private extractPF2eCreatureData(doc: any, pack: any): { creature: PF2eCreatureIndex, errors: number } | null {
+  private extractPF2eCreatureData(
+    doc: any,
+    pack: any
+  ): { creature: PF2eCreatureIndex; errors: number } | null {
     try {
       const system = doc.system || {};
 
@@ -1008,13 +1113,26 @@ class PersistentCreatureIndex {
       const traits = Array.isArray(traitsValue) ? traitsValue : [];
 
       // Extract primary creature type from traits
-      const creatureTraits = ['aberration', 'animal', 'beast', 'celestial',
-                              'construct', 'dragon', 'elemental', 'fey',
-                              'fiend', 'fungus', 'humanoid', 'monitor',
-                              'ooze', 'plant', 'undead'];
-      const creatureType = traits.find((t: string) =>
-        creatureTraits.includes(t.toLowerCase())
-      )?.toLowerCase() || 'unknown';
+      const creatureTraits = [
+        'aberration',
+        'animal',
+        'beast',
+        'celestial',
+        'construct',
+        'dragon',
+        'elemental',
+        'fey',
+        'fiend',
+        'fungus',
+        'humanoid',
+        'monitor',
+        'ooze',
+        'plant',
+        'undead',
+      ];
+      const creatureType =
+        traits.find((t: string) => creatureTraits.includes(t.toLowerCase()))?.toLowerCase() ||
+        'unknown';
 
       // Rarity extraction (PF2e specific)
       const rarity = system.traits?.rarity || 'common';
@@ -1023,12 +1141,12 @@ class PersistentCreatureIndex {
       let size = system.traits?.size?.value || 'med';
       // Normalize PF2e size values (tiny, sm, med, lg, huge, grg)
       const sizeMap: Record<string, string> = {
-        'tiny': 'tiny',
-        'sm': 'small',
-        'med': 'medium',
-        'lg': 'large',
-        'huge': 'huge',
-        'grg': 'gargantuan'
+        tiny: 'tiny',
+        sm: 'small',
+        med: 'medium',
+        lg: 'large',
+        huge: 'huge',
+        grg: 'gargantuan',
       };
       size = sizeMap[size.toLowerCase()] || 'medium';
 
@@ -1055,21 +1173,20 @@ class PersistentCreatureIndex {
           type: doc.type,
           pack: pack.metadata.id,
           packLabel: pack.metadata.label,
-          level: level,
-          traits: traits,
-          creatureType: creatureType,
-          rarity: rarity,
-          size: size,
-          hitPoints: hitPoints,
-          armorClass: armorClass,
-          hasSpells: hasSpells,
+          level,
+          traits,
+          creatureType,
+          rarity,
+          size,
+          hitPoints,
+          armorClass,
+          hasSpells,
           alignment: alignment.toUpperCase(),
           description: system.details?.publicNotes || system.details?.biography || '',
-          img: doc.img
+          img: doc.img,
         },
-        errors: 0
+        errors: 0,
       };
-
     } catch (error) {
       console.warn(`[${this.moduleId}] Failed to extract PF2e data from ${doc.name}:`, error);
 
@@ -1091,9 +1208,280 @@ class PersistentCreatureIndex {
           hasSpells: false,
           alignment: 'N',
           description: 'Data extraction failed',
-          img: doc.img || ''
+          img: doc.img || '',
         },
-        errors: 1
+        errors: 1,
+      };
+    }
+  }
+
+  /**
+   * Build Cosmere RPG (Plotweaver) enhanced creature index.
+   *
+   * Indexes `adversary`-type actors. Player characters are excluded —
+   * they're individual sheets, not encounter material.
+   */
+  private async buildCosmereRpgIndex(_force = false): Promise<CosmereRpgCreatureIndex[]> {
+    this.buildInProgress = true;
+
+    const startTime = Date.now();
+    let progressNotification: any = null;
+    let totalErrors = 0;
+
+    try {
+      const actorPacks = Array.from(game.packs.values()).filter(
+        pack => pack.metadata.type === 'Actor'
+      );
+      const enhancedCreatures: CosmereRpgCreatureIndex[] = [];
+      const packFingerprints = new Map<string, PackFingerprint>();
+
+      ui.notifications?.info(
+        `Starting Cosmere RPG creature index build from ${actorPacks.length} packs...`
+      );
+
+      for (let i = 0; i < actorPacks.length; i++) {
+        const pack = actorPacks[i];
+        const progressPercent = Math.round((i / actorPacks.length) * 100);
+
+        if (i % 3 === 0 || pack.metadata.label.toLowerCase().includes('adversar')) {
+          if (progressNotification) {
+            progressNotification.remove();
+          }
+          progressNotification = ui.notifications?.info(
+            `Building creature index... ${progressPercent}% (${i + 1}/${actorPacks.length}) Processing: ${pack.metadata.label}`
+          );
+        }
+
+        try {
+          if (!pack.indexed) {
+            await pack.getIndex({});
+          }
+
+          packFingerprints.set(pack.metadata.id, this.generatePackFingerprint(pack));
+
+          const packResult = await this.extractCosmereRpgDataFromPack(pack);
+          enhancedCreatures.push(...packResult.creatures);
+          totalErrors += packResult.errors;
+
+          if (i === 0 || (i + 1) % 5 === 0 || i === actorPacks.length - 1) {
+            const totalCreaturesSoFar = enhancedCreatures.length;
+            if (progressNotification) {
+              progressNotification.remove();
+            }
+            progressNotification = ui.notifications?.info(
+              `Index Progress: ${i + 1}/${actorPacks.length} packs complete, ${totalCreaturesSoFar} creatures indexed`
+            );
+          }
+        } catch (error) {
+          console.warn(`[${this.moduleId}] Failed to process pack ${pack.metadata.label}:`, error);
+          ui.notifications?.warn(
+            `Warning: Failed to index pack "${pack.metadata.label}" - continuing with other packs`
+          );
+        }
+      }
+
+      if (progressNotification) {
+        progressNotification.remove();
+      }
+      ui.notifications?.info(
+        `Saving enhanced index to world database... (${enhancedCreatures.length} creatures)`
+      );
+
+      const persistentIndex: PersistentEnhancedIndex = {
+        metadata: {
+          version: this.INDEX_VERSION,
+          timestamp: Date.now(),
+          packFingerprints,
+          totalCreatures: enhancedCreatures.length,
+          gameSystem: 'cosmere-rpg',
+        },
+        creatures: enhancedCreatures,
+      };
+
+      await this.savePersistedIndex(persistentIndex);
+
+      const buildTimeSeconds = Math.round((Date.now() - startTime) / 1000);
+      const errorText = totalErrors > 0 ? ` (${totalErrors} extraction errors)` : '';
+      const successMessage = `Cosmere RPG creature index complete! ${enhancedCreatures.length} creatures indexed from ${actorPacks.length} packs in ${buildTimeSeconds}s${errorText}`;
+
+      ui.notifications?.info(successMessage);
+
+      return enhancedCreatures;
+    } catch (error) {
+      if (progressNotification) {
+        progressNotification.remove();
+      }
+
+      const errorMessage = `Failed to build Cosmere RPG creature index: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      console.error(`[${this.moduleId}] ${errorMessage}`);
+      ui.notifications?.error(errorMessage);
+
+      throw error;
+    } finally {
+      this.buildInProgress = false;
+      if (progressNotification) {
+        progressNotification.remove();
+      }
+    }
+  }
+
+  /**
+   * Extract Cosmere RPG creatures from a single pack.
+   */
+  private async extractCosmereRpgDataFromPack(
+    pack: any
+  ): Promise<{ creatures: CosmereRpgCreatureIndex[]; errors: number }> {
+    const creatures: CosmereRpgCreatureIndex[] = [];
+    let errors = 0;
+
+    try {
+      const documents = await pack.getDocuments();
+
+      for (const doc of documents) {
+        try {
+          if (doc.type !== 'adversary') {
+            continue;
+          }
+
+          const result = this.extractCosmereRpgCreatureData(doc, pack);
+          if (result) {
+            creatures.push(result.creature);
+            errors += result.errors;
+          }
+        } catch (error) {
+          console.warn(
+            `[${this.moduleId}] Failed to extract Cosmere RPG data from ${doc.name} in ${pack.metadata.label}:`,
+            error
+          );
+          errors++;
+        }
+      }
+    } catch (error) {
+      console.warn(
+        `[${this.moduleId}] Failed to load documents from ${pack.metadata.label}:`,
+        error
+      );
+      errors++;
+    }
+
+    return { creatures, errors };
+  }
+
+  /**
+   * Resolve a Cosmere DerivedValueField (`{value, derived, override?, useOverride, bonus?}`).
+   * Honours `useOverride: true` so manually-typed values (like Investiture max
+   * on a sheet the system can't auto-derive) come through correctly.
+   */
+  private readDerived(field: any): number | undefined {
+    if (field == null) return undefined;
+    if (typeof field === 'number') return field;
+    if (typeof field === 'object') {
+      if (field.useOverride === true && typeof field.override === 'number') {
+        return field.override;
+      }
+      if (typeof field.value === 'number') return field.value;
+      if (typeof field.derived === 'number') return field.derived;
+    }
+    return undefined;
+  }
+
+  /**
+   * Extract a single Cosmere RPG adversary into the creature index format.
+   */
+  private extractCosmereRpgCreatureData(
+    doc: any,
+    pack: any
+  ): { creature: CosmereRpgCreatureIndex; errors: number } | null {
+    try {
+      const system = doc.system ?? {};
+
+      const tier = typeof system.tier === 'number' ? system.tier : 0;
+      const role =
+        typeof system.role === 'string' && system.role.length > 0
+          ? system.role.toLowerCase()
+          : 'unknown';
+
+      const size =
+        typeof system.size === 'string' && system.size.length > 0
+          ? system.size.toLowerCase()
+          : 'medium';
+
+      const creatureType =
+        typeof system.type?.id === 'string' && system.type.id.length > 0
+          ? system.type.id.toLowerCase()
+          : 'unknown';
+
+      const subtype =
+        typeof system.type?.subtype === 'string' && system.type.subtype.length > 0
+          ? system.type.subtype
+          : '';
+
+      const hitPoints = this.readDerived(system.resources?.hea?.max) ?? 0;
+      const focus = this.readDerived(system.resources?.foc?.max) ?? 0;
+      const investiture = this.readDerived(system.resources?.inv?.max) ?? 0;
+
+      const defensePhysical = this.readDerived(system.defenses?.phy) ?? 0;
+      const defenseCognitive = this.readDerived(system.defenses?.cog) ?? 0;
+      const defenseSpiritual = this.readDerived(system.defenses?.spi) ?? 0;
+
+      const deflect = this.readDerived(system.deflect) ?? 0;
+      const walkSpeed = this.readDerived(system.movement?.walk?.rate) ?? 0;
+
+      return {
+        creature: {
+          id: doc._id,
+          name: doc.name,
+          type: doc.type,
+          pack: pack.metadata.id,
+          packLabel: pack.metadata.label,
+          tier,
+          role,
+          creatureType,
+          subtype,
+          size,
+          hitPoints,
+          focus,
+          investiture,
+          hasInvestiture: investiture > 0,
+          defensePhysical,
+          defenseCognitive,
+          defenseSpiritual,
+          deflect,
+          walkSpeed,
+          img: doc.img,
+        },
+        errors: 0,
+      };
+    } catch (error) {
+      console.warn(
+        `[${this.moduleId}] Failed to extract Cosmere RPG data from ${doc.name}:`,
+        error
+      );
+      return {
+        creature: {
+          id: doc._id,
+          name: doc.name,
+          type: doc.type,
+          pack: pack.metadata.id,
+          packLabel: pack.metadata.label,
+          tier: 0,
+          role: 'unknown',
+          creatureType: 'unknown',
+          subtype: '',
+          size: 'medium',
+          hitPoints: 0,
+          focus: 0,
+          investiture: 0,
+          hasInvestiture: false,
+          defensePhysical: 0,
+          defenseCognitive: 0,
+          defenseSpiritual: 0,
+          deflect: 0,
+          walkSpeed: 0,
+          description: 'Data extraction failed',
+          img: doc.img || '',
+        },
+        errors: 1,
       };
     }
   }
@@ -1108,41 +1496,42 @@ export class FoundryDataAccess {
   /**
    * Force rebuild of enhanced creature index
    */
-  async rebuildEnhancedCreatureIndex(): Promise<{ success: boolean; totalCreatures: number; message: string }> {
+  async rebuildEnhancedCreatureIndex(): Promise<{
+    success: boolean;
+    totalCreatures: number;
+    message: string;
+  }> {
     try {
       const creatures = await this.persistentIndex.rebuildIndex();
       return {
         success: true,
         totalCreatures: creatures.length,
-        message: `Enhanced creature index rebuilt: ${creatures.length} creatures indexed from all packs`
+        message: `Enhanced creature index rebuilt: ${creatures.length} creatures indexed from all packs`,
       };
     } catch (error) {
       console.error(`[${this.moduleId}] Failed to rebuild enhanced creature index:`, error);
       return {
         success: false,
         totalCreatures: 0,
-        message: `Failed to rebuild index: ${error instanceof Error ? error.message : 'Unknown error'}`
+        message: `Failed to rebuild index: ${error instanceof Error ? error.message : 'Unknown error'}`,
       };
     }
   }
-
 
   /**
    * Get character/actor information by name or ID
    */
   async getCharacterInfo(identifier: string): Promise<CharacterInfo> {
-
     let actor: Actor | undefined;
 
     // Try to find by ID first, then by name
-    if (identifier.length === 16) { // Foundry ID length
+    if (identifier.length === 16) {
+      // Foundry ID length
       actor = game.actors.get(identifier);
     }
-    
+
     if (!actor) {
-      actor = game.actors.find(a => 
-        a.name?.toLowerCase() === identifier.toLowerCase()
-      );
+      actor = game.actors.find(a => a.name?.toLowerCase() === identifier.toLowerCase());
     }
 
     if (!actor) {
@@ -1166,7 +1555,7 @@ export class FoundryDataAccess {
         };
       }),
       effects: actor.effects.map(effect => {
-        const eff = effect as any;
+        const eff = effect;
         const dur = eff.duration;
         const durRaw = eff._source?.duration;
         return {
@@ -1174,13 +1563,15 @@ export class FoundryDataAccess {
           name: eff.name || eff.label || 'Unknown Effect',
           ...(eff.icon ? { icon: eff.icon } : {}),
           disabled: eff.disabled,
-          ...(dur ? {
-            duration: {
-              type: dur.units ?? durRaw?.type ?? 'none',
-              duration: dur.seconds ?? durRaw?.duration,
-              remaining: dur.remaining,
-            }
-          } : {}),
+          ...(dur
+            ? {
+                duration: {
+                  type: dur.units ?? durRaw?.type ?? 'none',
+                  duration: dur.seconds ?? durRaw?.duration,
+                  remaining: dur.remaining,
+                },
+              }
+            : {}),
         };
       }),
     };
@@ -1194,12 +1585,14 @@ export class FoundryDataAccess {
         name: action.label || action.name,
         type: action.type,
         ...(action.item ? { itemId: action.item.id } : {}),
-        ...(action.variants ? {
-          variants: action.variants.map((v: any) => ({
-            label: v.label,
-            ...(v.traits ? { traits: v.traits } : {})
-          }))
-        } : {}),
+        ...(action.variants
+          ? {
+              variants: action.variants.map((v: any) => ({
+                label: v.label,
+                ...(v.traits ? { traits: v.traits } : {}),
+              })),
+            }
+          : {}),
         ...(action.ready !== undefined ? { ready: action.ready } : {}),
       }));
     }
@@ -1209,7 +1602,7 @@ export class FoundryDataAccess {
     const itemToggles: any[] = [];
 
     actor.items.forEach(item => {
-      const itemAny = item as any;
+      const itemAny = item;
 
       // Extract rule element variants (e.g., weapon variants, stance toggles)
       if (itemAny.system?.rules) {
@@ -1219,7 +1612,7 @@ export class FoundryDataAccess {
             itemVariants.push({
               itemId: item.id,
               itemName: item.name,
-              ruleIndex: ruleIndex,
+              ruleIndex,
               ruleKey: rule.key,
               label: rule.label || rule.prompt,
               ...(rule.selection ? { selected: rule.selection } : {}),
@@ -1232,7 +1625,7 @@ export class FoundryDataAccess {
             itemToggles.push({
               itemId: item.id,
               itemName: item.name,
-              ruleIndex: ruleIndex,
+              ruleIndex,
               ruleKey: rule.key,
               label: rule.label,
               option: rule.option,
@@ -1320,7 +1713,7 @@ export class FoundryDataAccess {
       throw new Error(`Character not found: ${characterIdentifier}`);
     }
 
-    const actorAny = actor as any;
+    const actorAny = actor;
     const systemId = (game.system as any).id;
     const matches: Array<any> = [];
 
@@ -1344,7 +1737,7 @@ export class FoundryDataAccess {
 
     // Search items
     for (const item of actor.items) {
-      const itemSystem = item.system as any;
+      const itemSystem = item.system;
 
       // Check type filter
       if (!matchesType(item.type)) continue;
@@ -1366,14 +1759,16 @@ export class FoundryDataAccess {
       if (description) {
         // Strip HTML and truncate
         const plainText = description.replace(/<[^>]*>/g, '').trim();
-        result.description = plainText.length > 300 ? plainText.substring(0, 300) + '...' : plainText;
+        result.description =
+          plainText.length > 300 ? `${plainText.substring(0, 300)}...` : plainText;
       }
 
       // Spell-specific fields
       if (item.type === 'spell') {
         result.level = itemSystem?.level?.value ?? itemSystem?.level ?? itemSystem?.rank ?? 0;
-        const itemRaw = (item as any)._source?.system;
-        result.prepared = itemSystem?.prepared ?? itemRaw?.preparation?.prepared ?? itemSystem?.location?.prepared;
+        const itemRaw = item._source?.system;
+        result.prepared =
+          itemSystem?.prepared ?? itemRaw?.preparation?.prepared ?? itemSystem?.location?.prepared;
         result.expended = itemSystem?.location?.expended;
 
         // Get targeting info
@@ -1396,6 +1791,12 @@ export class FoundryDataAccess {
           if (targeting.target) result.target = targeting.target;
           if (targeting.area) result.area = targeting.area;
           result.actionCost = itemSystem?.castingTime?.value;
+        } else if (systemId === 'wfrp4e') {
+          // WFRP4e spells use a Casting Number (CN) rather than levels/slots.
+          if (itemSystem?.range?.value) result.range = itemSystem.range.value;
+          if (itemSystem?.target?.value) result.target = itemSystem.target.value;
+          const cn = itemSystem?.cn?.value;
+          if (cn !== undefined && cn !== null) result.actionCost = `CN ${cn}`;
         }
 
         // Category filter for spells
@@ -1403,7 +1804,8 @@ export class FoundryDataAccess {
           const spellLevel = result.level || 0;
           const isPrepared = result.prepared !== false;
           const isCantrip = spellLevel === 0;
-          const isFocus = itemSystem?.traits?.value?.includes('focus') || itemSystem?.category?.value === 'focus';
+          const isFocus =
+            itemSystem?.traits?.value?.includes('focus') || itemSystem?.category?.value === 'focus';
 
           if (searchCategory === 'cantrip' && !isCantrip) continue;
           if (searchCategory === 'prepared' && !isPrepared) continue;
@@ -1424,6 +1826,23 @@ export class FoundryDataAccess {
         }
       }
 
+      // WFRP4e equipment fields (British 'armour'; 'trapping' is generic gear)
+      if (
+        systemId === 'wfrp4e' &&
+        ['weapon', 'armour', 'trapping', 'ammunition', 'container'].includes(item.type)
+      ) {
+        result.quantity = itemSystem?.quantity?.value ?? 1;
+        result.equipped = itemSystem?.equipped?.value ?? item.isEquipped ?? false;
+
+        if (searchCategory === 'equipped' && !result.equipped) continue;
+      }
+
+      // WFRP4e prayer targeting (divine magic; item type 'prayer')
+      if (systemId === 'wfrp4e' && item.type === 'prayer') {
+        if (itemSystem?.range?.value) result.range = itemSystem.range.value;
+        if (itemSystem?.target?.value) result.target = itemSystem.target.value;
+      }
+
       // Feat/feature fields
       if (['feat', 'feature', 'class', 'ancestry', 'heritage', 'background'].includes(item.type)) {
         if (systemId === 'pf2e') {
@@ -1437,7 +1856,9 @@ export class FoundryDataAccess {
       if (item.type === 'action') {
         if (systemId === 'pf2e') {
           result.traits = itemSystem?.traits?.value || [];
-          result.actionCost = this.formatPF2eActionCost(itemSystem?.actionType?.value || itemSystem?.actions?.value);
+          result.actionCost = this.formatPF2eActionCost(
+            itemSystem?.actionType?.value || itemSystem?.actions?.value
+          );
         }
       }
 
@@ -1449,7 +1870,8 @@ export class FoundryDataAccess {
 
     // Also search actions if type filter includes 'action' or is empty
     if (!searchType || searchType === 'action') {
-      const actions = actorAny.system?.actions || actorAny.items?.filter((i: any) => i.type === 'action') || [];
+      const actions =
+        actorAny.system?.actions || actorAny.items?.filter((i: any) => i.type === 'action') || [];
       for (const action of actions) {
         if (matches.length >= limit) break;
 
@@ -1478,7 +1900,7 @@ export class FoundryDataAccess {
       for (const effect of effects) {
         if (matches.length >= limit) break;
 
-        const effectAny = effect as any;
+        const effectAny = effect;
         if (!matchesQuery(effectAny.name || effectAny.label)) continue;
 
         matches.push({
@@ -1490,13 +1912,17 @@ export class FoundryDataAccess {
       }
     }
 
-    this.auditLog('searchCharacterItems', {
-      characterId: actor.id,
-      query,
-      type,
-      category,
-      matchCount: matches.length
-    }, 'success');
+    this.auditLog(
+      'searchCharacterItems',
+      {
+        characterId: actor.id,
+        query,
+        type,
+        category,
+        matchCount: matches.length,
+      },
+      'success'
+    );
 
     const result: {
       characterId: string;
@@ -1521,7 +1947,7 @@ export class FoundryDataAccess {
   }
 
   /**
-   * Extract spellcasting data from an actor (supports PF2e and D&D 5e)
+   * Extract spellcasting data from an actor (supports PF2e, D&D 5e, DSA5, and WFRP4e)
    */
   private extractSpellcastingData(actor: Actor): SpellcastingEntry[] {
     const entries: SpellcastingEntry[] = [];
@@ -1533,7 +1959,10 @@ export class FoundryDataAccess {
 
     if (systemId === 'pf2e') {
       // PF2e: Extract from spellcastingEntries
-      const spellcastingEntries = actorAny.spellcasting?.contents || actorAny.items?.filter((i: any) => i.type === 'spellcastingEntry') || [];
+      const spellcastingEntries =
+        actorAny.spellcasting?.contents ||
+        actorAny.items?.filter((i: any) => i.type === 'spellcastingEntry') ||
+        [];
 
       for (const entry of spellcastingEntries) {
         const entryData = entry.system || entry;
@@ -1543,9 +1972,8 @@ export class FoundryDataAccess {
         // In PF2e, spells have a location property pointing to their spellcasting entry
         const entryId = entry.id;
         const associatedSpells = spellItems.filter((spell: any) => {
-          const spellSystem = spell.system as any;
-          return spellSystem?.location?.value === entryId ||
-                 spellSystem?.location === entryId;
+          const spellSystem = spell.system;
+          return spellSystem?.location?.value === entryId || spellSystem?.location === entryId;
         });
 
         for (const spell of associatedSpells) {
@@ -1581,7 +2009,8 @@ export class FoundryDataAccess {
                   entrySpells.push({
                     id: spellItem.id || '',
                     name: spellItem.name || '',
-                    level: parseInt(levelKey.replace('spell', '')) || spellSystem?.level?.value || 0,
+                    level:
+                      parseInt(levelKey.replace('spell', '')) || spellSystem?.level?.value || 0,
                     prepared: spellRef.prepared ?? true,
                     expended: spellRef.expended ?? false,
                     traits: spellSystem?.traits?.value || [],
@@ -1611,9 +2040,10 @@ export class FoundryDataAccess {
 
       // Also capture focus spells and innate spells that might not be in entries
       const focusSpells = spellItems.filter((spell: any) => {
-        const spellSystem = spell.system as any;
-        return spellSystem?.traits?.value?.includes('focus') ||
-               spellSystem?.category?.value === 'focus';
+        const spellSystem = spell.system;
+        return (
+          spellSystem?.traits?.value?.includes('focus') || spellSystem?.category?.value === 'focus'
+        );
       });
 
       if (focusSpells.length > 0 && !entries.some(e => e.type === 'focus')) {
@@ -1622,7 +2052,7 @@ export class FoundryDataAccess {
           name: 'Focus Spells',
           type: 'focus',
           spells: focusSpells.map((spell: any) => {
-            const spellSystem = spell.system as any;
+            const spellSystem = spell.system;
             const targeting = this.extractPF2eSpellTargeting(spellSystem);
             return {
               id: spell.id || '',
@@ -1637,7 +2067,6 @@ export class FoundryDataAccess {
           }),
         });
       }
-
     } else if (systemId === 'dnd5e') {
       // D&D 5e: Extract from classes with spellcasting
       const classes = actor.items.filter(item => item.type === 'class');
@@ -1650,9 +2079,12 @@ export class FoundryDataAccess {
         const spellSystem = spell.system as any;
         const spellRaw = (spell as any)._source?.system || spellSystem;
         const sourceItem = spellSystem?.sourceItem;
-        const sourceClass = (sourceItem
-          ? (typeof sourceItem === 'string' ? sourceItem : (sourceItem.identifier || sourceItem.id))
-          : spellRaw?.sourceClass) || 'general';
+        const sourceClass =
+          (sourceItem
+            ? typeof sourceItem === 'string'
+              ? sourceItem
+              : sourceItem.identifier || sourceItem.id
+            : spellRaw?.sourceClass) || 'general';
 
         if (!spellsByClass[sourceClass]) {
           spellsByClass[sourceClass] = [];
@@ -1675,9 +2107,13 @@ export class FoundryDataAccess {
       // Create entries for each spellcasting class
       for (const classItem of classes) {
         const classSystem = classItem.system as any;
-        if (classSystem?.spellcasting?.progression && classSystem.spellcasting.progression !== 'none') {
+        if (
+          classSystem?.spellcasting?.progression &&
+          classSystem.spellcasting.progression !== 'none'
+        ) {
           const className = classItem.name || 'Unknown';
-          const classSpells = spellsByClass[classItem.id || ''] || spellsByClass[className.toLowerCase()] || [];
+          const classSpells =
+            spellsByClass[classItem.id || ''] || spellsByClass[className.toLowerCase()] || [];
 
           entries.push({
             id: classItem.id || '',
@@ -1732,23 +2168,27 @@ export class FoundryDataAccess {
           id: 'zauber',
           name: 'Zauber (Spells)',
           type: 'arcane',
-          slots: asp ? {
-            asp: { value: asp.value ?? 0, max: asp.max ?? 0 }
-          } : undefined,
-          spells: astralSpells.map((spell: any) => {
-            const spellSystem = spell.system as any;
-            const targeting = this.extractDSA5SpellTargeting(spellSystem);
-            return {
-              id: spell.id || '',
-              name: spell.name || '',
-              level: spellSystem?.level?.value ?? spellSystem?.level ?? 0,
-              traits: spellSystem?.effect?.attributes || [],
-              actionCost: spellSystem?.castingTime?.value || undefined,
-              range: targeting.range,
-              target: targeting.target,
-              area: targeting.area,
-            };
-          }).sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
+          slots: asp
+            ? {
+                asp: { value: asp.value ?? 0, max: asp.max ?? 0 },
+              }
+            : undefined,
+          spells: astralSpells
+            .map((spell: any) => {
+              const spellSystem = spell.system;
+              const targeting = this.extractDSA5SpellTargeting(spellSystem);
+              return {
+                id: spell.id || '',
+                name: spell.name || '',
+                level: spellSystem?.level?.value ?? spellSystem?.level ?? 0,
+                traits: spellSystem?.effect?.attributes || [],
+                actionCost: spellSystem?.castingTime?.value || undefined,
+                range: targeting.range,
+                target: targeting.target,
+                area: targeting.area,
+              };
+            })
+            .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
         });
       }
 
@@ -1758,23 +2198,27 @@ export class FoundryDataAccess {
           id: 'liturgien',
           name: 'Liturgien & Zeremonien (Liturgies)',
           type: 'divine',
-          slots: kap ? {
-            kap: { value: kap.value ?? 0, max: kap.max ?? 0 }
-          } : undefined,
-          spells: karmaSpells.map((spell: any) => {
-            const spellSystem = spell.system as any;
-            const targeting = this.extractDSA5SpellTargeting(spellSystem);
-            return {
-              id: spell.id || '',
-              name: spell.name || '',
-              level: spellSystem?.level?.value ?? spellSystem?.level ?? 0,
-              traits: spellSystem?.effect?.attributes || [],
-              actionCost: spellSystem?.castingTime?.value || undefined,
-              range: targeting.range,
-              target: targeting.target,
-              area: targeting.area,
-            };
-          }).sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
+          slots: kap
+            ? {
+                kap: { value: kap.value ?? 0, max: kap.max ?? 0 },
+              }
+            : undefined,
+          spells: karmaSpells
+            .map((spell: any) => {
+              const spellSystem = spell.system;
+              const targeting = this.extractDSA5SpellTargeting(spellSystem);
+              return {
+                id: spell.id || '',
+                name: spell.name || '',
+                level: spellSystem?.level?.value ?? spellSystem?.level ?? 0,
+                traits: spellSystem?.effect?.attributes || [],
+                actionCost: spellSystem?.castingTime?.value || undefined,
+                range: targeting.range,
+                target: targeting.target,
+                area: targeting.area,
+              };
+            })
+            .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
         });
       }
 
@@ -1784,20 +2228,79 @@ export class FoundryDataAccess {
           id: 'rituale',
           name: 'Rituale (Rituals)',
           type: 'ritual',
-          spells: rituals.map((spell: any) => {
-            const spellSystem = spell.system as any;
-            const targeting = this.extractDSA5SpellTargeting(spellSystem);
-            return {
-              id: spell.id || '',
-              name: spell.name || '',
-              level: spellSystem?.level?.value ?? spellSystem?.level ?? 0,
-              traits: spellSystem?.effect?.attributes || [],
-              actionCost: spellSystem?.castingTime?.value || undefined,
-              range: targeting.range,
-              target: targeting.target,
-              area: targeting.area,
-            };
-          }).sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
+          spells: rituals
+            .map((spell: any) => {
+              const spellSystem = spell.system;
+              const targeting = this.extractDSA5SpellTargeting(spellSystem);
+              return {
+                id: spell.id || '',
+                name: spell.name || '',
+                level: spellSystem?.level?.value ?? spellSystem?.level ?? 0,
+                traits: spellSystem?.effect?.attributes || [],
+                actionCost: spellSystem?.castingTime?.value || undefined,
+                range: targeting.range,
+                target: targeting.target,
+                area: targeting.area,
+              };
+            })
+            .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name)),
+        });
+      }
+    } else if (systemId === 'wfrp4e') {
+      // WFRP4e: arcane spells grouped by Lore, divine prayers grouped by God.
+      // WFRP4e has no spell levels or slots; spells use a Casting Number (CN).
+      const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+      // Arcane spells, grouped by lore
+      const spellsByLore = new Map<string, SpellInfo[]>();
+      for (const spell of actor.items.filter(item => item.type === 'spell')) {
+        const spellSystem = spell.system as any;
+        const loreRaw = spellSystem?.lore?.value;
+        const lore = String((Array.isArray(loreRaw) ? loreRaw[0] : loreRaw) || 'arcane');
+        const cn = spellSystem?.cn?.value;
+        const info: SpellInfo = {
+          id: spell.id || '',
+          name: spell.name || '',
+          level: 0,
+          actionCost: cn !== undefined && cn !== null ? `CN ${cn}` : undefined,
+          range: spellSystem?.range?.value || undefined,
+          target: spellSystem?.target?.value || undefined,
+        };
+        if (!spellsByLore.has(lore)) spellsByLore.set(lore, []);
+        spellsByLore.get(lore)!.push(info);
+      }
+      for (const [lore, loreSpells] of spellsByLore) {
+        entries.push({
+          id: `lore-${lore}`,
+          name: `Lore of ${cap(lore)}`,
+          type: 'arcane',
+          tradition: 'arcane',
+          spells: loreSpells.sort((a, b) => a.name.localeCompare(b.name)),
+        });
+      }
+
+      // Divine prayers, grouped by god
+      const prayersByGod = new Map<string, SpellInfo[]>();
+      for (const prayer of actor.items.filter(item => item.type === 'prayer')) {
+        const praySystem = prayer.system as any;
+        const god = String(praySystem?.god?.value || 'divine');
+        const info: SpellInfo = {
+          id: prayer.id || '',
+          name: prayer.name || '',
+          level: 0,
+          range: praySystem?.range?.value || undefined,
+          target: praySystem?.target?.value || undefined,
+        };
+        if (!prayersByGod.has(god)) prayersByGod.set(god, []);
+        prayersByGod.get(god)!.push(info);
+      }
+      for (const [god, godPrayers] of prayersByGod) {
+        entries.push({
+          id: `prayers-${god}`,
+          name: god === 'divine' ? 'Prayers' : `Prayers (${cap(god)})`,
+          type: 'divine',
+          tradition: 'divine',
+          spells: godPrayers.sort((a, b) => a.name.localeCompare(b.name)),
         });
       }
     }
@@ -1821,7 +2324,9 @@ export class FoundryDataAccess {
   /**
    * Extract PF2e spell slots from spellcasting entry data
    */
-  private extractPF2eSpellSlots(entryData: any): Record<string, { value: number; max: number }> | undefined {
+  private extractPF2eSpellSlots(
+    entryData: any
+  ): Record<string, { value: number; max: number }> | undefined {
     const slots: Record<string, { value: number; max: number }> = {};
 
     // PF2e stores slots per rank
@@ -1842,7 +2347,9 @@ export class FoundryDataAccess {
   /**
    * Extract D&D 5e spell slots from actor system data
    */
-  private extractDnD5eSpellSlots(spellsData: any): Record<string, { value: number; max: number }> | undefined {
+  private extractDnD5eSpellSlots(
+    spellsData: any
+  ): Record<string, { value: number; max: number }> | undefined {
     const slots: Record<string, { value: number; max: number }> = {};
 
     // D&D 5e stores slots as spell1, spell2, etc.
@@ -1873,7 +2380,11 @@ export class FoundryDataAccess {
    * Extract spell targeting info for D&D 5e
    * D&D 5e spells have: target.type ("self", "creature", "point", etc.), range.value, range.units
    */
-  private extractDnD5eSpellTargeting(spellSystem: any): { range?: string; target?: string; area?: string } {
+  private extractDnD5eSpellTargeting(spellSystem: any): {
+    range?: string;
+    target?: string;
+    area?: string;
+  } {
     const result: { range?: string; target?: string; area?: string } = {};
 
     // Range (e.g., "60 feet", "Self", "Touch")
@@ -1895,7 +2406,9 @@ export class FoundryDataAccess {
     if (targetType === 'self') {
       result.target = 'self';
     } else if (targetType === 'creature' || targetType === 'ally' || targetType === 'enemy') {
-      result.target = targetValue ? `${targetValue} ${targetType}${targetValue > 1 ? 's' : ''}` : targetType;
+      result.target = targetValue
+        ? `${targetValue} ${targetType}${targetValue > 1 ? 's' : ''}`
+        : targetType;
     } else if (targetType === 'object') {
       result.target = targetValue ? `${targetValue} object${targetValue > 1 ? 's' : ''}` : 'object';
     } else if (targetType === 'space' || targetType === 'point') {
@@ -1923,7 +2436,11 @@ export class FoundryDataAccess {
    * Extract spell targeting info for PF2e
    * PF2e spells have: target (string), range.value, area.type, area.value
    */
-  private extractPF2eSpellTargeting(spellSystem: any): { range?: string; target?: string; area?: string } {
+  private extractPF2eSpellTargeting(spellSystem: any): {
+    range?: string;
+    target?: string;
+    area?: string;
+  } {
     const result: { range?: string; target?: string; area?: string } = {};
 
     // Range (e.g., "30 feet", "touch")
@@ -1960,7 +2477,11 @@ export class FoundryDataAccess {
    * Extract spell targeting info for DSA5
    * DSA5 spells have: targetCategory, range, etc.
    */
-  private extractDSA5SpellTargeting(spellSystem: any): { range?: string; target?: string; area?: string } {
+  private extractDSA5SpellTargeting(spellSystem: any): {
+    range?: string;
+    target?: string;
+    area?: string;
+  } {
     const result: { range?: string; target?: string; area?: string } = {};
 
     // Range
@@ -1987,68 +2508,77 @@ export class FoundryDataAccess {
   /**
    * Search compendium packs for items matching query with optional filters
    */
-  async searchCompendium(query: string, packType?: string, filters?: {
-    challengeRating?: number | { min?: number; max?: number };
-    creatureType?: string;
-    size?: string;
-    alignment?: string;
-    hasLegendaryActions?: boolean;
-    spellcaster?: boolean;
-  }): Promise<CompendiumSearchResult[]> {
-
+  async searchCompendium(
+    query: string,
+    packType?: string,
+    filters?: {
+      challengeRating?: number | { min?: number; max?: number };
+      creatureType?: string;
+      size?: string;
+      alignment?: string;
+      hasLegendaryActions?: boolean;
+      spellcaster?: boolean;
+    }
+  ): Promise<CompendiumSearchResult[]> {
     // Add defensive checks for query parameter
     if (!query || typeof query !== 'string' || query.trim().length < 2) {
       throw new Error('Search query must be a string with at least 2 characters');
     }
 
     // ENHANCED SEARCH: If we have creature-specific filters and Actor packType, use enhanced index
-    if (filters && packType === 'Actor' && 
-        (filters.challengeRating || filters.creatureType || filters.hasLegendaryActions)) {
-      
-      
+    if (
+      filters &&
+      packType === 'Actor' &&
+      (filters.challengeRating || filters.creatureType || filters.hasLegendaryActions)
+    ) {
       // Check if enhanced creature index is enabled
       const enhancedIndexEnabled = game.settings.get(this.moduleId, 'enableEnhancedCreatureIndex');
-      
+
       if (enhancedIndexEnabled) {
         try {
           // Convert search criteria and use enhanced search
           const criteria: any = { limit: 100 }; // Default limit for search
-          
+
           if (filters.challengeRating) criteria.challengeRating = filters.challengeRating;
           if (filters.creatureType) criteria.creatureType = filters.creatureType;
           if (filters.size) criteria.size = filters.size;
-          if (filters.hasLegendaryActions) criteria.hasLegendaryActions = filters.hasLegendaryActions;
-          
+          if (filters.hasLegendaryActions)
+            criteria.hasLegendaryActions = filters.hasLegendaryActions;
+
           const enhancedResult = await this.listCreaturesByCriteria(criteria);
-          
+
           // No name filtering needed - trust the enhanced creature index!
           const filteredResults = enhancedResult.creatures;
-          
-          
+
           // Convert to CompendiumSearchResult format
-          return filteredResults.map(creature => ({
-            id: creature.id || creature.name,
-            name: creature.name,
-            type: creature.type || 'npc',
-            pack: creature.pack,
-            packLabel: creature.packLabel || creature.pack,
-            description: creature.description || '',
-            hasImage: creature.hasImage || !!creature.img,
-            summary: `CR ${creature.challengeRating} ${creature.creatureType} from ${creature.packLabel}`,
-            // Enhanced data (not part of interface but will be included)
-            challengeRating: creature.challengeRating,
-            creatureType: creature.creatureType,
-            size: creature.size,
-            hasLegendaryActions: creature.hasLegendaryActions
-          } as CompendiumSearchResult & {
-            challengeRating: number;
-            creatureType: string;
-            size: string;
-            hasLegendaryActions: boolean;
-          }));
-          
+          return filteredResults.map(
+            creature =>
+              ({
+                id: creature.id || creature.name,
+                name: creature.name,
+                type: creature.type || 'npc',
+                pack: creature.pack,
+                packLabel: creature.packLabel || creature.pack,
+                description: creature.description || '',
+                hasImage: creature.hasImage || !!creature.img,
+                summary: `CR ${creature.challengeRating} ${creature.creatureType} from ${creature.packLabel}`,
+                // Enhanced data (not part of interface but will be included)
+                challengeRating: creature.challengeRating,
+                creatureType: creature.creatureType,
+                size: creature.size,
+                hasLegendaryActions: creature.hasLegendaryActions,
+              }) as CompendiumSearchResult & {
+                challengeRating: number;
+                creatureType: string;
+                size: string;
+                hasLegendaryActions: boolean;
+              }
+          );
         } catch (error) {
-          console.warn(`[${this.moduleId}] Enhanced search failed, falling back to basic search:`, error);
+          console.warn(
+            `[${this.moduleId}] Enhanced search failed, falling back to basic search:`,
+            error
+          );
           // Continue to basic search below
         }
       }
@@ -2056,7 +2586,9 @@ export class FoundryDataAccess {
 
     const results: CompendiumSearchResult[] = [];
     const cleanQuery = query.toLowerCase().trim();
-    const searchTerms = cleanQuery.split(' ').filter(term => term && typeof term === 'string' && term.length > 0);
+    const searchTerms = cleanQuery
+      .split(' ')
+      .filter(term => term && typeof term === 'string' && term.length > 0);
 
     if (searchTerms.length === 0) {
       throw new Error('Search query must contain valid search terms');
@@ -2079,12 +2611,16 @@ export class FoundryDataAccess {
 
         // Use basic compendium index for all searches
         const entriesToSearch = Array.from(pack.index.values());
-        
+
         for (const entry of entriesToSearch) {
           try {
             // Type assertion and comprehensive safety checks for entry properties
             const typedEntry = entry as any;
-            if (!typedEntry || !typedEntry.name || typeof typedEntry.name !== 'string' || typedEntry.name.trim().length === 0) {
+            if (
+              !typedEntry?.name ||
+              typeof typedEntry.name !== 'string' ||
+              typedEntry.name.trim().length === 0
+            ) {
               continue;
             }
 
@@ -2094,7 +2630,7 @@ export class FoundryDataAccess {
             }
 
             // Use already created typedEntry
-            
+
             const entryNameLower = typedEntry.name.toLowerCase();
             const nameMatch = searchTerms.every(term => {
               if (!term || typeof term !== 'string') {
@@ -2105,10 +2641,14 @@ export class FoundryDataAccess {
 
             if (nameMatch) {
               // For Actor packs with filters, use simple name/description matching
-              if (filters && this.shouldApplyFilters(entry, filters) && pack.metadata.type === 'Actor') {
+              if (
+                filters &&
+                this.shouldApplyFilters(entry, filters) &&
+                pack.metadata.type === 'Actor'
+              ) {
                 // Convert filters to search criteria for compatibility
                 const searchCriteria: any = {};
-                
+
                 if (filters.challengeRating) {
                   const searchTerms = [];
                   if (typeof filters.challengeRating === 'number') {
@@ -2124,15 +2664,18 @@ export class FoundryDataAccess {
                   }
                   searchCriteria.searchTerms = searchTerms;
                 }
-                
+
                 if (filters.creatureType) {
                   const typeTerms = [filters.creatureType];
                   if (filters.creatureType.toLowerCase() === 'humanoid') {
                     typeTerms.push('human', 'elf', 'dwarf', 'orc', 'goblin');
                   }
-                  searchCriteria.searchTerms = [...(searchCriteria.searchTerms || []), ...typeTerms];
+                  searchCriteria.searchTerms = [
+                    ...(searchCriteria.searchTerms || []),
+                    ...typeTerms,
+                  ];
                 }
-                
+
                 if (!this.matchesSearchCriteria(typedEntry, searchCriteria)) {
                   continue;
                 }
@@ -2153,7 +2696,10 @@ export class FoundryDataAccess {
             }
           } catch (entryError) {
             // Log individual entry errors but continue processing
-            console.warn(`[${this.moduleId}] Error processing entry in pack ${pack.metadata.id}:`, entryError);
+            console.warn(
+              `[${this.moduleId}] Error processing entry in pack ${pack.metadata.id}:`,
+              entryError
+            );
             continue;
           }
 
@@ -2175,14 +2721,14 @@ export class FoundryDataAccess {
       const bExact = b.name.toLowerCase() === query.toLowerCase();
       if (aExact && !bExact) return -1;
       if (!aExact && bExact) return 1;
-      
+
       // If filters are used, prioritize by filter match quality
       if (filters) {
         const aScore = this.calculateRelevanceScore(a, filters, query);
         const bScore = this.calculateRelevanceScore(b, filters, query);
         if (aScore !== bScore) return bScore - aScore; // Higher score first
       }
-      
+
       // Fallback to alphabetical
       return a.name.localeCompare(b.name);
     });
@@ -2198,7 +2744,7 @@ export class FoundryDataAccess {
     if (entry.type !== 'npc' && entry.type !== 'character' && entry.type !== 'creature') {
       return false;
     }
-    
+
     // Check if any filters are actually specified
     return Object.keys(filters).some(key => filters[key] !== undefined);
   }
@@ -2208,22 +2754,25 @@ export class FoundryDataAccess {
    * @unused - Replaced with simple index-only approach
    */
   // @ts-ignore - Unused method kept for compatibility
-  private passesFilters(entry: any, filters: {
-    challengeRating?: number | { min?: number; max?: number };
-    creatureType?: string;
-    size?: string;
-    alignment?: string;
-    hasLegendaryActions?: boolean;
-    spellcaster?: boolean;
-  }): boolean {
+  private passesFilters(
+    entry: any,
+    filters: {
+      challengeRating?: number | { min?: number; max?: number };
+      creatureType?: string;
+      size?: string;
+      alignment?: string;
+      hasLegendaryActions?: boolean;
+      spellcaster?: boolean;
+    }
+  ): boolean {
     const system = entry.system || {};
-
 
     // Challenge Rating filter
     if (filters.challengeRating !== undefined) {
       // Try multiple possible CR locations in D&D 5e data structure
-      let entryCR = system.details?.cr?.value || system.details?.cr || system.cr?.value || system.cr || 0;
-      
+      let entryCR =
+        system.details?.cr?.value || system.details?.cr || system.cr?.value || system.cr || 0;
+
       // Handle fractional CRs (common in D&D 5e)
       if (typeof entryCR === 'string') {
         if (entryCR === '1/8') entryCR = 0.125;
@@ -2231,7 +2780,7 @@ export class FoundryDataAccess {
         else if (entryCR === '1/2') entryCR = 0.5;
         else entryCR = parseFloat(entryCR) || 0;
       }
-      
+
       if (typeof filters.challengeRating === 'number') {
         // Exact CR match
         if (entryCR !== filters.challengeRating) {
@@ -2275,8 +2824,11 @@ export class FoundryDataAccess {
 
     // Legendary Actions filter
     if (filters.hasLegendaryActions !== undefined) {
-      const hasLegendary = !!(system.resources?.legact || system.legendary || 
-                             (system.resources?.legres && system.resources.legres.value > 0));
+      const hasLegendary = !!(
+        system.resources?.legact ||
+        system.legendary ||
+        (system.resources?.legres && system.resources.legres.value > 0)
+      );
       if (hasLegendary !== filters.hasLegendaryActions) {
         return false;
       }
@@ -2284,8 +2836,11 @@ export class FoundryDataAccess {
 
     // Spellcaster filter
     if (filters.spellcaster !== undefined) {
-      const isSpellcaster = !!(system.spells || system.attributes?.spellcasting || 
-                               (system.details?.spellLevel && system.details.spellLevel > 0));
+      const isSpellcaster = !!(
+        system.spells ||
+        system.attributes?.spellcasting ||
+        (system.details?.spellLevel && system.details.spellLevel > 0)
+      );
       if (isSpellcaster !== filters.spellcaster) {
         return false;
       }
@@ -2300,7 +2855,7 @@ export class FoundryDataAccess {
   private calculateRelevanceScore(entry: any, filters: any, query: string): number {
     let score = 0;
     const system = entry.system || {};
-    
+
     // Bonus for creature type match (high importance for encounter building)
     if (filters.creatureType) {
       const entryType = system.details?.type?.value || system.type?.value || '';
@@ -2308,7 +2863,7 @@ export class FoundryDataAccess {
         score += 20;
       }
     }
-    
+
     // Bonus for CR match (exact match gets higher score than range)
     if (filters.challengeRating !== undefined) {
       const entryCR = system.details?.cr || system.cr || 0;
@@ -2327,14 +2882,25 @@ export class FoundryDataAccess {
         }
       }
     }
-    
+
     // Bonus for common creature names (better for encounters)
-    const commonNames = ['knight', 'warrior', 'guard', 'soldier', 'mage', 'priest', 'bandit', 'orc', 'goblin', 'dragon'];
+    const commonNames = [
+      'knight',
+      'warrior',
+      'guard',
+      'soldier',
+      'mage',
+      'priest',
+      'bandit',
+      'orc',
+      'goblin',
+      'dragon',
+    ];
     const lowerName = entry.name.toLowerCase();
     if (commonNames.some(name => lowerName.includes(name))) {
       score += 5;
     }
-    
+
     // Bonus for query term matches in name
     const queryTerms = query.toLowerCase().split(' ');
     for (const term of queryTerms) {
@@ -2342,7 +2908,7 @@ export class FoundryDataAccess {
         score += 3;
       }
     }
-    
+
     return score;
   }
 
@@ -2356,8 +2922,7 @@ export class FoundryDataAccess {
     hasSpells?: boolean;
     hasLegendaryActions?: boolean;
     limit?: number;
-  }): Promise<{creatures: any[], searchSummary: any}> {
-
+  }): Promise<{ creatures: any[]; searchSummary: any }> {
     const limit = criteria.limit || 500;
 
     // Check if enhanced creature index is enabled
@@ -2368,23 +2933,25 @@ export class FoundryDataAccess {
     }
 
     try {
-      
       // Get enhanced creature index (builds if needed)
       const enhancedCreatures = await this.persistentIndex.getEnhancedIndex();
 
       // Apply filters to enhanced data
-      let filteredCreatures = enhancedCreatures.filter(creature => this.passesEnhancedCriteria(creature, criteria));
+      let filteredCreatures = enhancedCreatures.filter(creature =>
+        this.passesEnhancedCriteria(creature, criteria)
+      );
 
-
-      // Sort by Level/CR then name for consistent ordering (system-aware)
+      // Sort by power level then name for consistent ordering (system-aware).
+      // Power-level dial: tier (cosmere), level (pf2e), challengeRating (dnd5e).
+      const powerLevel = (c: EnhancedCreatureIndex): number => {
+        if ('tier' in c) return c.tier;
+        if ('level' in c) return c.level;
+        return c.challengeRating;
+      };
       filteredCreatures.sort((a, b) => {
-        // Get power level (CR for D&D 5e, Level for PF2e)
-        const powerA = 'level' in a ? (a as PF2eCreatureIndex).level : (a as DnD5eCreatureIndex).challengeRating;
-        const powerB = 'level' in b ? (b as PF2eCreatureIndex).level : (b as DnD5eCreatureIndex).challengeRating;
-
-        if (powerA !== powerB) {
-          return powerA - powerB; // Lower power first
-        }
+        const powerA = powerLevel(a);
+        const powerB = powerLevel(b);
+        if (powerA !== powerB) return powerA - powerB;
         return a.name.localeCompare(b.name);
       });
 
@@ -2395,10 +2962,10 @@ export class FoundryDataAccess {
 
       // Convert enhanced creatures to result format (system-aware)
       const results = filteredCreatures.map(creature => {
-        // Type guard for result formatting
-        const isPF2e = 'level' in creature;
+        const isCosmere = 'tier' in creature;
+        const isPF2e = !isCosmere && 'level' in creature;
 
-        return {
+        const base = {
           id: creature.id,
           name: creature.name,
           type: creature.type,
@@ -2406,28 +2973,55 @@ export class FoundryDataAccess {
           packLabel: creature.packLabel,
           description: creature.description || '',
           hasImage: !!creature.img,
-
-          // System-aware summary
-          summary: isPF2e
-            ? `Level ${(creature as PF2eCreatureIndex).level} ${creature.creatureType} (${(creature as PF2eCreatureIndex).rarity}) from ${creature.packLabel}`
-            : `CR ${(creature as DnD5eCreatureIndex).challengeRating} ${creature.creatureType} from ${creature.packLabel}`,
-
-          // Include all creature data (conditional based on system)
-          ...(isPF2e ? {
-            level: (creature as PF2eCreatureIndex).level,
-            traits: (creature as PF2eCreatureIndex).traits,
-            rarity: (creature as PF2eCreatureIndex).rarity
-          } : {
-            challengeRating: (creature as DnD5eCreatureIndex).challengeRating,
-            hasLegendaryActions: (creature as DnD5eCreatureIndex).hasLegendaryActions
-          }),
-
           creatureType: creature.creatureType,
           size: creature.size,
           hitPoints: creature.hitPoints,
-          armorClass: creature.armorClass,
-          hasSpells: creature.hasSpells,
-          alignment: creature.alignment
+        };
+
+        if (isCosmere) {
+          const c = creature;
+          return {
+            ...base,
+            summary: `Tier ${c.tier} ${c.role} ${c.creatureType} from ${c.packLabel}`,
+            tier: c.tier,
+            role: c.role,
+            subtype: c.subtype,
+            focus: c.focus,
+            investiture: c.investiture,
+            hasInvestiture: c.hasInvestiture,
+            defenses: {
+              physical: c.defensePhysical,
+              cognitive: c.defenseCognitive,
+              spiritual: c.defenseSpiritual,
+            },
+            deflect: c.deflect,
+            walkSpeed: c.walkSpeed,
+          };
+        }
+
+        if (isPF2e) {
+          const p = creature;
+          return {
+            ...base,
+            armorClass: p.armorClass,
+            hasSpells: p.hasSpells,
+            alignment: p.alignment,
+            summary: `Level ${p.level} ${p.creatureType} (${p.rarity}) from ${p.packLabel}`,
+            level: p.level,
+            traits: p.traits,
+            rarity: p.rarity,
+          };
+        }
+
+        const d = creature as DnD5eCreatureIndex;
+        return {
+          ...base,
+          armorClass: d.armorClass,
+          hasSpells: d.hasSpells,
+          alignment: d.alignment,
+          summary: `CR ${d.challengeRating} ${d.creatureType} from ${d.packLabel}`,
+          challengeRating: d.challengeRating,
+          hasLegendaryActions: d.hasLegendaryActions,
         };
       });
 
@@ -2445,13 +3039,12 @@ export class FoundryDataAccess {
         return {
           id: packId,
           label: sampleCreature?.packLabel || 'Unknown Pack',
-          priority: 100 // All packs are prioritized equally in enhanced index
+          priority: 100, // All packs are prioritized equally in enhanced index
         };
       });
 
       if (packResults.size > 0) {
       }
-
 
       return {
         creatures: results,
@@ -2460,14 +3053,13 @@ export class FoundryDataAccess {
           topPacks,
           totalCreaturesFound: results.length,
           resultsByPack: Object.fromEntries(packResults),
-          criteria: criteria,
+          criteria,
           indexMetadata: {
             totalIndexedCreatures: enhancedCreatures.length,
-            searchMethod: 'enhanced_persistent_index'
-          }
-        }
+            searchMethod: 'enhanced_persistent_index',
+          },
+        },
       };
-
     } catch (error) {
       console.error(`[${this.moduleId}] Enhanced creature search failed:`, error);
       // Fallback to basic search if enhanced index fails
@@ -2476,28 +3068,113 @@ export class FoundryDataAccess {
   }
 
   /**
-   * Check if enhanced creature passes all specified criteria (system-aware routing)
+   * Check if enhanced creature passes all specified criteria (system-aware routing).
+   *
+   * Discriminator order matters: cosmere-rpg has a `tier` field, pf2e has
+   * `level`, dnd5e has `challengeRating`. Check cosmere first (tier is the
+   * narrowest signal), then pf2e, then fall through to dnd5e.
    */
   private passesEnhancedCriteria(creature: EnhancedCreatureIndex, criteria: any): boolean {
-    // Type guard for PF2e creatures - check for level property
-    if ('level' in creature) {
-      return this.passesPF2eCriteria(creature as PF2eCreatureIndex, criteria);
-    } else {
-      return this.passesDnD5eCriteria(creature as DnD5eCreatureIndex, criteria);
+    if ('tier' in creature) {
+      return this.passesCosmereRpgCriteria(creature, criteria);
     }
+    if ('level' in creature) {
+      return this.passesPF2eCriteria(creature, criteria);
+    }
+    return this.passesDnD5eCriteria(creature, criteria);
+  }
+
+  /**
+   * Cosmere RPG criteria filter — tier, role, creatureType, size,
+   * hasInvestiture, hitPoints range, defenses minimums, deflect minimum.
+   */
+  private passesCosmereRpgCriteria(
+    creature: CosmereRpgCreatureIndex,
+    criteria: {
+      tier?: number | { min?: number; max?: number };
+      role?: string;
+      creatureType?: string;
+      size?: string;
+      hasInvestiture?: boolean;
+      hitPoints?: number | { min?: number; max?: number };
+      health?: number | { min?: number; max?: number };
+      defensesMin?: { phy?: number; cog?: number; spi?: number };
+      deflectMin?: number;
+    }
+  ): boolean {
+    if (criteria.tier !== undefined) {
+      if (typeof criteria.tier === 'number') {
+        if (creature.tier !== criteria.tier) return false;
+      } else {
+        const { min, max } = criteria.tier;
+        if (min !== undefined && creature.tier < min) return false;
+        if (max !== undefined && creature.tier > max) return false;
+      }
+    }
+
+    if (criteria.role && creature.role.toLowerCase() !== criteria.role.toLowerCase()) {
+      return false;
+    }
+
+    if (
+      criteria.creatureType &&
+      creature.creatureType.toLowerCase() !== criteria.creatureType.toLowerCase()
+    ) {
+      return false;
+    }
+
+    if (criteria.size && creature.size.toLowerCase() !== criteria.size.toLowerCase()) {
+      return false;
+    }
+
+    if (
+      criteria.hasInvestiture !== undefined &&
+      creature.hasInvestiture !== criteria.hasInvestiture
+    ) {
+      return false;
+    }
+
+    // Accept either `hitPoints` or `health` from callers — they're synonyms
+    // here (hitPoints is the cross-system convention; health is the cosmere-
+    // native term).
+    const hpRange = criteria.hitPoints ?? criteria.health;
+    if (hpRange !== undefined) {
+      if (typeof hpRange === 'number') {
+        if (creature.hitPoints !== hpRange) return false;
+      } else {
+        const { min, max } = hpRange;
+        if (min !== undefined && creature.hitPoints < min) return false;
+        if (max !== undefined && creature.hitPoints > max) return false;
+      }
+    }
+
+    if (criteria.defensesMin) {
+      const { phy, cog, spi } = criteria.defensesMin;
+      if (phy !== undefined && creature.defensePhysical < phy) return false;
+      if (cog !== undefined && creature.defenseCognitive < cog) return false;
+      if (spi !== undefined && creature.defenseSpiritual < spi) return false;
+    }
+
+    if (criteria.deflectMin !== undefined && creature.deflect < criteria.deflectMin) {
+      return false;
+    }
+
+    return true;
   }
 
   /**
    * Check if D&D 5e creature passes all specified criteria
    */
-  private passesDnD5eCriteria(creature: DnD5eCreatureIndex, criteria: {
-    challengeRating?: number | { min?: number; max?: number };
-    creatureType?: string;
-    size?: string;
-    hasSpells?: boolean;
-    hasLegendaryActions?: boolean;
-  }): boolean {
-
+  private passesDnD5eCriteria(
+    creature: DnD5eCreatureIndex,
+    criteria: {
+      challengeRating?: number | { min?: number; max?: number };
+      creatureType?: string;
+      size?: string;
+      hasSpells?: boolean;
+      hasLegendaryActions?: boolean;
+    }
+  ): boolean {
     // Challenge Rating filter
     if (criteria.challengeRating !== undefined) {
       if (typeof criteria.challengeRating === 'number') {
@@ -2549,15 +3226,17 @@ export class FoundryDataAccess {
   /**
    * Check if PF2e creature passes all specified criteria
    */
-  private passesPF2eCriteria(creature: PF2eCreatureIndex, criteria: {
-    level?: number | { min?: number; max?: number };
-    traits?: string[];
-    rarity?: string;
-    creatureType?: string;
-    size?: string;
-    hasSpells?: boolean;
-  }): boolean {
-
+  private passesPF2eCriteria(
+    creature: PF2eCreatureIndex,
+    criteria: {
+      level?: number | { min?: number; max?: number };
+      traits?: string[];
+      rarity?: string;
+      creatureType?: string;
+      size?: string;
+      hasSpells?: boolean;
+    }
+  ): boolean {
     // Level filter
     if (criteria.level !== undefined) {
       if (typeof criteria.level === 'number') {
@@ -2588,8 +3267,10 @@ export class FoundryDataAccess {
     }
 
     // Creature type filter
-    if (criteria.creatureType &&
-        creature.creatureType.toLowerCase() !== criteria.creatureType.toLowerCase()) {
+    if (
+      criteria.creatureType &&
+      creature.creatureType.toLowerCase() !== criteria.creatureType.toLowerCase()
+    ) {
       return false;
     }
 
@@ -2609,16 +3290,19 @@ export class FoundryDataAccess {
   /**
    * Fallback to basic creature search if enhanced index fails
    */
-  private async fallbackBasicCreatureSearch(criteria: any, limit: number): Promise<{creatures: any[], searchSummary: any}> {
+  private async fallbackBasicCreatureSearch(
+    criteria: any,
+    limit: number
+  ): Promise<{ creatures: any[]; searchSummary: any }> {
     console.warn(`[${this.moduleId}] Falling back to basic search due to enhanced index failure`);
-    
+
     // Use a simple text-based search as fallback
     const searchTerms: string[] = [];
-    
+
     if (criteria.creatureType) {
       searchTerms.push(criteria.creatureType);
     }
-    
+
     if (criteria.challengeRating) {
       if (typeof criteria.challengeRating === 'number') {
         // Add CR-based name patterns as fallback
@@ -2627,10 +3311,10 @@ export class FoundryDataAccess {
         else if (criteria.challengeRating >= 5) searchTerms.push('captain', 'knight');
       }
     }
-    
+
     const searchQuery = searchTerms.join(' ') || 'monster';
     const basicResults = await this.searchCompendium(searchQuery, 'Actor');
-    
+
     return {
       creatures: basicResults.slice(0, limit),
       searchSummary: {
@@ -2638,10 +3322,10 @@ export class FoundryDataAccess {
         topPacks: [],
         totalCreaturesFound: basicResults.length,
         resultsByPack: {},
-        criteria: criteria,
+        criteria,
         fallback: true,
-        searchMethod: 'basic_fallback'
-      }
+        searchMethod: 'basic_fallback',
+      },
     };
   }
 
@@ -2653,32 +3337,32 @@ export class FoundryDataAccess {
   private prioritizePacksForCreatures(packs: any[]): any[] {
     const priorityOrder = [
       // Tier 1: Core D&D 5e content (highest priority)
-      { pattern: /^dnd5e\.monsters/, priority: 100 },           // Core D&D 5e monsters 
-      { pattern: /^dnd5e\.actors/, priority: 95 },             // Core D&D 5e actors
-      { pattern: /ddb.*monsters/i, priority: 90 },             // D&D Beyond monsters
-      
+      { pattern: /^dnd5e\.monsters/, priority: 100 }, // Core D&D 5e monsters
+      { pattern: /^dnd5e\.actors/, priority: 95 }, // Core D&D 5e actors
+      { pattern: /ddb.*monsters/i, priority: 90 }, // D&D Beyond monsters
+
       // Tier 2: Official modules and supplements
-      { pattern: /^world\..*ddb.*monsters/i, priority: 85 },   // World-specific DDB monsters
-      { pattern: /monsters/i, priority: 80 },                  // Any pack with "monsters"
-      
+      { pattern: /^world\..*ddb.*monsters/i, priority: 85 }, // World-specific DDB monsters
+      { pattern: /monsters/i, priority: 80 }, // Any pack with "monsters"
+
       // Tier 3: Campaign and adventure content
       { pattern: /^world\.(?!.*summon|.*hero)/i, priority: 70 }, // World packs (not summons/heroes)
-      
+
       // Tier 4: Specialized content
-      { pattern: /summon|familiar/i, priority: 40 },           // Summons and familiars
-      
-      // Tier 5: Unlikely to contain monsters (lowest priority) 
-      { pattern: /hero|player|pc/i, priority: 10 },            // Player characters
+      { pattern: /summon|familiar/i, priority: 40 }, // Summons and familiars
+
+      // Tier 5: Unlikely to contain monsters (lowest priority)
+      { pattern: /hero|player|pc/i, priority: 10 }, // Player characters
     ];
 
     return packs.sort((a, b) => {
       const aScore = this.getPackPriority(a.metadata.id, a.metadata.label, priorityOrder);
       const bScore = this.getPackPriority(b.metadata.id, b.metadata.label, priorityOrder);
-      
+
       if (aScore !== bScore) {
         return bScore - aScore; // Higher score first
       }
-      
+
       // Secondary sort by pack label alphabetically
       return a.metadata.label.localeCompare(b.metadata.label);
     });
@@ -2687,7 +3371,11 @@ export class FoundryDataAccess {
   /**
    * Get priority score for a pack based on ID and label
    */
-  private getPackPriority(packId: string, packLabel: string, priorityOrder: { pattern: RegExp; priority: number }[]): number {
+  private getPackPriority(
+    packId: string,
+    packLabel: string,
+    priorityOrder: { pattern: RegExp; priority: number }[]
+  ): number {
     for (const rule of priorityOrder) {
       if (rule.pattern.test(packId) || rule.pattern.test(packLabel)) {
         return rule.priority;
@@ -2702,21 +3390,24 @@ export class FoundryDataAccess {
    * @unused - Legacy method replaced by passesEnhancedCriteria
    */
   // @ts-ignore - Legacy method kept for compatibility
-  private passesCriteria(entry: any, criteria: {
-    challengeRating?: number | { min?: number; max?: number };
-    creatureType?: string;
-    size?: string;
-    hasSpells?: boolean;
-    hasLegendaryActions?: boolean;
-  }): boolean {
+  private passesCriteria(
+    entry: any,
+    criteria: {
+      challengeRating?: number | { min?: number; max?: number };
+      creatureType?: string;
+      size?: string;
+      hasSpells?: boolean;
+      hasLegendaryActions?: boolean;
+    }
+  ): boolean {
     const system = entry.system || {};
-
 
     // Challenge Rating filter - enhanced extraction
     if (criteria.challengeRating !== undefined) {
       // Try multiple possible CR locations in D&D 5e data structure
-      let entryCR = system.details?.cr?.value || system.details?.cr || system.cr?.value || system.cr || 0;
-      
+      let entryCR =
+        system.details?.cr?.value || system.details?.cr || system.cr?.value || system.cr || 0;
+
       // Handle fractional CRs (common in D&D 5e)
       if (typeof entryCR === 'string') {
         if (entryCR === '1/8') entryCR = 0.125;
@@ -2724,7 +3415,7 @@ export class FoundryDataAccess {
         else if (entryCR === '1/2') entryCR = 0.5;
         else entryCR = parseFloat(entryCR) || 0;
       }
-      
+
       if (typeof criteria.challengeRating === 'number') {
         if (entryCR !== criteria.challengeRating) {
           return false;
@@ -2740,7 +3431,12 @@ export class FoundryDataAccess {
     // Creature Type filter - enhanced extraction
     if (criteria.creatureType) {
       // Try multiple possible type locations in D&D 5e data structure
-      const entryType = system.details?.type?.value || system.details?.type || system.type?.value || system.type || '';
+      const entryType =
+        system.details?.type?.value ||
+        system.details?.type ||
+        system.type?.value ||
+        system.type ||
+        '';
       if (entryType.toLowerCase() !== criteria.creatureType.toLowerCase()) {
         return false;
       }
@@ -2754,15 +3450,21 @@ export class FoundryDataAccess {
 
     // Spellcaster filter
     if (criteria.hasSpells !== undefined) {
-      const isSpellcaster = !!(system.spells || system.attributes?.spellcasting || 
-                               (system.details?.spellLevel && system.details.spellLevel > 0));
+      const isSpellcaster = !!(
+        system.spells ||
+        system.attributes?.spellcasting ||
+        (system.details?.spellLevel && system.details.spellLevel > 0)
+      );
       if (isSpellcaster !== criteria.hasSpells) return false;
     }
 
     // Legendary Actions filter
     if (criteria.hasLegendaryActions !== undefined) {
-      const hasLegendary = !!(system.resources?.legact || system.legendary || 
-                             (system.resources?.legres && system.resources.legres.value > 0));
+      const hasLegendary = !!(
+        system.resources?.legact ||
+        system.legendary ||
+        (system.resources?.legres && system.resources.legres.value > 0)
+      );
       if (hasLegendary !== criteria.hasLegendaryActions) return false;
     }
 
@@ -2772,22 +3474,23 @@ export class FoundryDataAccess {
   /**
    * Simple name/description-based matching for creatures using index data only
    */
-  private matchesSearchCriteria(entry: any, criteria: {
-    searchTerms?: string[];
-    excludeTerms?: string[];
-    size?: string;
-    hasSpells?: boolean;
-    hasLegendaryActions?: boolean;
-  }): boolean {
+  private matchesSearchCriteria(
+    entry: any,
+    criteria: {
+      searchTerms?: string[];
+      excludeTerms?: string[];
+      size?: string;
+      hasSpells?: boolean;
+      hasLegendaryActions?: boolean;
+    }
+  ): boolean {
     const name = (entry.name || '').toLowerCase();
     const description = (entry.description || '').toLowerCase();
     const searchText = `${name} ${description}`;
 
     // Include terms - at least one must match
     if (criteria.searchTerms && criteria.searchTerms.length > 0) {
-      const hasMatch = criteria.searchTerms.some(term => 
-        searchText.includes(term.toLowerCase())
-      );
+      const hasMatch = criteria.searchTerms.some(term => searchText.includes(term.toLowerCase()));
       if (!hasMatch) {
         return false;
       }
@@ -2795,7 +3498,7 @@ export class FoundryDataAccess {
 
     // Exclude terms - none should match
     if (criteria.excludeTerms && criteria.excludeTerms.length > 0) {
-      const hasExcluded = criteria.excludeTerms.some(term => 
+      const hasExcluded = criteria.excludeTerms.some(term =>
         searchText.includes(term.toLowerCase())
       );
       if (hasExcluded) {
@@ -2810,7 +3513,6 @@ export class FoundryDataAccess {
    * List all actors with basic information
    */
   async listActors(): Promise<Array<{ id: string; name: string; type: string; img?: string }>> {
-
     return game.actors.map(actor => ({
       id: actor.id || '',
       name: actor.name || '',
@@ -2823,7 +3525,6 @@ export class FoundryDataAccess {
    * Get active scene information
    */
   async getActiveScene(): Promise<SceneInfo> {
-
     const scene = (game.scenes as any).current;
     if (!scene) {
       throw new Error(ERROR_MESSAGES.SCENE_NOT_FOUND);
@@ -2870,7 +3571,7 @@ export class FoundryDataAccess {
    */
   async getWorldInfo(): Promise<WorldInfo> {
     // World info doesn't require special permissions as it's basic metadata
-    
+
     return {
       id: game.world.id,
       title: game.world.title,
@@ -2890,7 +3591,6 @@ export class FoundryDataAccess {
    * Get available compendium packs
    */
   async getAvailablePacks() {
-
     return Array.from(game.packs.values()).map(pack => ({
       id: pack.metadata.id,
       label: pack.metadata.label,
@@ -2915,7 +3615,7 @@ export class FoundryDataAccess {
     try {
       // removeSensitiveFields now returns a sanitized copy
       const sanitized = this.removeSensitiveFields(data);
-      
+
       // Use custom JSON serializer to avoid deprecated property warnings
       const jsonString = this.safeJSONStringify(sanitized);
       return JSON.parse(jsonString);
@@ -2929,7 +3629,11 @@ export class FoundryDataAccess {
    * Remove sensitive fields from data object with circular reference protection
    * Returns a sanitized copy instead of modifying the original
    */
-  private removeSensitiveFields(obj: any, visited: WeakSet<object> = new WeakSet(), depth: number = 0): any {
+  private removeSensitiveFields(
+    obj: any,
+    visited: WeakSet<object> = new WeakSet(),
+    depth: number = 0
+  ): any {
     // Handle primitives
     if (obj === null || typeof obj !== 'object') {
       return obj;
@@ -2966,8 +3670,8 @@ export class FoundryDataAccess {
       // senses.ranges.*. The legacy keys remain as deprecated getters that
       // log a warning when read. Detect this shape and skip the legacy keys.
       const DEPRECATED_DND5E_SENSE_KEYS = ['darkvision', 'blindsight', 'tremorsense', 'truesight'];
-      const isDnd5eSensesShape = keys.includes('ranges') &&
-        keys.some(k => DEPRECATED_DND5E_SENSE_KEYS.includes(k));
+      const isDnd5eSensesShape =
+        keys.includes('ranges') && keys.some(k => DEPRECATED_DND5E_SENSE_KEYS.includes(k));
 
       for (const key of keys) {
         // Skip sensitive and problematic fields entirely
@@ -2987,11 +3691,10 @@ export class FoundryDataAccess {
         }
 
         // Recursively sanitize the value (read only after filter to avoid getter-triggered warnings)
-        sanitized[key] = this.removeSensitiveFields((obj as any)[key], visited, depth + 1);
+        sanitized[key] = this.removeSensitiveFields(obj[key], visited, depth + 1);
       }
 
       return sanitized;
-
     } catch (error) {
       console.warn(`[${this.moduleId}] Error during sanitization at depth ${depth}:`, error);
       return '[Sanitization failed]';
@@ -3003,24 +3706,42 @@ export class FoundryDataAccess {
    */
   private isSensitiveOrProblematicField(key: string): boolean {
     const sensitiveKeys = [
-      'password', 'token', 'secret', 'key', 'auth',
-      'credential', 'session', 'cookie', 'private'
+      'password',
+      'token',
+      'secret',
+      'key',
+      'auth',
+      'credential',
+      'session',
+      'cookie',
+      'private',
     ];
 
     const problematicKeys = [
-      'parent', '_parent', 'collection', 'apps', 'document', '_document',
-      'constructor', 'prototype', '__proto__', 'valueOf', 'toString',
+      'parent',
+      '_parent',
+      'collection',
+      'apps',
+      'document',
+      '_document',
+      'constructor',
+      'prototype',
+      '__proto__',
+      'valueOf',
+      'toString',
       // dnd5e item leveling metadata; full of cycles back to the actor and other items.
       // Not gameplay-relevant for LLM consumers.
-      'advancement'
+      'advancement',
     ];
 
     // Skip deprecated ability save properties that trigger warnings
     const deprecatedKeys = [
-      'save' // Skip the deprecated 'save' property on abilities
+      'save', // Skip the deprecated 'save' property on abilities
     ];
 
-    return sensitiveKeys.includes(key) || problematicKeys.includes(key) || deprecatedKeys.includes(key);
+    return (
+      sensitiveKeys.includes(key) || problematicKeys.includes(key) || deprecatedKeys.includes(key)
+    );
   }
 
   /**
@@ -3049,7 +3770,7 @@ export class FoundryDataAccess {
     if (typeof disposition === 'number') {
       return disposition;
     }
-    
+
     // Default to neutral if unknown
     return TOKEN_DISPOSITIONS.NEUTRAL;
   }
@@ -3058,7 +3779,7 @@ export class FoundryDataAccess {
    * Validate that Foundry is ready and world is active
    */
   validateFoundryState(): void {
-    if (!game || !game.ready) {
+    if (!game?.ready) {
       throw new Error('Foundry VTT is not ready');
     }
 
@@ -3071,11 +3792,15 @@ export class FoundryDataAccess {
     }
   }
 
-
   /**
    * Audit log for write operations
    */
-  private auditLog(operation: string, data: any, result: 'success' | 'failure', error?: string): void {
+  private auditLog(
+    operation: string,
+    data: any,
+    result: 'success' | 'failure',
+    error?: string
+  ): void {
     // Always audit write operations (no setting required)
     const logEntry = {
       timestamp: new Date().toISOString(),
@@ -3088,17 +3813,16 @@ export class FoundryDataAccess {
       error,
     };
 
-    
     // Store in flags for persistence (optional)
     if (game.world && (game.world as any).setFlag) {
       const auditLogs = (game.world as any).getFlag(this.moduleId, 'auditLogs') || [];
       auditLogs.push(logEntry);
-      
+
       // Keep only last 100 entries to prevent bloat
       if (auditLogs.length > 100) {
         auditLogs.splice(0, auditLogs.length - 100);
       }
-      
+
       (game.world as any).setFlag(this.moduleId, 'auditLogs', auditLogs);
     }
   }
@@ -3108,7 +3832,12 @@ export class FoundryDataAccess {
   /**
    * Create journal entry for quests, with optional additional pages
    */
-  async createJournalEntry(request: { name: string; content: string; folderName?: string; additionalPages?: Array<{ name: string; content: string }> }): Promise<{ id: string; name: string; pageCount: number }> {
+  async createJournalEntry(request: {
+    name: string;
+    content: string;
+    folderName?: string;
+    additionalPages?: Array<{ name: string; content: string }>;
+  }): Promise<{ id: string; name: string; pageCount: number }> {
     this.validateFoundryState();
 
     // Use permission system for journal creation
@@ -3122,13 +3851,15 @@ export class FoundryDataAccess {
 
     try {
       // Build pages array: main page + any additional pages
-      const pages: Array<{ type: string; name: string; text: { content: string } }> = [{
-        type: 'text',
-        name: 'Quest Details',
-        text: {
-          content: request.content
-        }
-      }];
+      const pages: Array<{ type: string; name: string; text: { content: string } }> = [
+        {
+          type: 'text',
+          name: 'Quest Details',
+          text: {
+            content: request.content,
+          },
+        },
+      ];
 
       if (request.additionalPages) {
         for (const page of request.additionalPages) {
@@ -3136,8 +3867,8 @@ export class FoundryDataAccess {
             type: 'text',
             name: page.name,
             text: {
-              content: page.content
-            }
+              content: page.content,
+            },
           });
         }
       }
@@ -3147,7 +3878,7 @@ export class FoundryDataAccess {
         name: request.name,
         pages,
         ownership: { default: 0 }, // GM only by default
-        folder: await this.getOrCreateFolder(request.folderName || request.name, 'JournalEntry')
+        folder: await this.getOrCreateFolder(request.folderName || request.name, 'JournalEntry'),
       };
 
       const journal = await JournalEntry.create(journalData);
@@ -3164,9 +3895,13 @@ export class FoundryDataAccess {
 
       this.auditLog('createJournalEntry', request, 'success');
       return result;
-
     } catch (error) {
-      this.auditLog('createJournalEntry', request, 'failure', error instanceof Error ? error.message : 'Unknown error');
+      this.auditLog(
+        'createJournalEntry',
+        request,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
       throw error;
     }
   }
@@ -3174,7 +3909,15 @@ export class FoundryDataAccess {
   /**
    * List all journal entries with page metadata
    */
-  async listJournals(): Promise<Array<{ id: string; name: string; type: string; pageCount: number; pages: Array<{ id: string; name: string; type: string }> }>> {
+  async listJournals(): Promise<
+    Array<{
+      id: string;
+      name: string;
+      type: string;
+      pageCount: number;
+      pages: Array<{ id: string; name: string; type: string }>;
+    }>
+  > {
     this.validateFoundryState();
 
     return game.journal.map((journal: any) => ({
@@ -3182,18 +3925,25 @@ export class FoundryDataAccess {
       name: journal.name || '',
       type: 'JournalEntry',
       pageCount: journal.pages?.size || 0,
-      pages: journal.pages?.map((page: any) => ({
-        id: page.id || '',
-        name: page.name || '',
-        type: page.type || 'text',
-      })) || [],
+      pages:
+        journal.pages?.map((page: any) => ({
+          id: page.id || '',
+          name: page.name || '',
+          type: page.type || 'text',
+        })) || [],
     }));
   }
 
   /**
    * Get journal entry content (first text page + page manifest)
    */
-  async getJournalContent(journalId: string): Promise<{ content: string; currentPage?: { id: string; name: string } | undefined; allPages: Array<{ id: string; name: string; type: string }>; pageCount: number; note?: string | undefined } | null> {
+  async getJournalContent(journalId: string): Promise<{
+    content: string;
+    currentPage?: { id: string; name: string } | undefined;
+    allPages: Array<{ id: string; name: string; type: string }>;
+    pageCount: number;
+    note?: string | undefined;
+  } | null> {
     this.validateFoundryState();
 
     const journal = game.journal.get(journalId);
@@ -3201,11 +3951,12 @@ export class FoundryDataAccess {
       return null;
     }
 
-    const allPages = journal.pages?.map((page: any) => ({
-      id: page.id || '',
-      name: page.name || '',
-      type: page.type || 'text',
-    })) || [];
+    const allPages =
+      journal.pages?.map((page: any) => ({
+        id: page.id || '',
+        name: page.name || '',
+        type: page.type || 'text',
+      })) || [];
     const pageCount = allPages.length;
 
     // Get first text page content
@@ -3219,16 +3970,20 @@ export class FoundryDataAccess {
       currentPage: { id: firstPage.id || '', name: firstPage.name || '' },
       allPages,
       pageCount,
-      note: pageCount > 1
-        ? `This journal has ${pageCount} pages. Use list-journals with journalId and pageId to read other pages: ${allPages.map((p: any) => `"${p.name}" (${p.id})`).join(', ')}`
-        : undefined,
+      note:
+        pageCount > 1
+          ? `This journal has ${pageCount} pages. Use list-journals with journalId and pageId to read other pages: ${allPages.map((p: any) => `"${p.name}" (${p.id})`).join(', ')}`
+          : undefined,
     };
   }
 
   /**
    * Get a specific journal page's content by ID
    */
-  async getJournalPageContent(journalId: string, pageId: string): Promise<{ id: string; name: string; type: string; content: string } | null> {
+  async getJournalPageContent(
+    journalId: string,
+    pageId: string
+  ): Promise<{ id: string; name: string; type: string; content: string } | null> {
     this.validateFoundryState();
 
     const journal = game.journal.get(journalId);
@@ -3245,7 +4000,7 @@ export class FoundryDataAccess {
       id: page.id || '',
       name: page.name || '',
       type: page.type || 'text',
-      content: page.type === 'text' ? (page.text?.content || '') : (page.src || ''),
+      content: page.type === 'text' ? page.text?.content || '' : page.src || '',
     };
   }
 
@@ -3255,7 +4010,12 @@ export class FoundryDataAccess {
    * - With pageId: update that specific page
    * - With newPageName (no pageId): create a new page
    */
-  async updateJournalContent(request: { journalId: string; content: string; pageId?: string | undefined; newPageName?: string | undefined }): Promise<{ success: boolean; pageId?: string | undefined; pageName?: string | undefined }> {
+  async updateJournalContent(request: {
+    journalId: string;
+    content: string;
+    pageId?: string | undefined;
+    newPageName?: string | undefined;
+  }): Promise<{ success: boolean; pageId?: string | undefined; pageName?: string | undefined }> {
     this.validateFoundryState();
 
     // Use permission system for journal updates - treating as createActor permission level
@@ -3268,7 +4028,6 @@ export class FoundryDataAccess {
     }
 
     try {
-
       const journal = game.journal.get(request.journalId);
       if (!journal) {
         throw new Error('Journal entry not found');
@@ -3276,13 +4035,15 @@ export class FoundryDataAccess {
 
       // Mode 1: Create a new page
       if (request.newPageName) {
-        const created = await journal.createEmbeddedDocuments('JournalEntryPage', [{
-          type: 'text',
-          name: request.newPageName,
-          text: {
-            content: request.content,
+        const created = await journal.createEmbeddedDocuments('JournalEntryPage', [
+          {
+            type: 'text',
+            name: request.newPageName,
+            text: {
+              content: request.content,
+            },
           },
-        }]);
+        ]);
         const newPage = created?.[0];
         this.auditLog('updateJournalContent', request, 'success');
         return { success: true, pageId: newPage?.id || '', pageName: request.newPageName };
@@ -3313,20 +4074,26 @@ export class FoundryDataAccess {
         return { success: true, pageId: firstPage.id, pageName: firstPage.name };
       } else {
         // Create new text page
-        const created = await journal.createEmbeddedDocuments('JournalEntryPage', [{
-          type: 'text',
-          name: 'Quest Details',
-          text: {
-            content: request.content,
+        const created = await journal.createEmbeddedDocuments('JournalEntryPage', [
+          {
+            type: 'text',
+            name: 'Quest Details',
+            text: {
+              content: request.content,
+            },
           },
-        }]);
+        ]);
         const newPage = created?.[0];
         this.auditLog('updateJournalContent', request, 'success');
         return { success: true, pageId: newPage?.id || '', pageName: 'Quest Details' };
       }
-
     } catch (error) {
-      this.auditLog('updateJournalContent', request, 'failure', error instanceof Error ? error.message : 'Unknown error');
+      this.auditLog(
+        'updateJournalContent',
+        request,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
       throw error;
     }
   }
@@ -3341,7 +4108,7 @@ export class FoundryDataAccess {
     const permissionCheck = permissionManager.checkWritePermission('createActor', {
       quantity: request.quantity || 1,
     });
-    
+
     if (!permissionCheck.allowed) {
       throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
     }
@@ -3351,7 +4118,7 @@ export class FoundryDataAccess {
 
     const maxActors = game.settings.get(this.moduleId, 'maxActorsPerRequest') as number;
     const quantity = Math.min(request.quantity || 1, maxActors);
-    
+
     // Start transaction for rollback capability
     const transactionId = transactionManager.startTransaction(
       `Create ${quantity} actor(s) from compendium: ${request.creatureType}`
@@ -3359,15 +4126,17 @@ export class FoundryDataAccess {
 
     try {
       // Find matching compendium entry
-      const compendiumEntry = await this.findBestCompendiumMatch(request.creatureType, request.packPreference);
+      const compendiumEntry = await this.findBestCompendiumMatch(
+        request.creatureType,
+        request.packPreference
+      );
       if (!compendiumEntry) {
         throw new Error(`No compendium entry found for "${request.creatureType}"`);
       }
 
-
       // Get full compendium document
       const sourceDoc = await this.getCompendiumDocumentFull(
-        compendiumEntry.pack, 
+        compendiumEntry.pack,
         compendiumEntry.id
       );
 
@@ -3377,16 +4146,18 @@ export class FoundryDataAccess {
       // Create actors with custom names
       for (let i = 0; i < quantity; i++) {
         try {
-          const customName = request.customNames?.[i] || 
-                           (quantity > 1 ? `${sourceDoc.name} ${i + 1}` : sourceDoc.name);
-          
+          const customName =
+            request.customNames?.[i] ||
+            (quantity > 1 ? `${sourceDoc.name} ${i + 1}` : sourceDoc.name);
+
           const newActor = await this.createActorFromSource(sourceDoc, customName);
-          
+
           // Track actor creation for rollback
-          transactionManager.addAction(transactionId, 
+          transactionManager.addAction(
+            transactionId,
             transactionManager.createActorCreationAction(newActor.id)
           );
-          
+
           createdActors.push({
             id: newActor.id,
             name: newActor.name,
@@ -3397,31 +4168,38 @@ export class FoundryDataAccess {
             img: newActor.img,
           });
         } catch (error) {
-          errors.push(`Failed to create actor ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          errors.push(
+            `Failed to create actor ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
         }
       }
 
       let tokensPlaced = 0;
-      
+
       // Add to scene if requested and permission allows
       if (request.addToScene && createdActors.length > 0) {
         try {
           const scenePermissionCheck = permissionManager.checkWritePermission('modifyScene', {
             targetIds: createdActors.map(a => a.id),
           });
-          
+
           if (!scenePermissionCheck.allowed) {
             errors.push(`Cannot add to scene: ${scenePermissionCheck.reason}`);
           } else {
-            const tokenResult = await this.addActorsToScene({
-              actorIds: createdActors.map(a => a.id),
-              placement: 'random',
-              hidden: false,
-            }, transactionId);
+            const tokenResult = await this.addActorsToScene(
+              {
+                actorIds: createdActors.map(a => a.id),
+                placement: 'random',
+                hidden: false,
+              },
+              transactionId
+            );
             tokensPlaced = tokenResult.tokensCreated;
           }
         } catch (error) {
-          errors.push(`Failed to add actors to scene: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          errors.push(
+            `Failed to add actors to scene: ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
         }
       }
 
@@ -3429,7 +4207,9 @@ export class FoundryDataAccess {
       if (errors.length > 0 && createdActors.length < quantity) {
         // Rollback if we failed to create more than half the requested actors
         if (createdActors.length < quantity / 2) {
-          console.warn(`[${this.moduleId}] Rolling back due to significant failures (${createdActors.length}/${quantity} created)`);
+          console.warn(
+            `[${this.moduleId}] Rolling back due to significant failures (${createdActors.length}/${quantity} created)`
+          );
           await transactionManager.rollbackTransaction(transactionId);
           throw new Error(`Actor creation failed: ${errors.join(', ')}`);
         }
@@ -3449,7 +4229,6 @@ export class FoundryDataAccess {
 
       this.auditLog('createActorFromCompendium', request, 'success');
       return result;
-
     } catch (error) {
       // Rollback on complete failure
       try {
@@ -3457,8 +4236,13 @@ export class FoundryDataAccess {
       } catch (rollbackError) {
         console.error(`[${this.moduleId}] Failed to rollback transaction:`, rollbackError);
       }
-      
-      this.auditLog('createActorFromCompendium', request, 'failure', error instanceof Error ? error.message : 'Unknown error');
+
+      this.auditLog(
+        'createActorFromCompendium',
+        request,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
       throw error;
     }
   }
@@ -3501,13 +4285,18 @@ export class FoundryDataAccess {
 
       // Validate that the document is an Actor (supports character, npc, creature, etc.)
       if (sourceDocument.documentName !== 'Actor') {
-        throw new Error(`Document "${itemId}" is not an Actor (documentName: ${sourceDocument.documentName}, type: ${sourceDocument.type})`);
+        throw new Error(
+          `Document "${itemId}" is not an Actor (documentName: ${sourceDocument.documentName}, type: ${sourceDocument.type})`
+        );
       }
 
       // Validate actor type - support all common actor types including DSA5 creatures
-      const validActorTypes = ['character', 'npc', 'creature'];
+      // and Cosmere RPG adversaries.
+      const validActorTypes = ['character', 'npc', 'creature', 'adversary'];
       if (!validActorTypes.includes(sourceDocument.type)) {
-        throw new Error(`Document "${itemId}" has unsupported actor type: ${sourceDocument.type}. Supported types: ${validActorTypes.join(', ')}`);
+        throw new Error(
+          `Document "${itemId}" has unsupported actor type: ${sourceDocument.type}. Supported types: ${validActorTypes.join(', ')}`
+        );
       }
 
       const sourceActor = sourceDocument as Actor;
@@ -3523,7 +4312,7 @@ export class FoundryDataAccess {
       for (let i = 0; i < finalQuantity; i++) {
         try {
           const customName = names[i] || `${sourceActor.name} ${i + 1}`;
-          
+
           // Create actor data with full system, items, and effects
           const sourceData = sourceActor.toObject() as any;
           const actorData = {
@@ -3537,7 +4326,6 @@ export class FoundryDataAccess {
             prototypeToken: sourceData.prototypeToken, // Include prototype token
           };
 
-          
           // Fix remote image URLs - normalize to local paths
           if (actorData.prototypeToken?.texture?.src?.startsWith('http')) {
             actorData.prototypeToken.texture.src = null; // Clear remote URL
@@ -3561,8 +4349,6 @@ export class FoundryDataAccess {
             originalName: sourceActor.name,
             sourcePackLabel: pack.metadata.label,
           });
-
-
         } catch (error) {
           const errorMsg = `Failed to create actor ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`;
           errors.push(errorMsg);
@@ -3578,11 +4364,13 @@ export class FoundryDataAccess {
             actorIds: createdActors.map(a => a.id),
             placement: placement?.type || 'grid',
             hidden: false,
-            ...(placement?.coordinates && { coordinates: placement.coordinates })
+            ...(placement?.coordinates && { coordinates: placement.coordinates }),
           });
           tokensPlaced = sceneResult.success ? sceneResult.tokensCreated : 0;
         } catch (error) {
-          errors.push(`Failed to add actors to scene: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          errors.push(
+            `Failed to add actors to scene: ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
         }
       }
 
@@ -3597,10 +4385,467 @@ export class FoundryDataAccess {
 
       this.auditLog('createActorFromCompendiumEntry', request, 'success');
       return result;
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed to create actor from compendium entry`, error);
-      this.auditLog('createActorFromCompendiumEntry', request, 'failure', error instanceof Error ? error.message : 'Unknown error');
+      this.auditLog(
+        'createActorFromCompendiumEntry',
+        request,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Add one or more freshly-authored Item documents to an existing Actor.
+   *
+   * Unlike `createActorFromCompendium*`, the items here are constructed from
+   * caller-supplied data — no compendium lookup. This is the path used to
+   * push planner-authored content (talents, actions, powers, custom gear)
+   * onto a PC or NPC sheet.
+   *
+   * Validation is intentionally light: name + type are required, and the
+   * type is checked against the active system's declared Item document
+   * types when available. Everything else (system schema validation,
+   * required sub-fields) is delegated to Foundry's DataModel layer, which
+   * will fill defaults or throw a meaningful error.
+   */
+  async addActorItems(params: {
+    actorIdentifier: string;
+    items: Array<{
+      name: string;
+      type: string;
+      img?: string;
+      system?: Record<string, any>;
+    }>;
+  }): Promise<{
+    actorId: string;
+    actorName: string;
+    created: Array<{ id: string; name: string; type: string }>;
+  }> {
+    this.validateFoundryState();
+
+    const { actorIdentifier, items } = params;
+
+    if (!actorIdentifier) {
+      throw new Error('actorIdentifier is required');
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('items array is required and must contain at least one entry');
+    }
+
+    const actor = this.findActorByIdentifier(actorIdentifier);
+    if (!actor) {
+      throw new Error(`Actor not found: ${actorIdentifier}`);
+    }
+
+    // Discover the active system's declared Item types so we can give a
+    // useful error before sending the doc to Foundry's DataModel layer.
+    const itemDocTypes = (game as any).system?.documentTypes?.Item;
+    const validTypes: string[] | null =
+      itemDocTypes && typeof itemDocTypes === 'object' ? Object.keys(itemDocTypes) : null;
+
+    const payload = items.map((it, idx) => {
+      if (!it || typeof it.name !== 'string' || it.name.trim().length === 0) {
+        throw new Error(`items[${idx}]: "name" is required and must be a non-empty string`);
+      }
+      if (typeof it.type !== 'string' || it.type.trim().length === 0) {
+        throw new Error(`items[${idx}] ("${it.name}"): "type" is required`);
+      }
+      if (validTypes && !validTypes.includes(it.type)) {
+        throw new Error(
+          `items[${idx}] ("${it.name}"): unknown type "${it.type}" for system "${(game.system as any)?.id}". ` +
+            `Valid Item types: ${validTypes.join(', ')}`
+        );
+      }
+
+      const doc: Record<string, any> = { name: it.name, type: it.type };
+      if (it.img) doc.img = it.img;
+      if (it.system && typeof it.system === 'object') doc.system = it.system;
+      return doc;
+    });
+
+    try {
+      const created = await actor.createEmbeddedDocuments('Item', payload);
+
+      const result = {
+        actorId: actor.id,
+        actorName: actor.name,
+        created: (created || []).map((doc: any) => ({
+          id: doc.id,
+          name: doc.name,
+          type: doc.type,
+        })),
+      };
+
+      this.auditLog(
+        'addActorItems',
+        { actorIdentifier, actorId: actor.id, count: payload.length },
+        'success'
+      );
+      return result;
+    } catch (error) {
+      this.auditLog(
+        'addActorItems',
+        { actorIdentifier, actorId: actor.id, count: payload.length },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Remove embedded Items from an existing Actor.
+   *
+   * Items can be named by id (exact, reliable) and/or by name (case-insensitive,
+   * optionally constrained to a `type` to disambiguate). Names that match nothing
+   * are reported back rather than silently ignored. This is the counterpart to
+   * `addActorItems` — useful for clearing stray items added with the wrong type.
+   */
+  async removeActorItems(params: {
+    actorIdentifier: string;
+    itemIds?: string[];
+    itemNames?: string[];
+    type?: string;
+  }): Promise<{
+    actorId: string;
+    actorName: string;
+    removed: Array<{ id: string; name: string; type: string }>;
+    notFound: string[];
+  }> {
+    this.validateFoundryState();
+
+    const { actorIdentifier, itemIds, itemNames, type } = params;
+
+    if (!actorIdentifier) {
+      throw new Error('actorIdentifier is required');
+    }
+    const hasIds = Array.isArray(itemIds) && itemIds.length > 0;
+    const hasNames = Array.isArray(itemNames) && itemNames.length > 0;
+    if (!hasIds && !hasNames) {
+      throw new Error('Provide itemIds and/or itemNames identifying the items to remove');
+    }
+
+    const actor = this.findActorByIdentifier(actorIdentifier);
+    if (!actor) {
+      throw new Error(`Actor not found: ${actorIdentifier}`);
+    }
+
+    const typeLower = type?.toLowerCase();
+    const toDelete = new Map<string, any>(); // id -> item (dedupes overlap)
+    const notFound: string[] = [];
+
+    if (hasIds) {
+      for (const id of itemIds) {
+        const item = actor.items.get(id);
+        if (item) toDelete.set(item.id, item);
+        else notFound.push(id);
+      }
+    }
+    if (hasNames) {
+      for (const name of itemNames) {
+        const nameLower = name.toLowerCase();
+        const item = actor.items.find(
+          (i: any) => i.name?.toLowerCase() === nameLower && (!typeLower || i.type === typeLower)
+        );
+        if (item) toDelete.set(item.id, item);
+        else notFound.push(name);
+      }
+    }
+
+    if (toDelete.size === 0) {
+      return { actorId: actor.id, actorName: actor.name, removed: [], notFound };
+    }
+
+    const removed = Array.from(toDelete.values()).map((i: any) => ({
+      id: i.id,
+      name: i.name,
+      type: i.type,
+    }));
+
+    try {
+      await actor.deleteEmbeddedDocuments(
+        'Item',
+        removed.map(r => r.id)
+      );
+      this.auditLog(
+        'removeActorItems',
+        { actorIdentifier, actorId: actor.id, count: removed.length },
+        'success'
+      );
+      return { actorId: actor.id, actorName: actor.name, removed, notFound };
+    } catch (error) {
+      this.auditLog(
+        'removeActorItems',
+        { actorIdentifier, actorId: actor.id, count: removed.length },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * List world-level Item documents from the Items sidebar.
+   * Optionally filters by type, folder (name or id), or a case-insensitive name substring.
+   */
+  async listWorldItems(params: { type?: string; folder?: string; nameFilter?: string }): Promise<
+    Array<{
+      id: string;
+      name: string;
+      type: string;
+      img?: string;
+      folderId: string | null;
+      folderName: string | null;
+    }>
+  > {
+    this.validateFoundryState();
+
+    const { type, folder, nameFilter } = params;
+    const nameLower = nameFilter ? nameFilter.toLowerCase() : null;
+
+    // Resolve folder filter to an id if a name/id was provided
+    let folderId: string | null = null;
+    if (folder && folder.trim().length > 0) {
+      const folderTrimmed = folder.trim();
+      const folderDoc =
+        (game as any).folders?.find(
+          (f: any) => f.type === 'Item' && (f.name === folderTrimmed || f.id === folderTrimmed)
+        ) ?? null;
+      if (!folderDoc) {
+        return [];
+      }
+      folderId = folderDoc.id;
+    }
+
+    const result: Array<{
+      id: string;
+      name: string;
+      type: string;
+      img?: string;
+      folderId: string | null;
+      folderName: string | null;
+    }> = [];
+
+    for (const item of (game as any).items) {
+      if (type && item.type !== type) continue;
+      if (folderId && item.folder?.id !== folderId) continue;
+      if (nameLower && !(item.name ?? '').toLowerCase().includes(nameLower)) continue;
+
+      result.push({
+        id: item.id ?? '',
+        name: item.name ?? '',
+        type: item.type,
+        ...(item.img ? { img: item.img } : {}),
+        folderId: item.folder?.id ?? null,
+        folderName: item.folder?.name ?? null,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Update one or more existing world-level Item documents.
+   *
+   * Each entry must supply an `id` plus at least one field to change (name,
+   * img, system, folder). Uses Item.updateDocuments() for a single batched
+   * write. Folder may be supplied as a name or id; if a name is given that
+   * does not exist, it is created automatically (same behaviour as
+   * createWorldItems).
+   */
+  async updateWorldItems(params: {
+    updates: Array<{
+      id: string;
+      name?: string;
+      img?: string;
+      system?: Record<string, any>;
+      folder?: string;
+    }>;
+  }): Promise<{
+    updated: Array<{ id: string; name: string; type: string }>;
+  }> {
+    this.validateFoundryState();
+
+    const { updates } = params;
+
+    if (!Array.isArray(updates) || updates.length === 0) {
+      throw new Error('updates array is required and must contain at least one entry');
+    }
+
+    // Cache folder resolutions so we only look up / create each folder once
+    const folderCache = new Map<string, string>(); // folder param → folder id
+
+    const resolveFolderId = async (folder: string): Promise<string> => {
+      if (folderCache.has(folder)) return folderCache.get(folder)!;
+      const folderTrimmed = folder.trim();
+      let folderDoc =
+        (game as any).folders?.find(
+          (f: any) => f.type === 'Item' && (f.name === folderTrimmed || f.id === folderTrimmed)
+        ) ?? null;
+      if (!folderDoc) {
+        folderDoc = await (Folder as any).create({
+          name: folderTrimmed,
+          type: 'Item',
+          parent: null,
+        });
+      }
+      folderCache.set(folder, folderDoc.id);
+      return folderDoc.id;
+    };
+
+    const payload: Array<Record<string, any>> = [];
+
+    for (let idx = 0; idx < updates.length; idx++) {
+      const upd = updates[idx];
+      if (!upd || typeof upd.id !== 'string' || upd.id.trim().length === 0) {
+        throw new Error(`updates[${idx}]: "id" is required and must be a non-empty string`);
+      }
+
+      const item = (game as any).items?.get(upd.id);
+      if (!item) {
+        throw new Error(`updates[${idx}]: Item "${upd.id}" not found in world`);
+      }
+
+      const patch: Record<string, any> = { _id: upd.id };
+      if (upd.name !== undefined) patch.name = upd.name;
+      if (upd.img !== undefined) patch.img = upd.img;
+      if (upd.system !== undefined) patch.system = upd.system;
+      if (upd.folder !== undefined && upd.folder.trim().length > 0) {
+        patch.folder = await resolveFolderId(upd.folder.trim());
+      }
+
+      payload.push(patch);
+    }
+
+    try {
+      const updated = await (Item as any).updateDocuments(payload);
+
+      const result = {
+        updated: (updated || []).map((doc: any) => ({
+          id: doc.id,
+          name: doc.name,
+          type: doc.type,
+        })),
+      };
+
+      this.auditLog('updateWorldItems', { count: payload.length }, 'success');
+      return result;
+    } catch (error) {
+      this.auditLog(
+        'updateWorldItems',
+        { count: payload.length },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Create one or more world-level Item documents (Items sidebar, not embedded on an actor).
+   *
+   * Uses Item.createDocuments() with no parent so items appear in the Foundry
+   * Items sidebar and can be dragged onto any actor sheet. Optionally places
+   * items inside a named/id-resolved folder, creating the folder if necessary.
+   */
+  async createWorldItems(params: {
+    items: Array<{
+      name: string;
+      type: string;
+      img?: string;
+      system?: Record<string, any>;
+    }>;
+    folder?: string;
+  }): Promise<{
+    folderId: string | null;
+    folderName: string | null;
+    created: Array<{ id: string; name: string; type: string }>;
+  }> {
+    this.validateFoundryState();
+
+    const { items, folder } = params;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('items array is required and must contain at least one entry');
+    }
+
+    const itemDocTypes = (game as any).system?.documentTypes?.Item;
+    const validTypes: string[] | null =
+      itemDocTypes && typeof itemDocTypes === 'object' ? Object.keys(itemDocTypes) : null;
+
+    const payload = items.map((it, idx) => {
+      if (!it || typeof it.name !== 'string' || it.name.trim().length === 0) {
+        throw new Error(`items[${idx}]: "name" is required and must be a non-empty string`);
+      }
+      if (typeof it.type !== 'string' || it.type.trim().length === 0) {
+        throw new Error(`items[${idx}] ("${it.name}"): "type" is required`);
+      }
+      if (validTypes && !validTypes.includes(it.type)) {
+        throw new Error(
+          `items[${idx}] ("${it.name}"): unknown type "${it.type}" for system "${(game.system as any)?.id}". ` +
+            `Valid Item types: ${validTypes.join(', ')}`
+        );
+      }
+
+      const doc: Record<string, any> = { name: it.name, type: it.type };
+      if (it.img) doc.img = it.img;
+      if (it.system && typeof it.system === 'object') doc.system = it.system;
+      if (Array.isArray((it as any).effects)) doc.effects = (it as any).effects;
+      if ((it as any).flags && typeof (it as any).flags === 'object') doc.flags = (it as any).flags;
+      return doc;
+    });
+
+    // Resolve or create the target folder
+    let folderDoc: any = null;
+    if (folder && folder.trim().length > 0) {
+      const folderTrimmed = folder.trim();
+      folderDoc =
+        (game as any).folders?.find(
+          (f: any) => f.type === 'Item' && (f.name === folderTrimmed || f.id === folderTrimmed)
+        ) ?? null;
+
+      if (!folderDoc) {
+        folderDoc = await (Folder as any).create({
+          name: folderTrimmed,
+          type: 'Item',
+          parent: null,
+        });
+      }
+
+      for (const doc of payload) {
+        doc.folder = folderDoc.id;
+      }
+    }
+
+    try {
+      const created = await (Item as any).createDocuments(payload);
+
+      const result = {
+        folderId: folderDoc ? folderDoc.id : null,
+        folderName: folderDoc ? folderDoc.name : null,
+        created: (created || []).map((doc: any) => ({
+          id: doc.id,
+          name: doc.name,
+          type: doc.type,
+        })),
+      };
+
+      this.auditLog(
+        'createWorldItems',
+        { folder: folder ?? null, count: payload.length },
+        'success'
+      );
+      return result;
+    } catch (error) {
+      this.auditLog(
+        'createWorldItems',
+        { folder: folder ?? null, count: payload.length },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
       throw error;
     }
   }
@@ -3608,8 +4853,10 @@ export class FoundryDataAccess {
   /**
    * Get full compendium document with all embedded data
    */
-  async getCompendiumDocumentFull(packId: string, documentId: string): Promise<CompendiumEntryFull> {
-
+  async getCompendiumDocumentFull(
+    packId: string,
+    documentId: string
+  ): Promise<CompendiumEntryFull> {
     const pack = game.packs.get(packId);
     if (!pack) {
       throw new Error(`Compendium pack ${packId} not found`);
@@ -3660,14 +4907,17 @@ export class FoundryDataAccess {
   /**
    * Add actors to the current scene as tokens
    */
-  async addActorsToScene(placement: SceneTokenPlacement, transactionId?: string): Promise<TokenPlacementResult> {
+  async addActorsToScene(
+    placement: SceneTokenPlacement,
+    transactionId?: string
+  ): Promise<TokenPlacementResult> {
     this.validateFoundryState();
 
     // Use new permission system
     const permissionCheck = permissionManager.checkWritePermission('modifyScene', {
       targetIds: placement.actorIds,
     });
-    
+
     if (!permissionCheck.allowed) {
       throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
     }
@@ -3695,24 +4945,33 @@ export class FoundryDataAccess {
           }
 
           const tokenDoc = (actor as any).prototypeToken.toObject();
-          const position = this.calculateTokenPosition(placement.placement, scene, tokenData.length, placement.coordinates);
-          
+          const position = this.calculateTokenPosition(
+            placement.placement,
+            scene,
+            tokenData.length,
+            placement.coordinates
+          );
+
           // Fix token texture if it's still a remote URL (Foundry may have overridden our actor creation fix)
           if (tokenDoc.texture?.src?.startsWith('http')) {
-            console.error(`[${this.moduleId}] Token texture still has remote URL, clearing: ${tokenDoc.texture.src}`);
+            console.error(
+              `[${this.moduleId}] Token texture still has remote URL, clearing: ${tokenDoc.texture.src}`
+            );
             tokenDoc.texture.src = null; // Use Foundry's fallback
           } else {
           }
-          
+
           tokenData.push({
             ...tokenDoc,
             x: position.x,
             y: position.y,
-            actorId: actorId,
+            actorId,
             hidden: placement.hidden,
           });
         } catch (error) {
-          errors.push(`Failed to prepare token for actor ${actorId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          errors.push(
+            `Failed to prepare token for actor ${actorId}: ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
         }
       }
 
@@ -3721,7 +4980,8 @@ export class FoundryDataAccess {
       // Track token creation for rollback if transaction is active
       if (transactionId && createdTokens.length > 0) {
         for (const token of createdTokens) {
-          transactionManager.addAction(transactionId, 
+          transactionManager.addAction(
+            transactionId,
             transactionManager.createTokenCreationAction(token.id)
           );
         }
@@ -3736,9 +4996,13 @@ export class FoundryDataAccess {
 
       this.auditLog('addActorsToScene', placement, 'success');
       return result;
-
     } catch (error) {
-      this.auditLog('addActorsToScene', placement, 'failure', error instanceof Error ? error.message : 'Unknown error');
+      this.auditLog(
+        'addActorsToScene',
+        placement,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
       throw error;
     }
   }
@@ -3746,21 +5010,22 @@ export class FoundryDataAccess {
   /**
    * Find best matching compendium entry for creature type
    */
-  private async findBestCompendiumMatch(creatureType: string, packPreference?: string): Promise<CompendiumSearchResult | null> {
+  private async findBestCompendiumMatch(
+    creatureType: string,
+    packPreference?: string
+  ): Promise<CompendiumSearchResult | null> {
     // First try exact search
     const exactResults = await this.searchCompendium(creatureType, 'Actor');
-    
+
     // Look for exact name match first
-    const exactMatch = exactResults.find(result => 
-      result.name.toLowerCase() === creatureType.toLowerCase()
+    const exactMatch = exactResults.find(
+      result => result.name.toLowerCase() === creatureType.toLowerCase()
     );
     if (exactMatch) return exactMatch;
 
     // Look for partial matches, preferring specified pack
     if (packPreference) {
-      const packMatch = exactResults.find(result => 
-        result.pack === packPreference
-      );
+      const packMatch = exactResults.find(result => result.pack === packPreference);
       if (packMatch) return packMatch;
     }
 
@@ -3771,37 +5036,40 @@ export class FoundryDataAccess {
   /**
    * Create actor from source document with custom name
    */
-  private async createActorFromSource(sourceDoc: CompendiumEntryFull, customName: string): Promise<any> {
-    
+  private async createActorFromSource(
+    sourceDoc: CompendiumEntryFull,
+    customName: string
+  ): Promise<any> {
     try {
       // Clone the source data
       const actorData = foundry.utils.deepClone(sourceDoc.fullData) as any;
-      
+
       // Apply customizations
       actorData.name = customName;
-      
+
       // Fix only token texture - leave portrait (actor.img) alone
       if (actorData.prototypeToken?.texture?.src?.startsWith('http')) {
-        console.error(`[${this.moduleId}] Removing remote token texture URL: ${actorData.prototypeToken.texture.src}`);
+        console.error(
+          `[${this.moduleId}] Removing remote token texture URL: ${actorData.prototypeToken.texture.src}`
+        );
         actorData.prototypeToken.texture.src = null; // Let Foundry use fallback
       }
-      
-      
+
       // Remove source-specific identifiers
       delete actorData._id;
       delete actorData.folder;
       delete actorData.sort;
-      
+
       // Ensure required fields are present
       if (!actorData.name) actorData.name = customName;
       if (!actorData.type) actorData.type = sourceDoc.type || 'npc';
-      
-      // Organize created actors in a folder - use "Foundry MCP Creatures" for generic monsters  
+
+      // Organize created actors in a folder - use "Foundry MCP Creatures" for generic monsters
       const folderId = await this.getOrCreateFolder('Foundry MCP Creatures', 'Actor');
       if (folderId) {
-        (actorData as any).folder = folderId;
+        actorData.folder = folderId;
       }
-      
+
       // Create the new actor
       const createdDocs = await Actor.createDocuments([actorData]);
       if (!createdDocs || createdDocs.length === 0) {
@@ -3818,12 +5086,17 @@ export class FoundryDataAccess {
   /**
    * Calculate token position based on placement strategy
    */
-  private calculateTokenPosition(placement: 'random' | 'grid' | 'center' | 'coordinates', scene: any, index: number, coordinates?: { x: number; y: number }[]): { x: number; y: number } {
+  private calculateTokenPosition(
+    placement: 'random' | 'grid' | 'center' | 'coordinates',
+    scene: any,
+    index: number,
+    coordinates?: { x: number; y: number }[]
+  ): { x: number; y: number } {
     const gridSize = scene.grid?.size || 100;
-    
+
     switch (placement) {
       case 'coordinates':
-        if (coordinates && coordinates[index]) {
+        if (coordinates?.[index]) {
           return coordinates[index];
         }
         // Fallback to grid if coordinates not provided or insufficient
@@ -3831,25 +5104,25 @@ export class FoundryDataAccess {
         const fallbackRow = Math.floor(index / fallbackCols);
         const fallbackCol = index % fallbackCols;
         return {
-          x: gridSize + (fallbackCol * gridSize * 2),
-          y: gridSize + (fallbackRow * gridSize * 2),
+          x: gridSize + fallbackCol * gridSize * 2,
+          y: gridSize + fallbackRow * gridSize * 2,
         };
-      
+
       case 'center':
         return {
-          x: (scene.width / 2) + (index * gridSize),
+          x: scene.width / 2 + index * gridSize,
           y: scene.height / 2,
         };
-      
+
       case 'grid':
         const cols = Math.ceil(Math.sqrt(index + 1));
         const row = Math.floor(index / cols);
         const col = index % cols;
         return {
-          x: gridSize + (col * gridSize * 2),
-          y: gridSize + (row * gridSize * 2),
+          x: gridSize + col * gridSize * 2,
+          y: gridSize + row * gridSize * 2,
         };
-      
+
       case 'random':
       default:
         return {
@@ -3862,18 +5135,25 @@ export class FoundryDataAccess {
   /**
    * Validate write operation permissions
    */
-  async validateWritePermissions(operation: 'createActor' | 'modifyScene'): Promise<{ allowed: boolean; reason?: string; requiresConfirmation?: boolean; warnings?: string[] }> {
+  async validateWritePermissions(operation: 'createActor' | 'modifyScene'): Promise<{
+    allowed: boolean;
+    reason?: string;
+    requiresConfirmation?: boolean;
+    warnings?: string[];
+  }> {
     this.validateFoundryState();
 
     const permissionCheck = permissionManager.checkWritePermission(operation);
-    
+
     // Audit the permission check
     permissionManager.auditPermissionCheck(operation, permissionCheck);
 
     return {
       allowed: permissionCheck.allowed,
       ...(permissionCheck.reason ? { reason: permissionCheck.reason } : {}),
-      ...(permissionCheck.requiresConfirmation ? { requiresConfirmation: permissionCheck.requiresConfirmation } : {}),
+      ...(permissionCheck.requiresConfirmation
+        ? { requiresConfirmation: permissionCheck.requiresConfirmation }
+        : {}),
       ...(permissionCheck.warnings ? { warnings: permissionCheck.warnings } : {}),
     };
   }
@@ -3896,26 +5176,31 @@ export class FoundryDataAccess {
       const playerInfo = this.resolveTargetPlayer(data.targetPlayer);
       if (!playerInfo.found) {
         // Provide structured error message for MCP that Claude Desktop can understand
-        const errorMessage = playerInfo.errorMessage || `Could not find player or character: ${data.targetPlayer}`;
-        
+        const errorMessage =
+          playerInfo.errorMessage || `Could not find player or character: ${data.targetPlayer}`;
+
         return {
           success: false,
           message: '',
-          error: errorMessage
+          error: errorMessage,
         };
       }
 
       // Build roll formula based on type and target
-      const rollFormula = this.buildRollFormula(data.rollType, data.rollTarget, data.rollModifier, playerInfo.character);
-      
+      const rollFormula = this.buildRollFormula(
+        data.rollType,
+        data.rollTarget,
+        data.rollModifier,
+        playerInfo.character
+      );
+
       // Generate roll button HTML
       const buttonId = foundry.utils.randomID();
       const buttonLabel = this.buildRollButtonLabel(data.rollType, data.rollTarget, data.isPublic);
-      
+
       // Check if this type of roll was already performed (optional: could check for duplicate recent rolls)
       // For now, we'll just create the button and let the rendering logic handle the state restoration
-      
-      
+
       const rollButtonHtml = `
         <div class="mcp-roll-request" style="margin: 12px 0; padding: 12px; border: 1px solid #ccc; border-radius: 8px; background: #f9f9f9;">
           <p><strong>Roll Request:</strong> ${buttonLabel}</p>
@@ -3941,15 +5226,15 @@ export class FoundryDataAccess {
       // For PUBLIC rolls: both roll request and results visible to all players
       // For PRIVATE rolls: both roll request and results visible to target player + GM only
       const whisperTargets: string[] = [];
-      
+
       if (!data.isPublic) {
         // Private roll request: whisper to target player + GM only
-        
+
         // Always whisper to the character owner if they exist
         if (playerInfo.user?.id) {
           whisperTargets.push(playerInfo.user.id);
         }
-        
+
         // Also send to GM (GMs can see all whispered messages anyway, but this ensures they see it)
         const gmUsers = game.users?.filter((u: User) => u.isGM && u.active);
         if (gmUsers) {
@@ -3962,7 +5247,7 @@ export class FoundryDataAccess {
       } else {
         // Public roll request: visible to all players (empty whisperTargets array)
       }
-      
+
       const messageData = {
         content: rollButtonHtml,
         speaker: ChatMessage.getSpeaker({ actor: game.user }),
@@ -3973,19 +5258,19 @@ export class FoundryDataAccess {
             rollButtons: {
               [buttonId]: {
                 rolled: false,
-                rollFormula: rollFormula,
+                rollFormula,
                 rollLabel: buttonLabel,
                 isPublic: data.isPublic,
                 characterId: playerInfo.character?.id || '',
-                targetUserId: playerInfo.user?.id || ''
-              }
-            }
-          }
-        }
+                targetUserId: playerInfo.user?.id || '',
+              },
+            },
+          },
+        },
       };
 
       const chatMessage = await ChatMessage.create(messageData);
-      
+
       // Store message ID for later updates
       this.saveRollButtonMessageId(buttonId, chatMessage.id);
 
@@ -3994,15 +5279,14 @@ export class FoundryDataAccess {
 
       return {
         success: true,
-        message: `Roll request sent to ${playerInfo.targetName}. ${data.isPublic ? 'Public roll' : 'Private roll'} button created in chat.`
+        message: `Roll request sent to ${playerInfo.targetName}. ${data.isPublic ? 'Public roll' : 'Private roll'} button created in chat.`,
       };
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Error creating roll request:`, error);
       return {
         success: false,
         message: '',
-        error: error instanceof Error ? error.message : 'Unknown error creating roll request'
+        error: error instanceof Error ? error.message : 'Unknown error creating roll request',
       };
     }
   }
@@ -4020,19 +5304,16 @@ export class FoundryDataAccess {
     errorMessage?: string;
   } {
     const searchTerm = targetPlayer.toLowerCase().trim();
-    
-    
+
     // FIRST: Check all registered users (both active and inactive) for player name match
     const allUsers = Array.from(game.users?.values() || []);
-    
+
     // Try exact player name match first (active and inactive users)
-    let user = allUsers.find((u: User) => 
-      u.name?.toLowerCase() === searchTerm
-    );
-    
+    let user = allUsers.find((u: User) => u.name?.toLowerCase() === searchTerm);
+
     if (user) {
       const isActive = user.active;
-      
+
       if (!isActive) {
         // Player exists but is offline
         return {
@@ -4040,33 +5321,33 @@ export class FoundryDataAccess {
           user,
           targetName: user.name || 'Unknown Player',
           errorType: 'PLAYER_OFFLINE',
-          errorMessage: `Player "${user.name}" is registered but not currently logged in. They need to be online to receive roll requests.`
+          errorMessage: `Player "${user.name}" is registered but not currently logged in. They need to be online to receive roll requests.`,
         };
       }
-      
+
       // Find the player's character for roll calculations
       const playerCharacter = game.actors?.find((actor: Actor) => {
         if (!user) return false;
         return actor.testUserPermission(user, 'OWNER') && !user.isGM;
       });
-      
+
       return {
         found: true,
         user,
         ...(playerCharacter && { character: playerCharacter }), // Include character only if found
-        targetName: user.name || 'Unknown Player'
+        targetName: user.name || 'Unknown Player',
       };
     }
-    
+
     // Try partial player name match (active and inactive users)
     if (!user) {
       user = allUsers.find((u: User) => {
-        return Boolean(u.name && u.name.toLowerCase().includes(searchTerm));
+        return Boolean(u.name?.toLowerCase().includes(searchTerm));
       });
-      
+
       if (user) {
         const isActive = user.active;
-        
+
         if (!isActive) {
           // Player exists but is offline
           return {
@@ -4074,52 +5355,52 @@ export class FoundryDataAccess {
             user,
             targetName: user.name || 'Unknown Player',
             errorType: 'PLAYER_OFFLINE',
-            errorMessage: `Player "${user.name}" is registered but not currently logged in. They need to be online to receive roll requests.`
+            errorMessage: `Player "${user.name}" is registered but not currently logged in. They need to be online to receive roll requests.`,
           };
         }
-        
+
         // Find the player's character for roll calculations
         const playerCharacter = game.actors?.find((actor: Actor) => {
           if (!user) return false;
           return actor.testUserPermission(user, 'OWNER') && !user.isGM;
         });
-        
+
         return {
           found: true,
           user,
           ...(playerCharacter && { character: playerCharacter }), // Include character only if found
-          targetName: user.name || 'Unknown Player'
+          targetName: user.name || 'Unknown Player',
         };
       }
     }
 
     // SECOND: Try to find by character name (exact match, then partial match)
-    let character = game.actors?.find((actor: Actor) => 
-      actor.name?.toLowerCase() === searchTerm && actor.hasPlayerOwner
+    let character = game.actors?.find(
+      (actor: Actor) => actor.name?.toLowerCase() === searchTerm && actor.hasPlayerOwner
     );
-    
+
     if (character) {
     }
-    
+
     // If no exact character match, try partial match
     if (!character) {
       character = game.actors?.find((actor: Actor) => {
-        return Boolean(actor.name && actor.name.toLowerCase().includes(searchTerm) && actor.hasPlayerOwner);
+        return Boolean(actor.name?.toLowerCase().includes(searchTerm) && actor.hasPlayerOwner);
       });
-      
+
       if (character) {
       }
     }
 
     if (character) {
       // Find the actual player owner (not GM) of this character
-      const ownerUser = allUsers.find((u: User) => 
-        character.testUserPermission(u, 'OWNER') && !u.isGM
+      const ownerUser = allUsers.find(
+        (u: User) => character.testUserPermission(u, 'OWNER') && !u.isGM
       );
-      
+
       if (ownerUser) {
         const isOwnerActive = ownerUser.active;
-        
+
         if (!isOwnerActive) {
           // Character owner exists but is offline
           return {
@@ -4128,15 +5409,15 @@ export class FoundryDataAccess {
             character,
             targetName: ownerUser.name || 'Unknown Player',
             errorType: 'PLAYER_OFFLINE',
-            errorMessage: `Player "${ownerUser.name}" (owner of character "${character.name}") is registered but not currently logged in. They need to be online to receive roll requests.`
+            errorMessage: `Player "${ownerUser.name}" (owner of character "${character.name}") is registered but not currently logged in. They need to be online to receive roll requests.`,
           };
         }
-        
+
         return {
           found: true,
           user: ownerUser,
           character,
-          targetName: ownerUser.name || 'Unknown Player'
+          targetName: ownerUser.name || 'Unknown Player',
         };
       } else {
         // No player owner found - character is GM-only controlled
@@ -4144,7 +5425,7 @@ export class FoundryDataAccess {
         return {
           found: true,
           character,
-          targetName: character.name || 'Unknown Character'
+          targetName: character.name || 'Unknown Character',
           // user is omitted (undefined) for GM-only characters
         };
       }
@@ -4153,47 +5434,57 @@ export class FoundryDataAccess {
     // THIRD: Check if the search term might be a character that exists but has no player owner
     const anyCharacter = game.actors?.find((actor: Actor) => {
       if (!actor.name) return false;
-      return actor.name.toLowerCase() === searchTerm || 
-             actor.name.toLowerCase().includes(searchTerm);
+      return (
+        actor.name.toLowerCase() === searchTerm || actor.name.toLowerCase().includes(searchTerm)
+      );
     });
-    
+
     if (anyCharacter && !anyCharacter.hasPlayerOwner) {
       return {
         found: true,
         character: anyCharacter,
-        targetName: anyCharacter.name || 'Unknown Character'
+        targetName: anyCharacter.name || 'Unknown Character',
         // No user for GM-controlled characters
       };
     }
 
     // No player or character found at all
-    
+
     return {
       found: false,
       targetName: targetPlayer,
       errorType: 'PLAYER_NOT_FOUND',
-      errorMessage: `No player or character named "${targetPlayer}" found. Available players: ${allUsers.filter(u => !u.isGM).map(u => u.name).join(', ') || 'none'}`
+      errorMessage: `No player or character named "${targetPlayer}" found. Available players: ${
+        allUsers
+          .filter(u => !u.isGM)
+          .map(u => u.name)
+          .join(', ') || 'none'
+      }`,
     };
   }
 
   /**
    * Build roll formula based on roll type and target using Foundry's roll data system
    */
-  private buildRollFormula(rollType: string, rollTarget: string, rollModifier: string, character?: Actor): string {
+  private buildRollFormula(
+    rollType: string,
+    rollTarget: string,
+    rollModifier: string,
+    character?: Actor
+  ): string {
     let baseFormula = '1d20';
 
     if (character) {
       // Use Foundry's getRollData() to get calculated modifiers including active effects
       const rollData = character.getRollData() as any; // Type assertion for Foundry's dynamic roll data
-      
-      
+
       switch (rollType) {
         case 'ability':
           // Use calculated ability modifier from roll data
           const abilityMod = rollData.abilities?.[rollTarget]?.mod ?? 0;
           baseFormula = `1d20+${abilityMod}`;
           break;
-        
+
         case 'skill':
           // Map skill name to skill code (D&D 5e uses 3-letter codes)
           const skillCode = this.getSkillCode(rollTarget);
@@ -4201,23 +5492,24 @@ export class FoundryDataAccess {
           const skillMod = rollData.skills?.[skillCode]?.total ?? 0;
           baseFormula = `1d20+${skillMod}`;
           break;
-        
+
         case 'save':
           // Use saving throw modifier from roll data
-          const saveMod = rollData.abilities?.[rollTarget]?.save ?? rollData.abilities?.[rollTarget]?.mod ?? 0;
+          const saveMod =
+            rollData.abilities?.[rollTarget]?.save ?? rollData.abilities?.[rollTarget]?.mod ?? 0;
           baseFormula = `1d20+${saveMod}`;
           break;
-        
+
         case 'initiative':
           // Use initiative modifier from attributes or dex mod
           const initMod = rollData.attributes?.init?.mod ?? rollData.abilities?.dex?.mod ?? 0;
           baseFormula = `1d20+${initMod}`;
           break;
-        
+
         case 'custom':
           baseFormula = rollTarget; // Use rollTarget as the formula directly
           break;
-        
+
         default:
           baseFormula = '1d20';
       }
@@ -4227,7 +5519,10 @@ export class FoundryDataAccess {
 
     // Add modifier if provided
     if (rollModifier && rollModifier.trim()) {
-      const modifier = rollModifier.startsWith('+') || rollModifier.startsWith('-') ? rollModifier : `+${rollModifier}`;
+      const modifier =
+        rollModifier.startsWith('+') || rollModifier.startsWith('-')
+          ? rollModifier
+          : `+${rollModifier}`;
       baseFormula += modifier;
     }
 
@@ -4239,31 +5534,32 @@ export class FoundryDataAccess {
    */
   private getSkillCode(skillName: string): string {
     const skillMap: { [key: string]: string } = {
-      'acrobatics': 'acr',
-      'animal handling': 'ani', 
-      'animalhandling': 'ani',
-      'arcana': 'arc',
-      'athletics': 'ath',
-      'deception': 'dec',
-      'history': 'his',
-      'insight': 'ins',
-      'intimidation': 'itm',
-      'investigation': 'inv',
-      'medicine': 'med',
-      'nature': 'nat',
-      'perception': 'prc',
-      'performance': 'prf',
-      'persuasion': 'per',
-      'religion': 'rel',
+      acrobatics: 'acr',
+      'animal handling': 'ani',
+      animalhandling: 'ani',
+      arcana: 'arc',
+      athletics: 'ath',
+      deception: 'dec',
+      history: 'his',
+      insight: 'ins',
+      intimidation: 'itm',
+      investigation: 'inv',
+      medicine: 'med',
+      nature: 'nat',
+      perception: 'prc',
+      performance: 'prf',
+      persuasion: 'per',
+      religion: 'rel',
       'sleight of hand': 'slt',
-      'sleightofhand': 'slt',
-      'stealth': 'ste',
-      'survival': 'sur'
+      sleightofhand: 'slt',
+      stealth: 'ste',
+      survival: 'sur',
     };
-    
+
     const normalizedName = skillName.toLowerCase().replace(/\s+/g, '');
-    const skillCode = skillMap[normalizedName] || skillMap[skillName.toLowerCase()] || skillName.toLowerCase();
-    
+    const skillCode =
+      skillMap[normalizedName] || skillMap[skillName.toLowerCase()] || skillName.toLowerCase();
+
     return skillCode;
   }
 
@@ -4272,7 +5568,7 @@ export class FoundryDataAccess {
    */
   private buildRollButtonLabel(rollType: string, rollTarget: string, isPublic: boolean): string {
     const visibility = isPublic ? 'Public' : 'Private';
-    
+
     switch (rollType) {
       case 'ability':
         return `${rollTarget.toUpperCase()} Ability Check (${visibility})`;
@@ -4303,9 +5599,9 @@ export class FoundryDataAccess {
   public attachRollButtonHandlers(html: JQuery): void {
     const currentUserId = game.user?.id;
     const isGM = game.user?.isGM;
-    
+
     // Note: Roll state restoration now handled by ChatMessage content, not DOM manipulation
-    
+
     // Handle button visibility and styling based on permissions and public/private status
     // IMPORTANT: Skip styling for buttons that are already in rolled state
     html.find('.mcp-roll-button').each((_index, element) => {
@@ -4313,28 +5609,27 @@ export class FoundryDataAccess {
       const targetUserId = button.data('target-user-id');
       const isPublicRollRaw = button.data('is-public');
       const isPublicRoll = isPublicRollRaw === true || isPublicRollRaw === 'true';
-      
+
       // Note: No need to check for rolled state - ChatMessage.update() replaces buttons with completion status
-      
+
       // Determine if user can interact with this button
       const canClickButton = isGM || (targetUserId && targetUserId === currentUserId);
-      
-      
+
       if (isPublicRoll) {
         // Public roll: show to all players, but style differently for non-clickable users
         if (canClickButton) {
           // Can click: normal active button
           button.css({
-            'background': '#4CAF50',
-            'cursor': 'pointer',
-            'opacity': '1'
+            background: '#4CAF50',
+            cursor: 'pointer',
+            opacity: '1',
           });
         } else {
           // Cannot click: disabled/informational style
           button.css({
-            'background': '#9E9E9E',
-            'cursor': 'not-allowed', 
-            'opacity': '0.7'
+            background: '#9E9E9E',
+            cursor: 'not-allowed',
+            opacity: '0.7',
           });
           button.prop('disabled', true);
         }
@@ -4347,11 +5642,11 @@ export class FoundryDataAccess {
         }
       }
     });
-    
+
     // Attach click handlers to roll buttons
-    html.find('.mcp-roll-button').on('click', async (event) => {
+    html.find('.mcp-roll-button').on('click', async event => {
       const button = $(event.currentTarget);
-      
+
       // Ignore clicks on disabled buttons
       if (button.prop('disabled')) {
         return;
@@ -4361,7 +5656,6 @@ export class FoundryDataAccess {
       button.prop('disabled', true);
       const originalText = button.text();
       button.text('🎲 Rolling...');
-      
 
       // Check if this button is already being processed by another user
       const buttonId = button.data('button-id');
@@ -4382,7 +5676,7 @@ export class FoundryDataAccess {
         button.text(originalText);
         return;
       }
-      
+
       const rollFormula = button.data('roll-formula');
       const rollLabel = button.data('roll-label');
       const isPublicRaw = button.data('is-public');
@@ -4391,31 +5685,28 @@ export class FoundryDataAccess {
       const targetUserId = button.data('target-user-id');
       const isGmRoll = game.user?.isGM || false; // Determine if this is a GM executing the roll
 
-
       // Check if user has permission to execute this roll
       // Allow GM to roll for any character, or allow character owner to roll for their character
       const canExecuteRoll = game.user?.isGM || (targetUserId && targetUserId === game.user?.id);
-      
+
       if (!canExecuteRoll) {
         console.warn(`[${MODULE_ID}] Permission denied for roll execution`);
         ui.notifications?.warn('You do not have permission to execute this roll');
         return;
       }
-      
 
       try {
         // Create and evaluate the roll
         const roll = new Roll(rollFormula);
         await roll.evaluate();
 
-
         // Get the character for speaker info
         const character = characterId ? game.actors?.get(characterId) : null;
-        
+
         // Use the modern Foundry v13 approach with roll.toMessage()
         const rollMode = isPublic ? 'publicroll' : 'whisper';
         const whisperTargets: string[] = [];
-        
+
         if (!isPublic) {
           // For private rolls: whisper to target + GM
           if (targetUserId) {
@@ -4431,18 +5722,17 @@ export class FoundryDataAccess {
             }
           }
         }
-        
+
         const messageData: any = {
           speaker: ChatMessage.getSpeaker({ actor: character }),
           flavor: `${rollLabel} ${isGmRoll ? '(GM Override)' : ''}`,
-          ...(whisperTargets.length > 0 ? { whisper: whisperTargets } : {})
+          ...(whisperTargets.length > 0 ? { whisper: whisperTargets } : {}),
         };
-        
-        
+
         // Use roll.toMessage() with proper rollMode
-        await roll.toMessage(messageData, { 
+        await roll.toMessage(messageData, {
           create: true,
-          rollMode: rollMode
+          rollMode,
         });
 
         // Update the ChatMessage to reflect rolled state
@@ -4452,21 +5742,23 @@ export class FoundryDataAccess {
             await this.updateRollButtonMessage(buttonId, game.user.id, rollLabel);
           } catch (updateError) {
             console.error(`[${MODULE_ID}] Failed to update chat message:`, updateError);
-            console.error(`[${MODULE_ID}] Error details:`, updateError instanceof Error ? updateError.stack : updateError);
+            console.error(
+              `[${MODULE_ID}] Error details:`,
+              updateError instanceof Error ? updateError.stack : updateError
+            );
             // Fall back to DOM manipulation if message update fails
             button.prop('disabled', true).text('✓ Rolled');
           }
         } else {
           console.warn(`[${MODULE_ID}] Cannot update ChatMessage - missing buttonId or userId:`, {
             buttonId,
-            userId: game.user?.id
+            userId: game.user?.id,
           });
         }
-        
       } catch (error) {
         console.error(`[${MODULE_ID}] Error executing roll:`, error);
         ui.notifications?.error('Failed to execute roll');
-        
+
         // Re-enable button on error so user can try again
         button.prop('disabled', false);
         button.text(originalText);
@@ -4487,7 +5779,7 @@ export class FoundryDataAccess {
 
     // Get the enhanced creature index (builds if needed)
     const enhancedCreatures = await this.persistentIndex.getEnhancedIndex();
-    
+
     return enhancedCreatures || [];
   }
 
@@ -4496,7 +5788,7 @@ export class FoundryDataAccess {
    */
   async saveRollState(buttonId: string, userId: string): Promise<void> {
     // LEGACY METHOD - Redirecting to new ChatMessage.update() system
-    
+
     try {
       // Use the new ChatMessage.update() approach instead
       const rollLabel = 'Legacy Roll'; // We don't have the label here, use generic
@@ -4510,7 +5802,9 @@ export class FoundryDataAccess {
   /**
    * Get roll button state from persistent storage
    */
-  getRollState(buttonId: string): { rolled: boolean; rolledBy?: string; rolledByName?: string; timestamp?: number } | null {
+  getRollState(
+    buttonId: string
+  ): { rolled: boolean; rolledBy?: string; rolledByName?: string; timestamp?: number } | null {
     this.validateFoundryState();
 
     try {
@@ -4564,19 +5858,22 @@ export class FoundryDataAccess {
   /**
    * Update the ChatMessage to replace button with rolled state
    */
-  async updateRollButtonMessage(buttonId: string, userId: string, rollLabel: string): Promise<void> {
+  async updateRollButtonMessage(
+    buttonId: string,
+    userId: string,
+    rollLabel: string
+  ): Promise<void> {
     try {
-
       // Get the message ID for this button
       const messageId = this.getRollButtonMessageId(buttonId);
-      
+
       if (!messageId) {
         throw new Error(`No message ID found for button ${buttonId}`);
       }
 
       // Get the chat message
       const chatMessage = game.messages?.get(messageId);
-      
+
       if (!chatMessage) {
         throw new Error(`ChatMessage ${messageId} not found`);
       }
@@ -4589,7 +5886,7 @@ export class FoundryDataAccess {
 
       if (!canUpdate && !game.user?.isGM) {
         // Non-GM user cannot update message - request GM to do it via socket
-        
+
         // Find online GM
         const onlineGM = game.users?.find(u => u.isGM && u.active);
         if (!onlineGM) {
@@ -4600,12 +5897,12 @@ export class FoundryDataAccess {
         if (game.socket) {
           game.socket.emit('module.foundry-mcp-bridge', {
             type: 'requestMessageUpdate',
-            buttonId: buttonId,
-            userId: userId,
-            rollLabel: rollLabel,
-            messageId: messageId,
+            buttonId,
+            userId,
+            rollLabel,
+            messageId,
             fromUserId: game.user.id,
-            targetGM: onlineGM.id
+            targetGM: onlineGM.id,
           });
           return; // Exit early - GM will handle the update
         } else {
@@ -4617,13 +5914,13 @@ export class FoundryDataAccess {
       const currentFlags = chatMessage.flags || {};
       const moduleFlags = currentFlags[MODULE_ID] || {};
       const rollButtons = moduleFlags.rollButtons || {};
-      
+
       rollButtons[buttonId] = {
         ...rollButtons[buttonId],
         rolled: true,
         rolledBy: userId,
-        rolledByName: rolledByName,
-        timestamp: Date.now()
+        rolledByName,
+        timestamp: Date.now(),
       };
 
       // Create the rolled state HTML
@@ -4634,7 +5931,6 @@ export class FoundryDataAccess {
         </div>
       `;
 
-
       // Update the message content and flags
       await chatMessage.update({
         content: rolledHtml,
@@ -4642,12 +5938,10 @@ export class FoundryDataAccess {
           ...currentFlags,
           [MODULE_ID]: {
             ...moduleFlags,
-            rollButtons: rollButtons
-          }
-        }
+            rollButtons,
+          },
+        },
       });
-
-
     } catch (error) {
       console.error(`[${MODULE_ID}] Error updating roll button message:`, error);
       console.error(`[${MODULE_ID}] Error stack:`, error instanceof Error ? error.stack : error);
@@ -4660,14 +5954,13 @@ export class FoundryDataAccess {
    */
   requestRollStateSave(buttonId: string, userId: string): void {
     // LEGACY METHOD - Redirecting to new ChatMessage.update() system
-    
+
     try {
       // Use the new ChatMessage.update() approach instead
       const rollLabel = 'Legacy Roll'; // We don't have the label here, use generic
       this.updateRollButtonMessage(buttonId, userId, rollLabel)
-        .then(() => {
-        })
-        .catch((error) => {
+        .then(() => {})
+        .catch(error => {
           console.error(`[${MODULE_ID}] Legacy requestRollStateSave redirect failed:`, error);
           // If the new system fails, just log it - don't use the old socket system
         });
@@ -4692,7 +5985,7 @@ export class FoundryDataAccess {
     this.validateFoundryState();
 
     try {
-      const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
       const rollStates = game.settings.get(MODULE_ID, 'rollStates') || {};
       let cleanedCount = 0;
 
@@ -4721,7 +6014,11 @@ export class FoundryDataAccess {
   /**
    * Set actor ownership permission for a user
    */
-  async setActorOwnership(data: { actorId: string; userId: string; permission: number }): Promise<{ success: boolean; message: string; error?: string }> {
+  async setActorOwnership(data: {
+    actorId: string;
+    userId: string;
+    permission: number;
+  }): Promise<{ success: boolean; message: string; error?: string }> {
     this.validateFoundryState();
 
     try {
@@ -4738,7 +6035,7 @@ export class FoundryDataAccess {
       // Get current ownership
       const currentOwnership = (actor as any).ownership || {};
       const newOwnership = { ...currentOwnership };
-      
+
       // Set the new permission level
       newOwnership[data.userId] = data.permission;
 
@@ -4746,7 +6043,9 @@ export class FoundryDataAccess {
       await actor.update({ ownership: newOwnership });
 
       const permissionNames = { 0: 'NONE', 1: 'LIMITED', 2: 'OBSERVER', 3: 'OWNER' };
-      const permissionName = permissionNames[data.permission as keyof typeof permissionNames] || data.permission.toString();
+      const permissionName =
+        permissionNames[data.permission as keyof typeof permissionNames] ||
+        data.permission.toString();
 
       return {
         success: true,
@@ -4763,19 +6062,507 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Update a WFRP4e actor's stat block (characteristics and/or wounds).
+   * Writes initial/advances/modifier and wounds value/max; WFRP4e recomputes
+   * the derived characteristic value/bonus on update.
+   */
+  async updateWfrp4eActor(data: {
+    actor: string;
+    characteristics?: Record<string, { initial?: number; advances?: number; modifier?: number }>;
+    wounds?: { value?: number; max?: number };
+    skills?: Array<{ name: string; advances: number }>;
+    career?: string;
+    movement?: number;
+    biography?: string;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const systemId = (game.system as any).id;
+    if (systemId !== 'wfrp4e') {
+      return {
+        success: false,
+        error: `wfrp4e-update-actor requires the WFRP4e system (current: "${systemId}")`,
+      };
+    }
+
+    // Resolve a world actor by id/name, or a scene token by id (an unlinked
+    // token resolves to its own synthetic actor — see findActorByIdentifier).
+    const actor = this.findActorByIdentifier(data.actor);
+    if (!actor) {
+      return { success: false, error: `Actor not found: ${data.actor}` };
+    }
+
+    const CHAR_KEYS = ['ws', 'bs', 's', 't', 'i', 'ag', 'dex', 'int', 'wp', 'fel'];
+    const FIELDS = ['initial', 'advances', 'modifier'] as const;
+    const sys = actor.system || {};
+    const update: Record<string, any> = {};
+    const itemUpdates: Array<Record<string, any>> = [];
+    const applied: {
+      characteristics: Record<string, any>;
+      wounds: Record<string, any>;
+      skills: Record<string, any>;
+      career?: string;
+      details?: Record<string, any>;
+    } = {
+      characteristics: {},
+      wounds: {},
+      skills: {},
+    };
+    const warnings: string[] = [];
+
+    if (data.characteristics) {
+      for (const [rawKey, fields] of Object.entries(data.characteristics)) {
+        const key = rawKey.toLowerCase();
+        if (!CHAR_KEYS.includes(key)) {
+          warnings.push(`Unknown characteristic "${rawKey}" — skipped`);
+          continue;
+        }
+        const current = sys.characteristics?.[key] || {};
+        const record: Record<string, any> = {};
+        for (const field of FIELDS) {
+          const val = (fields as any)[field];
+          if (val !== undefined) {
+            update[`system.characteristics.${key}.${field}`] = val;
+            record[field] = { from: current[field], to: val };
+          }
+        }
+        if (Object.keys(record).length > 0) {
+          applied.characteristics[key.toUpperCase()] = record;
+        }
+      }
+    }
+
+    if (data.wounds) {
+      const current = sys.status?.wounds || {};
+      if (data.wounds.value !== undefined) {
+        update['system.status.wounds.value'] = data.wounds.value;
+        applied.wounds.value = { from: current.value, to: data.wounds.value };
+      }
+      if (data.wounds.max !== undefined) {
+        update['system.status.wounds.max'] = data.wounds.max;
+        applied.wounds.max = { from: current.max, to: data.wounds.max };
+      }
+    }
+
+    // Detail fields: base movement and the biography/notes text.
+    if (data.movement !== undefined) {
+      update['system.details.move.value'] = data.movement;
+      applied.details = applied.details || {};
+      applied.details.movement = { from: sys.details?.move?.value, to: data.movement };
+    }
+    if (data.biography !== undefined) {
+      update['system.details.biography.value'] = data.biography;
+      applied.details = applied.details || {};
+      applied.details.biography = { chars: data.biography.length };
+    }
+
+    // Existing embedded-item edits: bump advances on skills the actor already
+    // has, and/or switch which career item is current. (Adding new skills or
+    // careers is wfrp4e-add-items' job.)
+    if (Array.isArray(data.skills)) {
+      for (const s of data.skills) {
+        const item = actor.items.find(
+          (i: any) => i.type === 'skill' && i.name?.toLowerCase() === s.name.toLowerCase()
+        );
+        if (!item) {
+          warnings.push(`Skill "${s.name}" not on ${actor.name} — use wfrp4e-add-items to add it.`);
+          continue;
+        }
+        itemUpdates.push({ _id: item.id, 'system.advances.value': s.advances });
+        applied.skills[item.name] = {
+          advances: { from: item.system?.advances?.value, to: s.advances },
+        };
+      }
+    }
+
+    if (data.career) {
+      const target = actor.items.find(
+        (i: any) => i.type === 'career' && i.name?.toLowerCase() === data.career?.toLowerCase()
+      );
+      if (!target) {
+        warnings.push(
+          `Career "${data.career}" not on ${actor.name} — use wfrp4e-add-items to add it.`
+        );
+      } else {
+        // Exactly one career is current; flip the target on and the rest off.
+        for (const it of actor.items) {
+          if (it.type === 'career') {
+            itemUpdates.push({ _id: it.id, 'system.current.value': it.id === target.id });
+          }
+        }
+        applied.career = target.name;
+      }
+    }
+
+    if (Object.keys(update).length === 0 && itemUpdates.length === 0) {
+      return {
+        success: false,
+        error: 'No valid fields to update.',
+        ...(warnings.length ? { warnings } : {}),
+      };
+    }
+
+    try {
+      if (Object.keys(update).length > 0) {
+        await actor.update(update);
+      }
+      if (itemUpdates.length > 0) {
+        await actor.updateEmbeddedDocuments('Item', itemUpdates);
+      }
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Error updating WFRP4e actor:`, error);
+      this.auditLog(
+        'updateWfrp4eActor',
+        { actor: data.actor },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+
+    // Read back recomputed characteristic totals as confirmation.
+    const after = actor.system || {};
+    const newTotals: Record<string, any> = {};
+    for (const key of CHAR_KEYS) {
+      if (applied.characteristics[key.toUpperCase()]) {
+        const c = after.characteristics?.[key];
+        if (c) newTotals[key.toUpperCase()] = { total: c.value, bonus: c.bonus };
+      }
+    }
+
+    this.auditLog('updateWfrp4eActor', { actor: data.actor }, 'success');
+
+    return {
+      success: true,
+      actor: actor.name,
+      id: actor.id,
+      applied,
+      newCharacteristicTotals: newTotals,
+      ...(warnings.length ? { warnings } : {}),
+    };
+  }
+
+  /**
+   * Add items (skills, talents, traits, trappings, careers, weapons, spells, …)
+   * to an existing WFRP4e actor. Each requested item is matched by name against
+   * the installed WFRP4e compendiums and copied in full, so a skill keeps its
+   * linked characteristic, a talent its tests/max, a career its progression.
+   * Names with no compendium match are added as a blank item of the requested
+   * (or default) type so homebrew still works.
+   *
+   * Per-item extras: `advances` sets a skill's advances; `quantity` sets a
+   * gear count; `setCurrent` makes a career the active one (flipping the others
+   * off). Resolution prefers the Core Rulebook pack, then the rest; pass `type`
+   * and/or `pack` to disambiguate a name that exists in several places.
+   */
+  async addWfrp4eItems(data: {
+    actor: string;
+    items: Array<{
+      name: string;
+      type?: string;
+      pack?: string;
+      advances?: number;
+      quantity?: number;
+      setCurrent?: boolean;
+    }>;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const systemId = (game.system as any).id;
+    if (systemId !== 'wfrp4e') {
+      return {
+        success: false,
+        error: `wfrp4e-add-items requires the WFRP4e system (current: "${systemId}")`,
+      };
+    }
+
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      return {
+        success: false,
+        error: 'items array is required and must contain at least one entry',
+      };
+    }
+
+    const actor = this.findActorByIdentifier(data.actor);
+    if (!actor) {
+      return { success: false, error: `Actor not found: ${data.actor}` };
+    }
+
+    // Candidate Item packs, Core Rulebook first so a name shared across books
+    // resolves to the canonical entry.
+    const itemPacks: any[] = Array.from((game.packs as any) || []).filter(
+      (p: any) => (p.metadata?.type ?? p.documentName) === 'Item'
+    );
+    itemPacks.sort((a: any, b: any) => {
+      const rank = (p: any) => (String(p.metadata?.id || '').startsWith('wfrp4e-core') ? 0 : 1);
+      return rank(a) - rank(b);
+    });
+
+    // Per-call index cache — each pack's index is loaded at most once.
+    const indexCache = new Map<string, any>();
+    const getIndex = async (pack: any) => {
+      const id = pack.metadata.id;
+      if (!indexCache.has(id)) indexCache.set(id, await pack.getIndex());
+      return indexCache.get(id);
+    };
+
+    const warnings: string[] = [];
+    const notFound: string[] = [];
+    const ambiguous: Array<{ name: string; candidates: Array<{ pack: string; type: string }> }> =
+      [];
+
+    // Skill advances and gear quantity are baked into each item's creation data
+    // (below) rather than patched afterwards, because createEmbeddedDocuments
+    // does not guarantee it returns documents in the order we send them — so
+    // positional alignment between the created docs and our requests is unsafe.
+    const GEAR_TYPES = new Set([
+      'weapon',
+      'armour',
+      'trapping',
+      'ammunition',
+      'container',
+      'money',
+      'cargo',
+    ]);
+    const applyExtras = (obj: Record<string, any>, type: string, req: any): void => {
+      obj.system = obj.system || {};
+      if (req.advances !== undefined && type === 'skill') {
+        obj.system.advances = { ...(obj.system.advances || {}), value: req.advances };
+      }
+      if (req.quantity !== undefined && GEAR_TYPES.has(type)) {
+        obj.system.quantity = { ...(obj.system.quantity || {}), value: req.quantity };
+      }
+    };
+
+    const toCreate: Array<Record<string, any>> = [];
+    // Keyed by `${type}::${name}` (the created doc's own name/type) so we can
+    // match created documents back to their request without relying on order.
+    const plan: Array<{
+      nameLower: string;
+      type: string;
+      setCurrent: boolean | undefined;
+      source: string;
+    }> = [];
+
+    // Find every compendium entry whose name (and optional type) matches, across
+    // the candidate packs (their core-first order is preserved in the result).
+    const findMatches = async (
+      packs: any[],
+      searchName: string,
+      typeConstraint: string | undefined
+    ): Promise<Array<{ packId: string; packLabel: string; entryId: string; type: string }>> => {
+      const found: Array<{ packId: string; packLabel: string; entryId: string; type: string }> = [];
+      for (const pack of packs) {
+        const index = await getIndex(pack);
+        for (const entry of index) {
+          if (
+            entry.name?.toLowerCase() === searchName &&
+            (!typeConstraint || entry.type === typeConstraint)
+          ) {
+            found.push({
+              packId: pack.metadata.id,
+              packLabel: pack.metadata.label,
+              entryId: entry._id,
+              type: entry.type,
+            });
+          }
+        }
+      }
+      return found;
+    };
+
+    for (const req of data.items) {
+      const nameLower = req.name.toLowerCase();
+      const typeWanted = req.type?.toLowerCase();
+      const searchPacks = req.pack
+        ? itemPacks.filter(
+            (p: any) => p.metadata.id === req.pack || p.metadata.id.includes(req.pack as string)
+          )
+        : itemPacks;
+
+      let matches = await findMatches(searchPacks, nameLower, typeWanted);
+
+      // Grouped-skill fallback: a specialisation like "Entertain (Taunt)" often
+      // has no dedicated entry, but the group's generic template "Entertain ()"
+      // does — copy that (it carries the correct characteristic and grouping)
+      // and rename the copy to the requested specialisation.
+      let nameOverride: string | undefined;
+      let templated = false;
+      if (matches.length === 0 && (typeWanted === undefined || typeWanted === 'skill')) {
+        const grouped = /^\s*(.+?)\s*\([^)]+\)\s*$/.exec(req.name);
+        if (grouped) {
+          const templateName = `${grouped[1]} ()`.toLowerCase();
+          const templateMatches = await findMatches(searchPacks, templateName, 'skill');
+          if (templateMatches.length > 0) {
+            matches = templateMatches;
+            nameOverride = req.name.trim();
+            templated = true;
+          }
+        }
+      }
+
+      if (matches.length === 0) {
+        const fallbackType = typeWanted || 'trapping';
+        const obj: Record<string, any> = { name: req.name, type: fallbackType, system: {} };
+        applyExtras(obj, fallbackType, req);
+        toCreate.push(obj);
+        plan.push({
+          nameLower,
+          type: fallbackType,
+          setCurrent: req.setCurrent,
+          source: 'custom (not in compendium)',
+        });
+        notFound.push(req.name);
+        warnings.push(
+          `"${req.name}" not found in any WFRP4e compendium — added as a blank ${fallbackType}.`
+        );
+        continue;
+      }
+
+      // Several distinct item types share this name and the caller didn't pick
+      // one — don't guess.
+      const distinctTypes = [...new Set(matches.map(m => m.type))];
+      if (!typeWanted && distinctTypes.length > 1) {
+        ambiguous.push({
+          name: req.name,
+          candidates: matches.map(m => ({ pack: m.packId, type: m.type })),
+        });
+        warnings.push(
+          `"${req.name}" matches multiple item types (${distinctTypes.join(', ')}); pass "type" to choose — skipped.`
+        );
+        continue;
+      }
+
+      // matches preserves the core-first pack order, so [0] is the best source.
+      const chosen = matches[0];
+      const pack = (game.packs as any).get(chosen.packId);
+      const sourceDoc = await pack.getDocument(chosen.entryId);
+      const obj = sourceDoc.toObject();
+      const finalName = nameOverride ?? obj.name;
+      const clean: Record<string, any> = {
+        name: finalName,
+        type: obj.type,
+        img: obj.img,
+        system: obj.system || {},
+        effects: obj.effects || [],
+        flags: obj.flags || {},
+      };
+      applyExtras(clean, obj.type, req);
+      toCreate.push(clean);
+      plan.push({
+        nameLower: String(finalName).toLowerCase(),
+        type: obj.type,
+        setCurrent: req.setCurrent,
+        source: templated ? `${chosen.packLabel} (grouped template)` : chosen.packLabel,
+      });
+    }
+
+    if (toCreate.length === 0) {
+      return {
+        success: false,
+        error: 'No items could be added.',
+        ...(notFound.length ? { notFound } : {}),
+        ...(ambiguous.length ? { ambiguous } : {}),
+        ...(warnings.length ? { warnings } : {}),
+      };
+    }
+
+    let created: any[] = [];
+    try {
+      created = (await actor.createEmbeddedDocuments('Item', toCreate)) || [];
+
+      // Make a career current if requested. Match the created career by NAME,
+      // not by position (see the ordering note above). Exactly one career is
+      // current, so flip the target on and every other career off.
+      const setCurrentNames = new Set(
+        plan.filter(p => p.setCurrent && p.type === 'career').map(p => p.nameLower)
+      );
+      if (setCurrentNames.size > 0) {
+        let targetId: string | undefined;
+        for (const doc of created) {
+          if (doc.type === 'career' && setCurrentNames.has(String(doc.name).toLowerCase())) {
+            targetId = doc.id;
+          }
+        }
+        if (targetId) {
+          const careerUpdates: Array<Record<string, any>> = [];
+          for (const it of actor.items) {
+            if (it.type === 'career') {
+              careerUpdates.push({ _id: it.id, 'system.current.value': it.id === targetId });
+            }
+          }
+          if (careerUpdates.length > 0) {
+            await actor.updateEmbeddedDocuments('Item', careerUpdates);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Error adding WFRP4e items:`, error);
+      this.auditLog(
+        'addWfrp4eItems',
+        { actor: data.actor, count: toCreate.length },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+
+    // Summarise, reading back derived skill totals / career state as confirmation.
+    // Source is looked up by name+type (order-independent).
+    const sourceByKey = new Map<string, string>();
+    for (const p of plan) sourceByKey.set(`${p.type}::${p.nameLower}`, p.source);
+
+    const createdSummary = created.map((doc: any) => {
+      const after = actor.items.get(doc.id);
+      const entry: Record<string, any> = {
+        id: doc.id,
+        name: doc.name,
+        type: doc.type,
+        source: sourceByKey.get(`${doc.type}::${String(doc.name).toLowerCase()}`) ?? 'unknown',
+      };
+      if (after?.type === 'skill') {
+        entry.advances = after.system?.advances?.value;
+        entry.total = after.system?.total?.value;
+        entry.characteristic = after.system?.characteristic?.value;
+      }
+      if (after?.type === 'career') entry.current = after.system?.current?.value ?? false;
+      return entry;
+    });
+
+    this.auditLog('addWfrp4eItems', { actor: data.actor, count: created.length }, 'success');
+
+    return {
+      success: true,
+      actor: actor.name,
+      id: actor.id,
+      created: createdSummary,
+      ...(notFound.length ? { notFound } : {}),
+      ...(ambiguous.length ? { ambiguous } : {}),
+      ...(warnings.length ? { warnings } : {}),
+    };
+  }
+
+  /**
    * Get actor ownership information
    */
-  async getActorOwnership(data: { actorIdentifier?: string; playerIdentifier?: string }): Promise<any> {
+  async getActorOwnership(data: {
+    actorIdentifier?: string;
+    playerIdentifier?: string;
+  }): Promise<any> {
     this.validateFoundryState();
 
     try {
-      const actors = data.actorIdentifier ? 
-        (data.actorIdentifier === 'all' ? Array.from(game.actors || []) : [this.findActorByIdentifier(data.actorIdentifier)].filter(Boolean)) :
-        Array.from(game.actors || []);
+      const actors = data.actorIdentifier
+        ? data.actorIdentifier === 'all'
+          ? Array.from(game.actors || [])
+          : [this.findActorByIdentifier(data.actorIdentifier)].filter(Boolean)
+        : Array.from(game.actors || []);
 
-      const users = data.playerIdentifier ?
-        [game.users?.getName(data.playerIdentifier) || game.users?.get(data.playerIdentifier)].filter(Boolean) :
-        Array.from(game.users || []);
+      const users = data.playerIdentifier
+        ? [
+            game.users?.getName(data.playerIdentifier) || game.users?.get(data.playerIdentifier),
+          ].filter(Boolean)
+        : Array.from(game.users || []);
 
       const ownershipInfo = [];
       const permissionNames = { 0: 'NONE', 1: 'LIMITED', 2: 'OBSERVER', 3: 'OWNER' };
@@ -4789,10 +6576,14 @@ export class FoundryDataAccess {
         };
 
         for (const user of users.filter(u => u && !u.isGM)) {
-          const permission = actor.testUserPermission(user, 'OWNER') ? 3 :
-                            actor.testUserPermission(user, 'OBSERVER') ? 2 :
-                            actor.testUserPermission(user, 'LIMITED') ? 1 : 0;
-          
+          const permission = actor.testUserPermission(user, 'OWNER')
+            ? 3
+            : actor.testUserPermission(user, 'OBSERVER')
+              ? 2
+              : actor.testUserPermission(user, 'LIMITED')
+                ? 1
+                : 0;
+
           actorInfo.ownership.push({
             userId: user!.id,
             userName: user!.name,
@@ -4815,17 +6606,29 @@ export class FoundryDataAccess {
    * Find actor by name or ID
    */
   private findActorByIdentifier(identifier: string): any {
-    return game.actors?.get(identifier) || 
-           game.actors?.getName(identifier) ||
-           Array.from(game.actors || []).find(a => 
-             a.name?.toLowerCase().includes(identifier.toLowerCase())
-           );
+    const worldActor =
+      game.actors?.get(identifier) ||
+      game.actors?.getName(identifier) ||
+      Array.from(game.actors || []).find(a =>
+        a.name?.toLowerCase().includes(identifier.toLowerCase())
+      );
+    if (worldActor) return worldActor;
+
+    // Fallback: a scene Token id. For an unlinked token this returns the token's
+    // own synthetic (delta-backed) actor, so edits persist to that token alone —
+    // the way to tweak one copy on a map without touching the prototype or its
+    // siblings. (For a linked token this is the world actor, same as above.)
+    for (const scene of (game.scenes as any) || []) {
+      const token = scene.tokens?.get(identifier);
+      if (token?.actor) return token.actor;
+    }
+    return undefined;
   }
 
   /**
    * Get friendly NPCs from current scene
    */
-  async getFriendlyNPCs(): Promise<Array<{id: string, name: string}>> {
+  async getFriendlyNPCs(): Promise<Array<{ id: string; name: string }>> {
     this.validateFoundryState();
 
     try {
@@ -4834,14 +6637,16 @@ export class FoundryDataAccess {
         return [];
       }
 
-      const friendlyTokens = scene.tokens.filter((token: any) => 
-        token.disposition === 1 // FRIENDLY disposition
+      const friendlyTokens = scene.tokens.filter(
+        (token: any) => token.disposition === 1 // FRIENDLY disposition
       );
 
-      return friendlyTokens.map((token: any) => ({
-        id: token.actor?.id || token.id || '',
-        name: token.name || token.actor?.name || 'Unknown',
-      })).filter(t => t.id);
+      return friendlyTokens
+        .map((token: any) => ({
+          id: token.actor?.id || token.id || '',
+          name: token.name || token.actor?.name || 'Unknown',
+        }))
+        .filter(t => t.id);
     } catch (error) {
       console.error(`[${MODULE_ID}] Error getting friendly NPCs:`, error);
       return [];
@@ -4851,18 +6656,20 @@ export class FoundryDataAccess {
   /**
    * Get party characters (player-owned actors)
    */
-  async getPartyCharacters(): Promise<Array<{id: string, name: string}>> {
+  async getPartyCharacters(): Promise<Array<{ id: string; name: string }>> {
     this.validateFoundryState();
 
     try {
-      const partyCharacters = Array.from(game.actors || []).filter(actor => 
-        actor.hasPlayerOwner && actor.type === 'character'
+      const partyCharacters = Array.from(game.actors || []).filter(
+        actor => actor.hasPlayerOwner && actor.type === 'character'
       );
 
-      return partyCharacters.map(actor => ({
-        id: actor.id || '',
-        name: actor.name || 'Unknown',
-      })).filter(c => c.id);
+      return partyCharacters
+        .map(actor => ({
+          id: actor.id || '',
+          name: actor.name || 'Unknown',
+        }))
+        .filter(c => c.id);
     } catch (error) {
       console.error(`[${MODULE_ID}] Error getting party characters:`, error);
       return [];
@@ -4872,18 +6679,20 @@ export class FoundryDataAccess {
   /**
    * Get connected players (excluding GM)
    */
-  async getConnectedPlayers(): Promise<Array<{id: string, name: string}>> {
+  async getConnectedPlayers(): Promise<Array<{ id: string; name: string }>> {
     this.validateFoundryState();
 
     try {
-      const connectedPlayers = Array.from(game.users || []).filter(user => 
-        user.active && !user.isGM
+      const connectedPlayers = Array.from(game.users || []).filter(
+        user => user.active && !user.isGM
       );
 
-      return connectedPlayers.map(user => ({
-        id: user.id || '',
-        name: user.name || 'Unknown',
-      })).filter(u => u.id);
+      return connectedPlayers
+        .map(user => ({
+          id: user.id || '',
+          name: user.name || 'Unknown',
+        }))
+        .filter(u => u.id);
     } catch (error) {
       console.error(`[${MODULE_ID}] Error getting connected players:`, error);
       return [];
@@ -4893,7 +6702,11 @@ export class FoundryDataAccess {
   /**
    * Find players by identifier with partial matching
    */
-  async findPlayers(data: { identifier: string; allowPartialMatch?: boolean; includeCharacterOwners?: boolean }): Promise<Array<{id: string, name: string}>> {
+  async findPlayers(data: {
+    identifier: string;
+    allowPartialMatch?: boolean;
+    includeCharacterOwners?: boolean;
+  }): Promise<Array<{ id: string; name: string }>> {
     this.validateFoundryState();
 
     try {
@@ -4915,14 +6728,14 @@ export class FoundryDataAccess {
       if (includeCharacterOwners && players.length === 0) {
         for (const actor of game.actors || []) {
           if (actor.type !== 'character') continue;
-          
+
           const actorName = actor.name?.toLowerCase() || '';
           if (actorName === searchTerm || (allowPartialMatch && actorName.includes(searchTerm))) {
             // Find the player owner of this character
-            const owner = game.users?.find(user => 
-              actor.testUserPermission(user, 'OWNER') && !user.isGM
+            const owner = game.users?.find(
+              user => actor.testUserPermission(user, 'OWNER') && !user.isGM
             );
-            
+
             if (owner && !players.some(p => p.id === owner.id)) {
               players.push({ id: owner.id || '', name: owner.name || 'Unknown' });
             }
@@ -4940,7 +6753,7 @@ export class FoundryDataAccess {
   /**
    * Find single actor by identifier
    */
-  async findActor(data: { identifier: string }): Promise<{id: string, name: string} | null> {
+  async findActor(data: { identifier: string }): Promise<{ id: string; name: string } | null> {
     this.validateFoundryState();
 
     try {
@@ -4976,13 +6789,16 @@ export class FoundryDataAccess {
   /**
    * Get or create a folder for organizing MCP-generated content
    */
-  private async getOrCreateFolder(folderName: string, type: 'Actor' | 'JournalEntry'): Promise<string | null> {
+  private async getOrCreateFolder(
+    folderName: string,
+    type: 'Actor' | 'JournalEntry'
+  ): Promise<string | null> {
     try {
       // Look for existing folder
-      const existingFolder = game.folders?.find((f: any) => 
-        f.name === folderName && f.type === type
+      const existingFolder = game.folders?.find(
+        (f: any) => f.name === folderName && f.type === type
       );
-      
+
       if (existingFolder) {
         return existingFolder.id;
       }
@@ -5002,8 +6818,8 @@ export class FoundryDataAccess {
       // Create new folder
       const folderData = {
         name: folderName,
-        type: type,
-        description: description,
+        type,
+        description,
         color: type === 'Actor' ? '#4a90e2' : '#f39c12', // Blue for actors, orange for journals
         sort: 0,
         parent: null,
@@ -5011,9 +6827,9 @@ export class FoundryDataAccess {
           'foundry-mcp-bridge': {
             mcpGenerated: true,
             createdAt: new Date().toISOString(),
-            questContext: type === 'JournalEntry' ? folderName : undefined
-          }
-        }
+            questContext: type === 'JournalEntry' ? folderName : undefined,
+          },
+        },
       };
 
       const folder = await Folder.create(folderData);
@@ -5028,7 +6844,9 @@ export class FoundryDataAccess {
   /**
    * List all scenes with filtering options
    */
-  async listScenes(options: { filter?: string; include_active_only?: boolean } = {}): Promise<any[]> {
+  async listScenes(
+    options: { filter?: string; include_active_only?: boolean } = {}
+  ): Promise<any[]> {
     this.validateFoundryState();
 
     try {
@@ -5042,9 +6860,7 @@ export class FoundryDataAccess {
       // Filter by name if provided
       if (options.filter) {
         const filterLower = options.filter.toLowerCase();
-        scenes = scenes.filter((scene: any) =>
-          scene.name.toLowerCase().includes(filterLower)
-        );
+        scenes = scenes.filter((scene: any) => scene.name.toLowerCase().includes(filterLower));
       }
 
       // Map to consistent format
@@ -5053,8 +6869,8 @@ export class FoundryDataAccess {
         name: scene.name,
         active: scene.active,
         dimensions: {
-          width: scene.dimensions?.width || (scene as any).width || 0,
-          height: scene.dimensions?.height || (scene as any).height || 0
+          width: scene.dimensions?.width || scene.width || 0,
+          height: scene.dimensions?.height || scene.height || 0,
         },
         gridSize: scene.grid?.size || 100,
         background: scene._source?.background?.src || scene.img || '',
@@ -5062,10 +6878,12 @@ export class FoundryDataAccess {
         tokens: scene.tokens?.size || 0,
         lighting: scene.lights?.size || 0,
         sounds: scene.sounds?.size || 0,
-        navigation: scene.navigation || false
+        navigation: scene.navigation || false,
       }));
     } catch (error) {
-      throw new Error(`Failed to list scenes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to list scenes: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -5078,9 +6896,10 @@ export class FoundryDataAccess {
     try {
       // Find the target scene by ID or name
       const scenes = game.scenes?.contents || [];
-      const targetScene = scenes.find((scene: any) =>
-        scene.id === options.scene_identifier ||
-        scene.name.toLowerCase() === options.scene_identifier.toLowerCase()
+      const targetScene = scenes.find(
+        (scene: any) =>
+          scene.id === options.scene_identifier ||
+          scene.name.toLowerCase() === options.scene_identifier.toLowerCase()
       );
 
       if (!targetScene) {
@@ -5094,7 +6913,7 @@ export class FoundryDataAccess {
       if (options.optimize_view !== false && typeof canvas !== 'undefined' && canvas?.scene) {
         const dimensions = targetScene.dimensions || {
           width: (targetScene as any).width || 0,
-          height: (targetScene as any).height || 0
+          height: (targetScene as any).height || 0,
         };
         const width = (dimensions as any).width || 0;
         const height = (dimensions as any).height || 0;
@@ -5108,7 +6927,7 @@ export class FoundryDataAccess {
               (canvas as any).screenDimensions?.[0] / width || 1,
               (canvas as any).screenDimensions?.[1] / height || 1,
               1
-            )
+            ),
           });
         }
       }
@@ -5119,11 +6938,13 @@ export class FoundryDataAccess {
         sceneName: targetScene.name,
         dimensions: {
           width: (targetScene.dimensions as any)?.width || (targetScene as any).width || 0,
-          height: (targetScene.dimensions as any)?.height || (targetScene as any).height || 0
-        }
+          height: (targetScene.dimensions as any)?.height || (targetScene as any).height || 0,
+        },
       };
     } catch (error) {
-      throw new Error(`Failed to switch scene: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to switch scene: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -5132,15 +6953,19 @@ export class FoundryDataAccess {
   /**
    * Get detailed information about a specific entity within a character (item, action, or effect)
    */
-  async getCharacterEntity(data: { characterIdentifier: string; entityIdentifier: string }): Promise<any> {
+  async getCharacterEntity(data: {
+    characterIdentifier: string;
+    entityIdentifier: string;
+  }): Promise<any> {
     this.validateFoundryState();
 
     try {
       // Find the character first
       const actors = game.actors?.contents || [];
-      const character = actors.find((actor: any) =>
-        actor.id === data.characterIdentifier ||
-        actor.name.toLowerCase() === data.characterIdentifier.toLowerCase()
+      const character = actors.find(
+        (actor: any) =>
+          actor.id === data.characterIdentifier ||
+          actor.name.toLowerCase() === data.characterIdentifier.toLowerCase()
       );
 
       if (!character) {
@@ -5149,9 +6974,10 @@ export class FoundryDataAccess {
 
       // Search in items first (by ID or name)
       const items = character.items?.contents || [];
-      let entity = items.find((item: any) =>
-        item.id === data.entityIdentifier ||
-        item.name.toLowerCase() === data.entityIdentifier.toLowerCase()
+      let entity = items.find(
+        (item: any) =>
+          item.id === data.entityIdentifier ||
+          item.name.toLowerCase() === data.entityIdentifier.toLowerCase()
       );
 
       if (entity) {
@@ -5164,8 +6990,8 @@ export class FoundryDataAccess {
             type: entity.type,
             img: entity.img,
             description: entity.system?.description?.value || entity.system?.description || '',
-            system: entity.system
-          }
+            system: entity.system,
+          },
         };
       }
 
@@ -5175,25 +7001,27 @@ export class FoundryDataAccess {
           ? (character as any).system.actions
           : Object.values((character as any).system.actions || {});
 
-        entity = actions.find((action: any) =>
-          action.id === data.entityIdentifier ||
-          action.name?.toLowerCase() === data.entityIdentifier.toLowerCase()
+        entity = actions.find(
+          (action: any) =>
+            action.id === data.entityIdentifier ||
+            action.name?.toLowerCase() === data.entityIdentifier.toLowerCase()
         );
 
         if (entity) {
           return {
             success: true,
             entityType: 'action',
-            entity
+            entity,
           };
         }
       }
 
       // Search in effects
       const effects = character.effects?.contents || [];
-      entity = effects.find((effect: any) =>
-        effect.id === data.entityIdentifier ||
-        effect.name?.toLowerCase() === data.entityIdentifier.toLowerCase()
+      entity = effects.find(
+        (effect: any) =>
+          effect.id === data.entityIdentifier ||
+          effect.name?.toLowerCase() === data.entityIdentifier.toLowerCase()
       );
 
       if (entity) {
@@ -5206,21 +7034,30 @@ export class FoundryDataAccess {
             icon: entity.icon,
             disabled: entity.disabled,
             duration: entity.duration,
-            changes: entity.changes
-          }
+            changes: entity.changes,
+          },
         };
       }
 
-      throw new Error(`Entity not found: "${data.entityIdentifier}" in character "${character.name}"`);
+      throw new Error(
+        `Entity not found: "${data.entityIdentifier}" in character "${character.name}"`
+      );
     } catch (error) {
-      throw new Error(`Failed to get character entity: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to get character entity: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
   /**
    * Move a token to a new position on the scene
    */
-  async moveToken(data: { tokenId: string; x: number; y: number; animate?: boolean }): Promise<any> {
+  async moveToken(data: {
+    tokenId: string;
+    x: number;
+    y: number;
+    animate?: boolean;
+  }): Promise<any> {
     this.validateFoundryState();
 
     // Use permission system
@@ -5244,10 +7081,13 @@ export class FoundryDataAccess {
       }
 
       // Update token position
-      await token.update({
-        x: data.x,
-        y: data.y
-      }, { animate: data.animate !== false });
+      await token.update(
+        {
+          x: data.x,
+          y: data.y,
+        },
+        { animate: data.animate !== false }
+      );
 
       this.auditLog('moveToken', data, 'success');
 
@@ -5256,11 +7096,18 @@ export class FoundryDataAccess {
         tokenId: token.id,
         tokenName: token.name,
         newPosition: { x: data.x, y: data.y },
-        animated: data.animate !== false
+        animated: data.animate !== false,
       };
     } catch (error) {
-      this.auditLog('moveToken', data, 'failure', error instanceof Error ? error.message : 'Unknown error');
-      throw new Error(`Failed to move token: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.auditLog(
+        'moveToken',
+        data,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw new Error(
+        `Failed to move token: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -5304,11 +7151,18 @@ export class FoundryDataAccess {
         success: true,
         tokenId: token.id,
         tokenName: token.name,
-        updatedProperties: Object.keys(cleanUpdates)
+        updatedProperties: Object.keys(cleanUpdates),
       };
     } catch (error) {
-      this.auditLog('updateToken', data, 'failure', error instanceof Error ? error.message : 'Unknown error');
-      throw new Error(`Failed to update token: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.auditLog(
+        'updateToken',
+        data,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw new Error(
+        `Failed to update token: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -5350,17 +7204,28 @@ export class FoundryDataAccess {
         }
       }
 
-      this.auditLog('deleteTokens', { tokenIds: data.tokenIds, deletedCount: deletedTokens.length }, 'success');
+      this.auditLog(
+        'deleteTokens',
+        { tokenIds: data.tokenIds, deletedCount: deletedTokens.length },
+        'success'
+      );
 
       return {
         success: true,
         deletedCount: deletedTokens.length,
         deletedTokens,
-        failedTokens: failedTokens.length > 0 ? failedTokens : undefined
+        failedTokens: failedTokens.length > 0 ? failedTokens : undefined,
       };
     } catch (error) {
-      this.auditLog('deleteTokens', data, 'failure', error instanceof Error ? error.message : 'Unknown error');
-      throw new Error(`Failed to delete tokens: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.auditLog(
+        'deleteTokens',
+        data,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw new Error(
+        `Failed to delete tokens: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -5399,22 +7264,30 @@ export class FoundryDataAccess {
         lockRotation: token.lockRotation,
         img: token.texture?.src,
         actorId: token.actor?.id,
-        actorData: token.actor ? {
-          name: token.actor.name,
-          type: token.actor.type,
-          img: token.actor.img,
-        } : null,
+        actorData: token.actor
+          ? {
+              name: token.actor.name,
+              type: token.actor.type,
+              img: token.actor.img,
+            }
+          : null,
         actorLink: token.actorLink,
       };
     } catch (error) {
-      throw new Error(`Failed to get token details: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to get token details: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
   /**
    * Toggle a status condition on a token
    */
-  async toggleTokenCondition(data: { tokenId: string; conditionId: string; active: boolean }): Promise<any> {
+  async toggleTokenCondition(data: {
+    tokenId: string;
+    conditionId: string;
+    active: boolean;
+  }): Promise<any> {
     this.validateFoundryState();
 
     // Use permission system
@@ -5444,9 +7317,9 @@ export class FoundryDataAccess {
 
       // Get the condition configuration for the game system
       const conditions = (CONFIG as any).statusEffects || [];
-      const condition = conditions.find((c: any) =>
-        c.id === data.conditionId ||
-        c.name?.toLowerCase() === data.conditionId.toLowerCase()
+      const condition = conditions.find(
+        (c: any) =>
+          c.id === data.conditionId || c.name?.toLowerCase() === data.conditionId.toLowerCase()
       );
 
       if (!condition) {
@@ -5498,7 +7371,10 @@ export class FoundryDataAccess {
         });
 
         if (effectsToRemove.length > 0) {
-          await actor.deleteEmbeddedDocuments('ActiveEffect', effectsToRemove.map((e: any) => e.id));
+          await actor.deleteEmbeddedDocuments(
+            'ActiveEffect',
+            effectsToRemove.map((e: any) => e.id)
+          );
         }
       }
 
@@ -5514,11 +7390,18 @@ export class FoundryDataAccess {
         active: data.active,
         message: data.active
           ? `Applied ${data.conditionId} to ${token.name}`
-          : `Removed ${data.conditionId} from ${token.name}`
+          : `Removed ${data.conditionId} from ${token.name}`,
       };
     } catch (error) {
-      this.auditLog('toggleTokenCondition', data, 'failure', error instanceof Error ? error.message : 'Unknown error');
-      throw new Error(`Failed to toggle token condition: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.auditLog(
+        'toggleTokenCondition',
+        data,
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw new Error(
+        `Failed to toggle token condition: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -5538,19 +7421,20 @@ export class FoundryDataAccess {
           id: condition.id,
           name: condition.name || condition.label || condition.id,
           icon: condition.icon || condition.img,
-          description: condition.description || ''
-        }))
+          description: condition.description || '',
+        })),
       };
     } catch (error) {
-      throw new Error(`Failed to get available conditions: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to get available conditions: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
   /**
    * Move a token to a new position
    */
-  
-  
+
   /**
    * Use an item on a character (cast spell, use ability, consume item, etc.)
    * This triggers the item's default use behavior in Foundry VTT
@@ -5558,14 +7442,16 @@ export class FoundryDataAccess {
   async useItem(params: {
     actorIdentifier: string;
     itemIdentifier: string;
-    targets?: string[] | undefined;       // Target character/token names or IDs. "self" targets the caster.
-    options?: {
-      consume?: boolean | undefined;      // Whether to consume charges/uses
-      configureDialog?: boolean | undefined; // Whether to show configuration dialog
-      skipDialog?: boolean | undefined;   // Skip confirmation dialogs (default: true for MCP)
-      spellLevel?: number | undefined;    // For spells: cast at higher level
-      versatile?: boolean | undefined;    // For versatile weapons: use versatile damage
-    } | undefined;
+    targets?: string[] | undefined; // Target character/token names or IDs. "self" targets the caster.
+    options?:
+      | {
+          consume?: boolean | undefined; // Whether to consume charges/uses
+          configureDialog?: boolean | undefined; // Whether to show configuration dialog
+          skipDialog?: boolean | undefined; // Skip confirmation dialogs (default: true for MCP)
+          spellLevel?: number | undefined; // For spells: cast at higher level
+          versatile?: boolean | undefined; // For versatile weapons: use versatile damage
+        }
+      | undefined;
   }): Promise<{
     success: boolean;
     status?: string;
@@ -5586,16 +7472,15 @@ export class FoundryDataAccess {
     }
 
     // Find the item on the actor
-    const item = actor.items.find((i: any) =>
-      i.id === itemIdentifier ||
-      i.name.toLowerCase() === itemIdentifier.toLowerCase()
+    const item = actor.items.find(
+      (i: any) => i.id === itemIdentifier || i.name.toLowerCase() === itemIdentifier.toLowerCase()
     );
 
     if (!item) {
       throw new Error(`Item "${itemIdentifier}" not found on actor "${actor.name}"`);
     }
 
-    const itemAny = item as any;
+    const itemAny = item;
     const systemId = (game.system as any).id;
 
     // Handle targeting if targets are specified
@@ -5614,23 +7499,26 @@ export class FoundryDataAccess {
         // Handle "self" - target the caster's token
         if (targetIdentifier.toLowerCase() === 'self') {
           // Find token for the caster actor
-          const selfToken = sceneTokens.find((t: any) =>
-            t.actor?.id === actor.id || t.actorId === actor.id
+          const selfToken = sceneTokens.find(
+            (t: any) => t.actor?.id === actor.id || t.actorId === actor.id
           );
           if (selfToken) {
             tokenIds.push(selfToken.id);
             resolvedTargetNames.push(actor.name);
           } else {
-            console.warn(`[foundry-mcp-bridge] No token found on scene for actor "${actor.name}" (self)`);
+            console.warn(
+              `[foundry-mcp-bridge] No token found on scene for actor "${actor.name}" (self)`
+            );
           }
           continue;
         }
 
         // Find token by name or ID
-        const targetToken = sceneTokens.find((t: any) =>
-          t.id === targetIdentifier ||
-          t.name?.toLowerCase() === targetIdentifier.toLowerCase() ||
-          t.actor?.name?.toLowerCase() === targetIdentifier.toLowerCase()
+        const targetToken = sceneTokens.find(
+          (t: any) =>
+            t.id === targetIdentifier ||
+            t.name?.toLowerCase() === targetIdentifier.toLowerCase() ||
+            t.actor?.name?.toLowerCase() === targetIdentifier.toLowerCase()
         );
 
         if (targetToken) {
@@ -5698,7 +7586,12 @@ export class FoundryDataAccess {
         });
       } else if (systemId === 'dsa5') {
         // DSA5 specific handling
-        if (item.type === 'spell' || item.type === 'liturgy' || item.type === 'ceremony' || item.type === 'ritual') {
+        if (
+          item.type === 'spell' ||
+          item.type === 'liturgy' ||
+          item.type === 'ceremony' ||
+          item.type === 'ritual'
+        ) {
           if (typeof itemAny.postItem === 'function') {
             itemAny.postItem().catch((err: Error) => {
               console.error(`[foundry-mcp-bridge] Error using item ${item.name}:`, err);
@@ -5733,16 +7626,19 @@ export class FoundryDataAccess {
         ChatMessage.create(chatData);
       }
 
-      this.auditLog('useItem', {
-        actorId: actor.id,
-        itemId: item.id,
-        itemName: item.name,
-        targets: resolvedTargetNames
-      }, 'success');
+      this.auditLog(
+        'useItem',
+        {
+          actorId: actor.id,
+          itemId: item.id,
+          itemName: item.name,
+          targets: resolvedTargetNames,
+        },
+        'success'
+      );
 
-      const targetInfo = resolvedTargetNames.length > 0
-        ? ` targeting ${resolvedTargetNames.join(', ')}`
-        : '';
+      const targetInfo =
+        resolvedTargetNames.length > 0 ? ` targeting ${resolvedTargetNames.join(', ')}` : '';
 
       const result: {
         success: boolean;
@@ -5766,15 +7662,1943 @@ export class FoundryDataAccess {
       }
 
       return result;
-
     } catch (error) {
-      this.auditLog('useItem', {
-        actorId: actor.id,
-        itemId: item.id
-      }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+      this.auditLog(
+        'useItem',
+        {
+          actorId: actor.id,
+          itemId: item.id,
+        },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
 
-      throw new Error(`Failed to use item "${item.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to use item "${item.name}": ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
+  // ===== D&D 5E FEATURE CREATION =====
+
+  /**
+   * Add a save-attack feature (feat) to an existing D&D 5e actor.
+   * Creates a single save Activity with damage and an optional area template.
+   */
+  async addSaveFeatureToActor(data: {
+    actorIdentifier: string;
+    featureName: string;
+    description: string;
+    activationType: string;
+    saveAbility: string;
+    saveDC: number;
+    damageParts: Array<{ number: number; denomination: number; type: string }>;
+    halfOnSave: boolean;
+    areaType: string;
+    areaSize?: number;
+    areaUnits: string;
+    affectsType: string;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    try {
+      // 1. Lookup actor
+      const actor = this.findActorByIdentifier(data.actorIdentifier);
+      if (!actor) {
+        throw new Error(`Actor not found: "${data.actorIdentifier}"`);
+      }
+
+      // 2. System guard
+      if ((game.system as any).id !== 'dnd5e') {
+        throw new Error(
+          `addSaveFeatureToActor requires D&D 5e. ` +
+            `Current system: "${(game.system as any).id}".`
+        );
+      }
+
+      // 3. Duplicate check (by name only, regardless of item type)
+      const existing = actor.items.find((i: any) => i.name === data.featureName);
+      if (existing) {
+        throw new Error(
+          `Feature "${data.featureName}" already exists on actor "${actor.name}" ` +
+            `(id: ${existing.id}). Use a different name or remove the existing feature first.`
+        );
+      }
+
+      // 4. Generate activity ID
+      const activityId: string = (foundry.utils as any).randomID(16);
+
+      // 5. Slug identifier
+      const identifier = slugify(data.featureName);
+
+      // 5a. Map emanation → radius (Foundry uses "radius" for radial emanations)
+      const mappedAreaType: string = data.areaType === 'emanation' ? 'radius' : data.areaType;
+
+      // 6. Build item data — schema verified against dnd5e 5.1.8 real output
+      const itemData = {
+        name: data.featureName,
+        type: 'feat',
+        img: 'systems/dnd5e/icons/svg/items/feature.svg',
+        system: {
+          description: { value: data.description, chat: '' },
+          identifier,
+          source: { revision: 1, rules: '2024' },
+          type: { value: 'monster', subtype: '' },
+          uses: { spent: 0, recovery: [], max: '' },
+          advancement: [],
+          crewed: false,
+          enchant: {},
+          prerequisites: { items: [], repeatable: false, level: null },
+          properties: [],
+          requirements: '',
+          activities: {
+            [activityId]: {
+              _id: activityId,
+              type: 'save',
+              sort: 0,
+              name: '',
+              activation: {
+                type: data.activationType,
+                override: false,
+              },
+              consumption: {
+                scaling: { allowed: false },
+                spellSlot: true,
+                targets: [],
+              },
+              description: {},
+              duration: { units: 'inst', concentration: false, override: false },
+              effects: [],
+              range: { units: 'self', override: false },
+              uses: { spent: 0, recovery: [] },
+              target: {
+                template: {
+                  contiguous: false,
+                  units: data.areaUnits,
+                  count: '',
+                  type: mappedAreaType,
+                  size: mappedAreaType ? String(data.areaSize) : '',
+                },
+                affects: {
+                  choice: false,
+                  count: '',
+                  type: data.affectsType,
+                  special: '',
+                },
+                override: false,
+                prompt: true,
+              },
+              damage: {
+                onSave: data.halfOnSave ? 'half' : 'none',
+                parts: data.damageParts.map(p => ({
+                  custom: { enabled: false, formula: '' },
+                  number: p.number,
+                  denomination: p.denomination,
+                  bonus: '',
+                  types: [p.type],
+                  scaling: { mode: '', number: 1 },
+                })),
+              },
+              save: {
+                ability: [data.saveAbility],
+                dc: {
+                  calculation: '',
+                  formula: String(data.saveDC),
+                },
+              },
+            },
+          },
+        },
+        effects: [],
+      };
+
+      // 7. Create embedded item
+      const [created] = (await actor.createEmbeddedDocuments('Item', [itemData])) as any[];
+
+      this.auditLog(
+        'addSaveFeatureToActor',
+        { actorId: actor.id, featureName: data.featureName },
+        'success'
+      );
+
+      // 8. Return structured result
+      return {
+        success: true,
+        item: { id: created.id, name: created.name },
+        actor: { id: actor.id, name: actor.name },
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to add save feature to actor`, error);
+      this.auditLog(
+        'addSaveFeatureToActor',
+        { actorIdentifier: data.actorIdentifier, featureName: data.featureName },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  // ===== CREATE NPC ACTOR (D&D 5e) =====
+
+  async createNpcActor(data: {
+    name: string;
+    creatureType: string;
+    creatureSubtype: string;
+    size: string;
+    alignment: string;
+    cr: string | number;
+    hpAverage: number;
+    hpFormula: string;
+    acMode: string;
+    acValue?: number;
+    abilities: { str: number; dex: number; con: number; int: number; wis: number; cha: number };
+    savingThrows: string[];
+    walkSpeed: number;
+    flySpeed: number;
+    swimSpeed: number;
+    climbSpeed: number;
+    burrowSpeed: number;
+    hover: boolean;
+    darkvision: number;
+    blindsight: number;
+    tremorsense: number;
+    truesight: number;
+    specialSenses: string;
+    skills: Array<{ skill: string; proficiency: string }>;
+    damageImmunities: string[];
+    damageResistances: string[];
+    damageVulnerabilities: string[];
+    conditionImmunities: string[];
+    languages: string[];
+    languagesCustom: string;
+    biography: string;
+    sourceBook: string;
+    sourcePage: string;
+    sourceRules: string;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    try {
+      // 1. System guard
+      if ((game.system as any).id !== 'dnd5e') {
+        throw new Error(
+          `createNpcActor requires D&D 5e. ` + `Current system: "${(game.system as any).id}".`
+        );
+      }
+
+      // 2. Duplicate check by name — only against other NPCs, so a player
+      //    character sharing the name does not block NPC creation.
+      const existingActor = game.actors?.find((a: any) => a.name === data.name && a.type === 'npc');
+      if (existingActor) {
+        throw new Error(
+          `NPC "${data.name}" already exists (id: ${existingActor.id}). ` +
+            `Use a different name or remove the existing NPC first.`
+        );
+      }
+
+      // 3. Soft validation — collect warnings, do NOT block creation
+      const warnings: string[] = [];
+      const allDamageValues: Array<{ field: string; value: string }> = [
+        ...data.damageImmunities.map(v => ({ field: 'damageImmunities', value: v })),
+        ...data.damageResistances.map(v => ({ field: 'damageResistances', value: v })),
+        ...data.damageVulnerabilities.map(v => ({ field: 'damageVulnerabilities', value: v })),
+      ];
+      for (const { field, value } of allDamageValues) {
+        if (!NPC_DAMAGE_CANONICAL.has(value)) {
+          const msg = `Unknown damage type "${value}" in ${field} — verify it matches dnd5e system values`;
+          warnings.push(msg);
+          console.warn(`[${MODULE_ID}] ${msg}`);
+        }
+      }
+      for (const value of data.conditionImmunities) {
+        if (!NPC_CONDITION_CANONICAL.has(value)) {
+          const msg = `Unknown condition "${value}" in conditionImmunities — verify it matches dnd5e system values`;
+          warnings.push(msg);
+          console.warn(`[${MODULE_ID}] ${msg}`);
+        }
+      }
+
+      // 4. Normalize CR to float
+      const normalizedCR = npcNormalizeCR(data.cr);
+
+      // 5. Folder
+      const folderId = await this.getOrCreateFolder('Foundry MCP Creatures', 'Actor');
+
+      // 6. Ability scores with saving throw proficiency flags
+      const savingThrowSet = new Set(data.savingThrows);
+      const abilities = {
+        str: { value: data.abilities.str, proficient: savingThrowSet.has('str') ? 1 : 0 },
+        dex: { value: data.abilities.dex, proficient: savingThrowSet.has('dex') ? 1 : 0 },
+        con: { value: data.abilities.con, proficient: savingThrowSet.has('con') ? 1 : 0 },
+        int: { value: data.abilities.int, proficient: savingThrowSet.has('int') ? 1 : 0 },
+        wis: { value: data.abilities.wis, proficient: savingThrowSet.has('wis') ? 1 : 0 },
+        cha: { value: data.abilities.cha, proficient: savingThrowSet.has('cha') ? 1 : 0 },
+      };
+
+      // 7. AC block — omit flat when mode is "default"
+      const acBlock =
+        data.acMode === 'flat' ? { calc: 'flat', flat: data.acValue } : { calc: 'default' };
+
+      // 8. Build full actor data
+      const actorData: any = {
+        name: data.name,
+        type: 'npc',
+        system: {
+          abilities,
+          attributes: {
+            ac: acBlock,
+            hp: {
+              value: data.hpAverage,
+              max: data.hpAverage,
+              temp: 0,
+              tempmax: 0,
+              formula: data.hpFormula,
+            },
+            movement: {
+              walk: data.walkSpeed,
+              fly: data.flySpeed,
+              swim: data.swimSpeed,
+              climb: data.climbSpeed,
+              burrow: data.burrowSpeed,
+              units: 'ft',
+              hover: data.hover,
+              special: '',
+            },
+            senses: {
+              darkvision: data.darkvision,
+              blindsight: data.blindsight,
+              tremorsense: data.tremorsense,
+              truesight: data.truesight,
+              units: 'ft',
+              special: data.specialSenses,
+            },
+          },
+          details: {
+            cr: normalizedCR,
+            type: {
+              value: data.creatureType,
+              subtype: data.creatureSubtype,
+            },
+            alignment: data.alignment,
+            biography: {
+              value: data.biography,
+              public: '',
+            },
+            source: {
+              revision: 1,
+              rules: data.sourceRules,
+              book: data.sourceBook,
+              page: data.sourcePage,
+              custom: '',
+              license: '',
+            },
+          },
+          traits: {
+            size: NPC_SIZE_MAP[data.size] ?? 'med',
+            di: { value: data.damageImmunities, custom: '', bypasses: [] },
+            dr: { value: data.damageResistances, custom: '', bypasses: [] },
+            dv: { value: data.damageVulnerabilities, custom: '', bypasses: [] },
+            ci: { value: data.conditionImmunities, custom: '' },
+            languages: {
+              value: data.languages,
+              custom: data.languagesCustom,
+              communication: {},
+            },
+          },
+          skills: npcBuildSkillsBlock(data.skills),
+        },
+      };
+
+      // 9. Assign folder if available
+      if (folderId) {
+        actorData.folder = folderId;
+      }
+
+      // 10. Create actor
+      const actor = await Actor.create(actorData);
+      if (!actor) {
+        throw new Error(`Failed to create NPC actor "${data.name}"`);
+      }
+
+      this.auditLog('createNpcActor', { name: data.name, cr: normalizedCR }, 'success');
+
+      // 11. Return structured result
+      return {
+        success: true,
+        actor: {
+          id: actor.id,
+          name: actor.name,
+          cr: npcFormatCR(normalizedCR),
+          folder: folderId ?? null,
+        },
+        warnings,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to create NPC actor`, error);
+      this.auditLog(
+        'createNpcActor',
+        { name: data.name },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Add weapon attack to an existing actor (dnd5e-add-attack-feature)
+  // ---------------------------------------------------------------------------
+
+  async addAttackToActor(data: any): Promise<any> {
+    this.validateFoundryState();
+
+    if ((game.system as any).id !== 'dnd5e') {
+      throw new Error('addAttackToActor requires the dnd5e game system');
+    }
+
+    try {
+      // 1. Resolve actor
+      const actor = await this.findActorByIdentifier(data.actorIdentifier);
+      if (!actor) {
+        throw new Error(`Actor not found: "${data.actorIdentifier}"`);
+      }
+
+      // 2. Duplicate check
+      const existing = actor.items.find(
+        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase()
+      );
+      if (existing) {
+        throw new Error(
+          `An item named "${data.featureName}" already exists on actor "${actor.name}". ` +
+            `Remove or rename it first.`
+        );
+      }
+
+      // 3. Soft validation — collect warnings, never block
+      const warnings: string[] = [];
+
+      for (const part of data.damageParts as Array<{
+        number: number;
+        denomination: number;
+        type: string;
+      }>) {
+        if (!ATTACK_DAMAGE_CANONICAL.has(part.type)) {
+          const msg = `Unknown damage type "${part.type}" — verify it matches dnd5e system values`;
+          warnings.push(msg);
+          console.warn(`[${MODULE_ID}] ${msg}`);
+        }
+      }
+      for (const prop of data.properties as string[]) {
+        if (!ATTACK_PROPERTY_CANONICAL.has(prop)) {
+          const msg = `Unknown weapon property "${prop}" — verify it matches dnd5e system values`;
+          warnings.push(msg);
+          console.warn(`[${MODULE_ID}] ${msg}`);
+        }
+      }
+
+      // 4. Generate activity ID
+      const activityId: string = (foundry.utils as any).randomID(16);
+
+      // 5. Damage parts for the activity (all except the first — which is system.damage.base)
+      const activityDamageParts = (
+        data.damageParts as Array<{ number: number; denomination: number; type: string }>
+      )
+        .slice(1)
+        .map(p => ({
+          types: [p.type],
+          number: p.number,
+          denomination: p.denomination,
+          bonus: '',
+          scaling: { mode: '', number: 1 },
+          custom: { enabled: false },
+        }));
+
+      // 6. Range object (system-level — holds the real range/reach)
+      const rangeObj =
+        data.attackType === 'melee'
+          ? { value: data.reachFt ?? 5, long: null, units: 'ft' }
+          : { value: data.rangeFt, long: data.longRangeFt ?? null, units: 'ft' };
+
+      // 7. Conditional 2024-only fields
+      const sourceRules: string = data.sourceRules ?? '2014';
+      const masteryField = sourceRules === '2024' ? { mastery: '' } : {};
+      const abilityField = sourceRules === '2024' ? { ability: data.effectiveAbility } : {};
+      const classification = sourceRules === '2014' ? 'weapon' : '';
+
+      // 8. Build item data
+      const itemData: Record<string, any> = {
+        name: data.featureName,
+        type: 'weapon',
+        system: {
+          description: {
+            value: data.description ?? '',
+            chat: '',
+            unidentified: '',
+          },
+          source: {
+            custom: '',
+            book: data.sourceBook ?? '',
+            page: data.sourcePage ?? '',
+            license: '',
+            rules: sourceRules,
+          },
+          quantity: 1,
+          weight: { value: 0, units: 'lb' },
+          price: { value: 0, denomination: 'gp' },
+          attunement: '',
+          equipped: data.equipped !== false,
+          rarity: '',
+          identified: true,
+          activation: {
+            type: data.activationType ?? 'action',
+            value: 1,
+            condition: '',
+            override: false,
+          },
+          duration: { value: '', units: '' },
+          cover: null,
+          target: {
+            template: {
+              count: '',
+              contiguous: false,
+              type: '',
+              size: '',
+              width: '',
+              height: '',
+              units: '',
+            },
+            affects: { count: '', type: '', choice: false, special: '' },
+            prompt: true,
+            override: false,
+          },
+          range: rangeObj,
+          uses: { value: null, max: '', recovery: [], prompt: true },
+          damage: {
+            base: {
+              types: [(data.damageParts as any[])[0].type],
+              number: (data.damageParts as any[])[0].number,
+              denomination: (data.damageParts as any[])[0].denomination,
+              bonus: '',
+              scaling: { mode: '', number: 1 },
+              custom: { enabled: false },
+            },
+          },
+          type: { value: data.weaponClass ?? 'natural', baseItem: '' },
+          properties: data.properties as string[],
+          proficient: 1,
+          magicalBonus: null,
+          ...masteryField,
+          activities: {
+            [activityId]: {
+              _id: activityId,
+              type: 'attack',
+              name: '',
+              img: '',
+              sort: 0,
+              description: {},
+              activation: {
+                type: data.activationType ?? 'action',
+                value: 1,
+                condition: '',
+                override: false,
+              },
+              duration: { units: '', value: '', override: false },
+              target: {
+                template: {
+                  count: '',
+                  contiguous: false,
+                  type: '',
+                  size: '',
+                  width: '',
+                  height: '',
+                  units: '',
+                },
+                affects: { count: '', type: '', choice: false, special: '' },
+                prompt: true,
+                override: false,
+              },
+              range: { units: 'self', override: false },
+              uses: { spent: 0, max: '', recovery: [] },
+              consumption: {
+                targets: [],
+                scaling: { allowed: false, max: '' },
+                spellSlot: true,
+              },
+              attack: {
+                ability: '',
+                bonus: data.attackBonus > 0 ? String(data.attackBonus) : '',
+                critical: { threshold: null },
+                flat: false,
+                type: {
+                  value: data.attackType ?? 'melee',
+                  classification: classification,
+                },
+                ...abilityField,
+              },
+              damage: {
+                critical: { bonus: '' },
+                includeBase: true,
+                parts: activityDamageParts,
+              },
+              effects: [],
+              save: { ability: '', dc: { formula: '', calculation: '' } },
+            },
+          },
+        },
+      };
+
+      // 9. Create the item on the actor
+      const created = (await actor.createEmbeddedDocuments('Item', [itemData]))[0];
+      if (!created) {
+        throw new Error(
+          `Failed to create attack item "${data.featureName}" on actor "${actor.name}"`
+        );
+      }
+
+      this.auditLog(
+        'addAttackToActor',
+        { actorId: actor.id, featureName: data.featureName },
+        'success'
+      );
+
+      return {
+        success: true,
+        actor: { id: actor.id, name: actor.name },
+        item: { id: created.id, name: created.name, type: 'weapon' },
+        warnings,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to add attack to actor`, error);
+      this.auditLog(
+        'addAttackToActor',
+        { actorIdentifier: data.actorIdentifier, featureName: data.featureName },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Add automatic-damage aura/emanation feature to an existing actor
+  // (dnd5e-add-aura-feature)
+  // ---------------------------------------------------------------------------
+
+  async addAuraToActor(data: any): Promise<any> {
+    this.validateFoundryState();
+
+    if ((game.system as any).id !== 'dnd5e') {
+      throw new Error('addAuraToActor requires the dnd5e game system');
+    }
+
+    try {
+      // 1. Resolve actor
+      const actor = await this.findActorByIdentifier(data.actorIdentifier);
+      if (!actor) {
+        throw new Error(`Actor not found: "${data.actorIdentifier}"`);
+      }
+
+      // 2. Duplicate check (case-insensitive name match)
+      const existing = actor.items.find(
+        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase()
+      );
+      if (existing) {
+        throw new Error(
+          `An item named "${data.featureName}" already exists on actor "${actor.name}". ` +
+            `Remove or rename it first.`
+        );
+      }
+
+      // 3. Soft validation — collect warnings, never block
+      const warnings: string[] = [];
+
+      for (const part of data.damageParts as Array<{
+        number: number;
+        denomination: number;
+        type: string;
+      }>) {
+        if (!AURA_DAMAGE_CANONICAL.has(part.type)) {
+          const msg = `Unknown damage type "${part.type}" — verify it matches dnd5e system values`;
+          warnings.push(msg);
+          console.warn(`[${MODULE_ID}] ${msg}`);
+        }
+      }
+
+      // 4. Map areaType: Foundry uses "radius" internally for what 5e 2024 calls "emanation"
+      //    <option value="radius">Emanation</option> — no "emanation" value exists in the dropdown
+      const mappedAreaType: string = data.areaType === 'emanation' ? 'radius' : data.areaType;
+
+      // 5. Generate activity ID
+      const activityId: string = (foundry.utils as any).randomID(16);
+
+      // 6. Slug identifier
+      const identifier = slugify(data.featureName as string);
+
+      // 7. Build item data — schema verified against dnd5e 5.1.8 Banshee Wail
+      const itemData = {
+        name: data.featureName,
+        type: 'feat',
+        img: 'systems/dnd5e/icons/svg/items/feature.svg',
+        system: {
+          description: { value: data.description ?? '', chat: '' },
+          identifier,
+          source: {
+            revision: 1,
+            rules: data.sourceRules ?? '2014',
+            custom: '',
+            book: data.sourceBook ?? '',
+            page: data.sourcePage ?? '',
+            license: '',
+          },
+          type: { value: 'monster', subtype: '' },
+          uses: { spent: 0, recovery: [], max: '' },
+          advancement: [],
+          crewed: false,
+          enchant: {},
+          prerequisites: { items: [], repeatable: false, level: null },
+          properties: [],
+          requirements: '',
+          activities: {
+            [activityId]: {
+              _id: activityId,
+              type: 'damage', // activity type: damage — no attack roll, no save
+              name: '',
+              sort: 0,
+              activation: {
+                type: data.activationType ?? 'action',
+                value: 1,
+                override: false,
+                // NO condition — not present in real dnd5e 5.1.8 schema
+              },
+              consumption: {
+                scaling: { allowed: false },
+                spellSlot: true, // confirmed: true in real Banshee Wail schema
+                targets: [], // no uses management in V1
+              },
+              description: {}, // empty object — confirmed from real schema
+              duration: {
+                units: 'inst',
+                concentration: false,
+                override: false,
+              },
+              effects: [],
+              range: { units: 'self', override: false }, // NO value, NO special
+              uses: { spent: 0, recovery: [] }, // NO max field
+              target: {
+                template: {
+                  contiguous: false,
+                  units: data.areaUnits ?? 'ft',
+                  count: '',
+                  type: mappedAreaType,
+                  size: String(data.areaSize),
+                  width: '',
+                  height: '',
+                },
+                affects: {
+                  count: '',
+                  type: data.affectsType ?? 'creature',
+                  choice: false,
+                  special: '',
+                },
+                override: false,
+                prompt: true,
+              },
+              damage: {
+                critical: { allow: false }, // only this key — no bonus, no dice
+                parts: (
+                  data.damageParts as Array<{ number: number; denomination: number; type: string }>
+                ).map(p => ({
+                  types: [p.type],
+                  number: p.number,
+                  denomination: p.denomination,
+                  bonus: '',
+                  scaling: { mode: '', number: 1 }, // mode: '' required — from real schema
+                  custom: { enabled: false }, // NO formula field
+                })),
+                // NO onSave — damage activity has no save concept
+              },
+              // NO save block
+              // NO attack block
+            },
+          },
+        },
+        effects: [],
+      };
+
+      // 7. Create embedded item
+      const [created] = (await actor.createEmbeddedDocuments('Item', [itemData])) as any[];
+      if (!created) {
+        throw new Error(
+          `Failed to create aura item "${data.featureName}" on actor "${actor.name}"`
+        );
+      }
+
+      this.auditLog(
+        'addAuraToActor',
+        { actorId: actor.id, featureName: data.featureName },
+        'success'
+      );
+
+      return {
+        success: true,
+        actor: { id: actor.id, name: actor.name },
+        item: { id: created.id, name: created.name, type: 'feat' },
+        warnings,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to add aura to actor`, error);
+      this.auditLog(
+        'addAuraToActor',
+        { actorIdentifier: data.actorIdentifier, featureName: data.featureName },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Add passive/descriptive feature to an existing actor (dnd5e-add-passive-feature)
+  // No activities, no mechanics — pure description displayed on the sheet.
+  // ---------------------------------------------------------------------------
+
+  async addPassiveFeatureToActor(data: any): Promise<any> {
+    this.validateFoundryState();
+
+    if ((game.system as any).id !== 'dnd5e') {
+      throw new Error('addPassiveFeatureToActor requires the dnd5e game system');
+    }
+
+    try {
+      // 1. Resolve actor
+      const actor = await this.findActorByIdentifier(data.actorIdentifier);
+      if (!actor) {
+        throw new Error(`Actor not found: "${data.actorIdentifier}"`);
+      }
+
+      // 2. Duplicate check (case-insensitive)
+      const existing = actor.items.find(
+        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase()
+      );
+      if (existing) {
+        throw new Error(
+          `An item named "${data.featureName}" already exists on actor "${actor.name}". ` +
+            `Remove or rename it first.`
+        );
+      }
+
+      // 3. Slug identifier
+      const identifier = slugify(data.featureName as string);
+
+      // 4. Build item data — no activities, no activityId needed
+      const itemData = {
+        name: data.featureName,
+        type: 'feat',
+        img: 'systems/dnd5e/icons/svg/items/feature.svg',
+        system: {
+          description: { value: data.description ?? '', chat: '' },
+          identifier,
+          source: {
+            revision: 1,
+            rules: data.sourceRules ?? '2014',
+            custom: '',
+            book: data.sourceBook ?? '',
+            page: data.sourcePage ?? '',
+            license: '',
+          },
+          type: { value: 'monster', subtype: '' },
+          uses: { spent: 0, recovery: [], max: '' },
+          advancement: [],
+          crewed: false,
+          enchant: {},
+          prerequisites: { items: [], repeatable: false, level: null },
+          properties: [],
+          requirements: '',
+          activities: {}, // empty — passive feature has no mechanical activity
+        },
+        effects: [],
+      };
+
+      // 5. Create embedded item
+      const [created] = (await actor.createEmbeddedDocuments('Item', [itemData])) as any[];
+      if (!created) {
+        throw new Error(
+          `Failed to create passive feature "${data.featureName}" on actor "${actor.name}"`
+        );
+      }
+
+      this.auditLog(
+        'addPassiveFeatureToActor',
+        { actorId: actor.id, featureName: data.featureName },
+        'success'
+      );
+
+      return {
+        success: true,
+        actor: { id: actor.id, name: actor.name },
+        item: { id: created.id, name: created.name, type: 'feat' },
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to add passive feature to actor`, error);
+      this.auditLog(
+        'addPassiveFeatureToActor',
+        { actorIdentifier: data.actorIdentifier, featureName: data.featureName },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Add weapon attack + save effect to an existing actor
+  // (dnd5e-add-attack-with-save) — Tipo B
+  // Two activities: attack (sort:0) + save (sort:1)
+  // ---------------------------------------------------------------------------
+
+  async addAttackWithSaveToActor(data: any): Promise<any> {
+    this.validateFoundryState();
+
+    if ((game.system as any).id !== 'dnd5e') {
+      throw new Error('addAttackWithSaveToActor requires the dnd5e game system');
+    }
+
+    try {
+      // 1. Resolve actor
+      const actor = await this.findActorByIdentifier(data.actorIdentifier);
+      if (!actor) {
+        throw new Error(`Actor not found: "${data.actorIdentifier}"`);
+      }
+
+      // 2. Duplicate check
+      const existing = actor.items.find(
+        (i: any) => i.name.toLowerCase() === data.featureName.toLowerCase()
+      );
+      if (existing) {
+        throw new Error(
+          `An item named "${data.featureName}" already exists on actor "${actor.name}". ` +
+            `Remove or rename it first.`
+        );
+      }
+
+      // 3. Soft validation — both damage groups unified
+      const warnings: string[] = [];
+      const allParts = [
+        ...(data.damageParts as Array<{ type: string }>),
+        ...(data.saveDamageParts as Array<{ type: string }>),
+      ];
+      for (const part of allParts) {
+        if (!ATTACK_WITH_SAVE_DAMAGE_CANONICAL.has(part.type)) {
+          const msg = `Unknown damage type "${part.type}" — verify it matches dnd5e system values`;
+          if (!warnings.includes(msg)) warnings.push(msg);
+          console.warn(`[${MODULE_ID}] ${msg}`);
+        }
+      }
+
+      // 4. Generate two distinct activity IDs
+      const attackActivityId: string = (foundry.utils as any).randomID(16);
+      const saveActivityId: string = (foundry.utils as any).randomID(16);
+
+      // 5. Attack activity damage parts: damageParts[1+] (base is in system.damage.base)
+      const activityDamageParts = (
+        data.damageParts as Array<{ number: number; denomination: number; type: string }>
+      )
+        .slice(1)
+        .map(p => ({
+          types: [p.type],
+          number: p.number,
+          denomination: p.denomination,
+          bonus: '',
+          scaling: { mode: '', number: 1 },
+          custom: { enabled: false },
+        }));
+
+      // 6. Save activity damage parts: ALL saveDamageParts (no base — independent)
+      const saveActivityDamageParts = (
+        data.saveDamageParts as Array<{ number: number; denomination: number; type: string }>
+      ).map(p => ({
+        types: [p.type],
+        number: p.number,
+        denomination: p.denomination,
+        bonus: '',
+        scaling: { mode: '', number: 1 },
+        custom: { enabled: false },
+      }));
+
+      // 7. System-level range (real reach/range — activity range is always 'self')
+      const rangeObj =
+        data.attackType === 'melee'
+          ? { value: data.reachFt ?? 5, long: null, units: 'ft' }
+          : { value: data.rangeFt, long: data.longRangeFt ?? null, units: 'ft' };
+
+      // 8. Conditional 2024-only fields (same rules as Tipo A)
+      const sourceRules: string = data.sourceRules ?? '2014';
+      const masteryField = sourceRules === '2024' ? { mastery: '' } : {};
+      const abilityField = sourceRules === '2024' ? { ability: data.effectiveAbility } : {};
+      const classification = sourceRules === '2014' ? 'weapon' : '';
+
+      // 9. Build item data
+      const itemData: Record<string, any> = {
+        name: data.featureName,
+        type: 'weapon',
+        system: {
+          description: {
+            value: data.description ?? '',
+            chat: '',
+            unidentified: '',
+          },
+          source: {
+            custom: '',
+            book: data.sourceBook ?? '',
+            page: data.sourcePage ?? '',
+            license: '',
+            rules: sourceRules,
+          },
+          quantity: 1,
+          weight: { value: 0, units: 'lb' },
+          price: { value: 0, denomination: 'gp' },
+          attunement: '',
+          equipped: data.equipped !== false,
+          rarity: '',
+          identified: true,
+          activation: {
+            type: data.activationType ?? 'action',
+            value: 1,
+            condition: '',
+            override: false,
+          },
+          duration: { value: '', units: '' },
+          cover: null,
+          target: {
+            template: {
+              count: '',
+              contiguous: false,
+              type: '',
+              size: '',
+              width: '',
+              height: '',
+              units: '',
+            },
+            affects: { count: '', type: '', choice: false, special: '' },
+            prompt: true,
+            override: false,
+          },
+          range: rangeObj,
+          uses: { value: null, max: '', recovery: [], prompt: true },
+          damage: {
+            base: {
+              types: [(data.damageParts as any[])[0].type],
+              number: (data.damageParts as any[])[0].number,
+              denomination: (data.damageParts as any[])[0].denomination,
+              bonus: '',
+              scaling: { mode: '', number: 1 },
+              custom: { enabled: false },
+            },
+          },
+          type: { value: data.weaponClass ?? 'natural', baseItem: '' },
+          properties: data.properties as string[],
+          proficient: 1,
+          magicalBonus: null,
+          ...masteryField,
+          activities: {
+            // ── Activity 1: attack (sort 0) ───────────────────────────────
+            [attackActivityId]: {
+              _id: attackActivityId,
+              type: 'attack',
+              name: '',
+              img: '',
+              sort: 0,
+              description: {},
+              activation: {
+                type: data.activationType ?? 'action',
+                value: 1,
+                condition: '',
+                override: false,
+              },
+              duration: { units: '', value: '', override: false },
+              target: {
+                template: {
+                  count: '',
+                  contiguous: false,
+                  type: '',
+                  size: '',
+                  width: '',
+                  height: '',
+                  units: '',
+                },
+                affects: { count: '', type: '', choice: false, special: '' },
+                prompt: true,
+                override: false,
+              },
+              range: { units: 'self', override: false },
+              uses: { spent: 0, max: '', recovery: [] },
+              consumption: { targets: [], scaling: { allowed: false, max: '' }, spellSlot: true },
+              attack: {
+                ability: '',
+                bonus: data.attackBonus > 0 ? String(data.attackBonus) : '',
+                critical: { threshold: null },
+                flat: false,
+                type: { value: data.attackType ?? 'melee', classification },
+                ...abilityField,
+              },
+              damage: {
+                critical: { bonus: '' },
+                includeBase: true,
+                parts: activityDamageParts,
+              },
+              effects: [],
+              save: { ability: '', dc: { formula: '', calculation: '' } },
+            },
+
+            // ── Activity 2: save (sort 1) ─────────────────────────────────
+            [saveActivityId]: {
+              _id: saveActivityId,
+              type: 'save',
+              name: '',
+              sort: 1,
+              description: {}, // {} — not { chatFlavor: '' } (real schema confirmed)
+              activation: {
+                type: data.activationType ?? 'action',
+                value: 1,
+                override: false,
+                // NO condition — per real schema
+              },
+              duration: { units: 'inst', concentration: false, override: false },
+              effects: [],
+              range: { units: 'self', override: false },
+              uses: { spent: 0, recovery: [] }, // NO max
+              consumption: { scaling: { allowed: false }, spellSlot: true, targets: [] },
+              target: {
+                template: {
+                  count: '',
+                  contiguous: false,
+                  type: '',
+                  size: '',
+                  width: '',
+                  height: '',
+                  units: '',
+                },
+                affects: { count: '1', type: 'creature', choice: false, special: '' },
+                override: false,
+                prompt: true,
+              },
+              damage: {
+                onSave: data.saveOnSave ?? 'none',
+                parts: saveActivityDamageParts,
+                // NO includeBase — save damage is independent from weapon base damage
+              },
+              save: {
+                ability: [data.saveAbility],
+                dc: { calculation: '', formula: String(data.saveDC) },
+              },
+            },
+          },
+        },
+      };
+
+      // 10. Create the item on the actor
+      const created = (await actor.createEmbeddedDocuments('Item', [itemData]))[0];
+      if (!created) {
+        throw new Error(
+          `Failed to create attack+save item "${data.featureName}" on actor "${actor.name}"`
+        );
+      }
+
+      this.auditLog(
+        'addAttackWithSaveToActor',
+        { actorId: actor.id, featureName: data.featureName },
+        'success'
+      );
+
+      return {
+        success: true,
+        actor: { id: actor.id, name: actor.name },
+        item: { id: created.id, name: created.name, type: 'weapon' },
+        warnings,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to add attack+save to actor`, error);
+      this.auditLog(
+        'addAttackWithSaveToActor',
+        { actorIdentifier: data.actorIdentifier, featureName: data.featureName },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Set actor spellcasting (ability + slot counts)
+  // ---------------------------------------------------------------------------
+
+  async setActorSpellcasting(data: any): Promise<any> {
+    this.validateFoundryState();
+
+    if ((game.system as any).id !== 'dnd5e') {
+      throw new Error('setActorSpellcasting requires the dnd5e game system');
+    }
+
+    try {
+      // 1. Resolve actor
+      const actor = this.findActorByIdentifier(data.actorIdentifier);
+      if (!actor) {
+        throw new Error(`Actor not found: "${data.actorIdentifier}"`);
+      }
+
+      const cls = data.spellcastingClass as string;
+      const lvl = data.spellcastingLevel as number;
+      const ability = data.effectiveAbility as string;
+      const idx = lvl - 1; // 0-based index into slot tables
+      const warnings: string[] = [];
+
+      // 2. Build flat updates object for a single actor.update() call
+      const updates: Record<string, unknown> = {};
+
+      // Spellcasting ability
+      updates['system.attributes.spellcasting'] = ability;
+
+      if (cls === 'warlock') {
+        // ── Pact Magic ────────────────────────────────────────────────────────
+        // All regular slots set to 0; pact slots from table
+        for (let i = 1; i <= 9; i++) {
+          updates[`system.spells.spell${i}.max`] = 0;
+          updates[`system.spells.spell${i}.value`] = 0;
+        }
+        const pact = WARLOCK_PACT_TABLE[idx];
+        updates['system.spells.pact.max'] = pact.max;
+        updates['system.spells.pact.value'] = pact.max;
+        updates['system.spells.pact.level'] = pact.level;
+      } else {
+        // ── Regular spell slots ───────────────────────────────────────────────
+        let slotRow: number[];
+
+        if (cls === 'artificer') {
+          slotRow = ARTIFICER_SLOTS[idx];
+        } else if (cls === 'paladin' || cls === 'ranger') {
+          slotRow = HALF_CASTER_SLOTS[idx];
+          if (lvl === 1) {
+            warnings.push(
+              `${cls} level 1 has no spell slots — use level 2+ to unlock spellcasting`
+            );
+          }
+        } else {
+          // Full casters: wizard, cleric, druid, sorcerer, bard
+          slotRow = FULL_CASTER_SLOTS[idx];
+        }
+
+        for (let i = 1; i <= 9; i++) {
+          const n = slotRow[i - 1];
+          updates[`system.spells.spell${i}.max`] = n;
+          updates[`system.spells.spell${i}.value`] = n;
+        }
+      }
+
+      // 3. Single update call
+      await actor.update(updates);
+
+      // 4. Build response
+      const slots: Record<string, unknown> = {};
+      if (cls === 'warlock') {
+        const pact = WARLOCK_PACT_TABLE[idx];
+        slots['pact'] = { max: pact.max, level: pact.level };
+      } else {
+        const slotRow =
+          cls === 'artificer'
+            ? ARTIFICER_SLOTS[idx]
+            : cls === 'paladin' || cls === 'ranger'
+              ? HALF_CASTER_SLOTS[idx]
+              : FULL_CASTER_SLOTS[idx];
+
+        for (let i = 1; i <= 9; i++) {
+          (slots as Record<string, number>)[`spell${i}`] = slotRow[i - 1];
+        }
+      }
+
+      this.auditLog('setActorSpellcasting', { actorId: actor.id, cls, lvl, ability }, 'success');
+
+      return {
+        actor: { id: actor.id, name: actor.name },
+        spellcasting: { ability, slots },
+        warnings,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to set actor spellcasting`, error);
+      this.auditLog(
+        'setActorSpellcasting',
+        { actorIdentifier: data.actorIdentifier, spellcastingClass: data.spellcastingClass },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Add spells from compendium packs to an actor
+  // ---------------------------------------------------------------------------
+
+  async addSpellsToActor(data: any): Promise<any> {
+    this.validateFoundryState();
+
+    if ((game.system as any).id !== 'dnd5e') {
+      throw new Error('addSpellsToActor requires the dnd5e game system');
+    }
+
+    try {
+      // 1. Resolve actor
+      const actor = this.findActorByIdentifier(data.actorIdentifier);
+      if (!actor) {
+        throw new Error(`Actor not found: "${data.actorIdentifier}"`);
+      }
+
+      const spellNames: string[] = data.spellNames;
+      const compendiumPacks: string[] = data.compendiumPacks ?? ['dnd5e.spells'];
+      const warnings: string[] = [];
+
+      // ── Phase A: deduplicate input (case-insensitive) ─────────────────────
+      const seen = new Set<string>();
+      const unique: string[] = [];
+      const skipped: Array<{ name: string; reason: string }> = [];
+
+      for (const name of spellNames) {
+        const key = name.toLowerCase();
+        if (seen.has(key)) {
+          skipped.push({ name, reason: 'duplicate in input' });
+        } else {
+          seen.add(key);
+          unique.push(name);
+        }
+      }
+
+      // ── Phase B: build pack index maps (once per pack) ────────────────────
+      interface PackMap {
+        packId: string;
+        packLabel: string;
+        nameMap: Map<string, string>; // lowercase name → _id
+      }
+      const packMaps: PackMap[] = [];
+
+      for (const packId of compendiumPacks) {
+        const pack = game.packs.get(packId);
+        if (!pack) {
+          warnings.push(`Compendium pack "${packId}" not found — skipped`);
+          continue;
+        }
+
+        // Q6: type guard — Item packs only
+        if (pack.metadata.type !== 'Item') {
+          warnings.push(
+            `Pack "${packId}" has type "${pack.metadata.type}", expected "Item" — skipped`
+          );
+          continue;
+        }
+
+        if (!pack.indexed) {
+          await pack.getIndex({});
+        }
+
+        const nameMap = new Map<string, string>();
+        for (const entry of pack.index.values() as IterableIterator<any>) {
+          if (entry.name) {
+            nameMap.set((entry.name as string).toLowerCase(), entry._id as string);
+          }
+        }
+
+        packMaps.push({ packId, packLabel: pack.metadata.label as string, nameMap });
+      }
+
+      if (packMaps.length === 0) {
+        throw new Error(
+          'No valid compendium packs available — check the compendiumPacks parameter. ' +
+            'Valid pack IDs for D&D 5e: "dnd5e.spells" (2014) or "dnd5e.spells24" (2024).'
+        );
+      }
+
+      // ── Phase C: per-spell search + import ───────────────────────────────
+      const added: Array<{ name: string; packId: string; packLabel: string; itemId: string }> = [];
+      const notFound: string[] = [];
+      const failed: Array<{ name: string; error: string }> = [];
+
+      for (const name of unique) {
+        const normalizedName = name.toLowerCase();
+
+        // 1. Duplicate check on actor (only items of type 'spell')
+        const existing = (actor.items as any[]).find(
+          (i: any) => i.type === 'spell' && i.name?.toLowerCase() === normalizedName
+        );
+        if (existing) {
+          skipped.push({ name, reason: 'already on actor' });
+          continue;
+        }
+
+        // 2. Lookup across packs — first-pack-wins
+        let found: { packId: string; packLabel: string; entryId: string } | null = null;
+        for (const pm of packMaps) {
+          const entryId = pm.nameMap.get(normalizedName);
+          if (entryId) {
+            found = { packId: pm.packId, packLabel: pm.packLabel, entryId };
+            break;
+          }
+        }
+
+        if (!found) {
+          notFound.push(name);
+          continue;
+        }
+
+        // 3. Fetch full document from compendium
+        const pack = game.packs.get(found.packId);
+        const document = await (pack as any).getDocument(found.entryId);
+
+        if (!document) {
+          // Entry was in index but document is missing (shouldn't happen, defensive)
+          notFound.push(name);
+          warnings.push(
+            `"${name}" found in index but document missing in pack "${found.packId}" — skipped`
+          );
+          continue;
+        }
+
+        // 4. Prepare data for embedding
+        const spellData = (document as any).toObject() as Record<string, unknown>;
+        delete spellData._id; // Let Foundry assign a new local id; prevents id clash
+
+        // 5. Embed individually — per-spell error isolation
+        try {
+          const [created] = (await actor.createEmbeddedDocuments('Item', [spellData])) as any[];
+          added.push({
+            name,
+            packId: found.packId,
+            packLabel: found.packLabel,
+            itemId: created.id,
+          });
+        } catch (embedErr) {
+          failed.push({
+            name,
+            error: embedErr instanceof Error ? embedErr.message : 'Unknown error',
+          });
+        }
+      }
+
+      // ── Phase D: audit + return ───────────────────────────────────────────
+      this.auditLog(
+        'addSpellsToActor',
+        {
+          actorId: actor.id,
+          added: added.length,
+          skipped: skipped.length,
+          notFound: notFound.length,
+          failed: failed.length,
+        },
+        'success'
+      );
+
+      return {
+        actor: { id: actor.id, name: actor.name },
+        added,
+        skipped,
+        notFound,
+        failed,
+        warnings,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to add spells to actor`, error);
+      this.auditLog(
+        'addSpellsToActor',
+        { actorIdentifier: data.actorIdentifier },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Add features from compendium packs to an actor
+  // ---------------------------------------------------------------------------
+
+  async addFeaturesFromCompendium(data: any): Promise<any> {
+    this.validateFoundryState();
+
+    if ((game.system as any).id !== 'dnd5e') {
+      throw new Error('addFeaturesFromCompendium requires the dnd5e game system');
+    }
+
+    try {
+      // 1. Resolve actor
+      const actor = this.findActorByIdentifier(data.actorIdentifier);
+      if (!actor) {
+        throw new Error(`Actor not found: "${data.actorIdentifier}"`);
+      }
+
+      const featureNames: string[] = data.featureNames;
+      const compendiumPacks: string[] = data.compendiumPacks ?? [
+        'dnd5e.monsterfeatures',
+        'dnd5e.classfeatures',
+      ];
+      const warnings: string[] = [];
+
+      // ── Phase A: deduplicate input (case-insensitive) ─────────────────────
+      const seen = new Set<string>();
+      const unique: string[] = [];
+      const skipped: Array<{ name: string; reason: string }> = [];
+
+      for (const name of featureNames) {
+        const key = name.toLowerCase();
+        if (seen.has(key)) {
+          skipped.push({ name, reason: 'duplicate in input' });
+        } else {
+          seen.add(key);
+          unique.push(name);
+        }
+      }
+
+      // ── Phase B: build pack index maps (once per pack) ────────────────────
+      interface PackMap {
+        packId: string;
+        packLabel: string;
+        nameMap: Map<string, string>; // lowercase name → _id
+      }
+      const packMaps: PackMap[] = [];
+
+      for (const packId of compendiumPacks) {
+        const pack = game.packs.get(packId);
+        if (!pack) {
+          warnings.push(`Compendium pack "${packId}" not found — skipped`);
+          continue;
+        }
+
+        // Type guard — Item packs only
+        if (pack.metadata.type !== 'Item') {
+          warnings.push(
+            `Pack "${packId}" has type "${pack.metadata.type}", expected "Item" — skipped`
+          );
+          continue;
+        }
+
+        if (!pack.indexed) {
+          await pack.getIndex({});
+        }
+
+        const nameMap = new Map<string, string>();
+        for (const entry of pack.index.values() as IterableIterator<any>) {
+          if (entry.name) {
+            nameMap.set((entry.name as string).toLowerCase(), entry._id as string);
+          }
+        }
+
+        packMaps.push({ packId, packLabel: pack.metadata.label as string, nameMap });
+      }
+
+      if (packMaps.length === 0) {
+        throw new Error(
+          'No valid compendium packs available — check the compendiumPacks parameter. ' +
+            'Valid pack IDs for D&D 5e: "dnd5e.monsterfeatures" or "dnd5e.classfeatures" (2014), ' +
+            '"dnd5e.monsterfeatures24" (2024 monster features). ' +
+            'Note: 2024 class features are embedded in class items and cannot be imported with this tool.'
+        );
+      }
+
+      // ── Phase C: per-feature search + import ─────────────────────────────
+      const added: Array<{ name: string; packId: string; packLabel: string; itemId: string }> = [];
+      const notFound: string[] = [];
+      const failed: Array<{ name: string; error: string }> = [];
+
+      for (const name of unique) {
+        const normalizedName = name.toLowerCase();
+
+        // 1. Duplicate check on actor — name-only, any item type
+        //    (feature names are semantically unique on an actor regardless of stored type)
+        const existing = (actor.items as any[]).find(
+          (i: any) => i.name?.toLowerCase() === normalizedName
+        );
+        if (existing) {
+          skipped.push({ name, reason: 'already on actor' });
+          continue;
+        }
+
+        // 2. Lookup across packs — first-pack-wins
+        let found: { packId: string; packLabel: string; entryId: string } | null = null;
+        for (const pm of packMaps) {
+          const entryId = pm.nameMap.get(normalizedName);
+          if (entryId) {
+            found = { packId: pm.packId, packLabel: pm.packLabel, entryId };
+            break;
+          }
+        }
+
+        if (!found) {
+          notFound.push(name);
+          continue;
+        }
+
+        // 3. Fetch full document from compendium
+        const pack = game.packs.get(found.packId);
+        const document = await (pack as any).getDocument(found.entryId);
+
+        if (!document) {
+          // Entry was in index but document is missing (shouldn't happen, defensive)
+          notFound.push(name);
+          warnings.push(
+            `"${name}" found in index but document missing in pack "${found.packId}" — skipped`
+          );
+          continue;
+        }
+
+        // 4. Prepare data for embedding
+        const featureData = (document as any).toObject() as Record<string, unknown>;
+        delete featureData._id; // Let Foundry assign a new local id; prevents id clash
+
+        // 5. Embed individually — per-feature error isolation
+        try {
+          const [created] = (await actor.createEmbeddedDocuments('Item', [featureData])) as any[];
+          added.push({
+            name,
+            packId: found.packId,
+            packLabel: found.packLabel,
+            itemId: created.id,
+          });
+        } catch (embedErr) {
+          failed.push({
+            name,
+            error: embedErr instanceof Error ? embedErr.message : 'Unknown error',
+          });
+        }
+      }
+
+      // ── Phase D: audit + return ───────────────────────────────────────────
+      this.auditLog(
+        'addFeaturesFromCompendium',
+        {
+          actorId: actor.id,
+          added: added.length,
+          skipped: skipped.length,
+          notFound: notFound.length,
+          failed: failed.length,
+        },
+        'success'
+      );
+
+      return {
+        actor: { id: actor.id, name: actor.name },
+        added,
+        skipped,
+        notFound,
+        failed,
+        warnings,
+      };
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Failed to add features from compendium`, error);
+      this.auditLog(
+        'addFeaturesFromCompendium',
+        { actorIdentifier: data.actorIdentifier },
+        'failure',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+      throw error;
+    }
+  }
 }
+
+// =============================================================================
+// Shared dnd5e helpers
+// =============================================================================
+
+function slugify(name: string, fallback = 'feature'): string {
+  return (
+    name
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '') || fallback
+  );
+}
+
+// =============================================================================
+// NPC creation helpers — module-level, used exclusively by createNpcActor
+// =============================================================================
+
+const NPC_DAMAGE_CANONICAL = new Set([
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
+]);
+
+const NPC_CONDITION_CANONICAL = new Set([
+  'blinded',
+  'charmed',
+  'deafened',
+  'exhaustion',
+  'frightened',
+  'grappled',
+  'incapacitated',
+  'invisible',
+  'paralyzed',
+  'petrified',
+  'poisoned',
+  'prone',
+  'restrained',
+  'stunned',
+  'unconscious',
+]);
+
+const NPC_SIZE_MAP: Record<string, string> = {
+  tiny: 'tiny',
+  small: 'sm',
+  medium: 'med',
+  large: 'lg',
+  huge: 'huge',
+  gargantuan: 'grg',
+};
+
+const NPC_SKILL_MAP: Record<string, string> = {
+  Acrobatics: 'acr',
+  'Animal Handling': 'ani',
+  Arcana: 'arc',
+  Athletics: 'ath',
+  Deception: 'dec',
+  History: 'his',
+  Insight: 'ins',
+  Intimidation: 'itm',
+  Investigation: 'inv',
+  Medicine: 'med',
+  Nature: 'nat',
+  Perception: 'prc',
+  Performance: 'prf',
+  Persuasion: 'per',
+  Religion: 'rel',
+  'Sleight of Hand': 'slt',
+  Stealth: 'ste',
+  Survival: 'sur',
+};
+
+function npcNormalizeCR(input: string | number): number {
+  if (typeof input === 'number') return input;
+  if (input.includes('/')) {
+    const [num, den] = input.split('/').map(Number);
+    return num / den;
+  }
+  return parseInt(input, 10);
+}
+
+function npcFormatCR(value: number): string {
+  if (value === 0) return '0';
+  if (value === 0.125) return '1/8';
+  if (value === 0.25) return '1/4';
+  if (value === 0.5) return '1/2';
+  return String(Math.round(value));
+}
+
+function npcBuildSkillsBlock(
+  skills: Array<{ skill: string; proficiency: string }>
+): Record<string, { value: number }> {
+  const result: Record<string, { value: number }> = {};
+  for (const { skill, proficiency } of skills) {
+    const key = NPC_SKILL_MAP[skill];
+    if (key) {
+      result[key] = { value: proficiency === 'expert' ? 2 : 1 };
+    }
+  }
+  return result;
+}
+
+// =============================================================================
+// Attack feature helpers — module-level, used exclusively by addAttackToActor
+// =============================================================================
+
+const ATTACK_DAMAGE_CANONICAL = new Set([
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
+]);
+
+const ATTACK_PROPERTY_CANONICAL = new Set([
+  'ada',
+  'amm',
+  'fin',
+  'fir',
+  'foc',
+  'hvy',
+  'lgt',
+  'lod',
+  'mgc',
+  'rch',
+  'ret',
+  'spc',
+  'thr',
+  'two',
+  'ver',
+]);
+
+// =============================================================================
+// Aura feature helpers — module-level, used exclusively by addAuraToActor
+// =============================================================================
+
+const AURA_DAMAGE_CANONICAL = new Set([
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
+]);
+
+// =============================================================================
+// Attack+save helpers — module-level, used exclusively by addAttackWithSaveToActor
+// =============================================================================
+
+const ATTACK_WITH_SAVE_DAMAGE_CANONICAL = new Set([
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
+]);
+
+// =============================================================================
+// Spellcasting slot tables — module-level, used by setActorSpellcasting
+//
+// Each array has 20 entries (index 0 = level 1 … index 19 = level 20).
+// Each entry is a 9-element tuple: [L1, L2, L3, L4, L5, L6, L7, L8, L9].
+// Source: SRD 5.1 spell slot tables.
+// =============================================================================
+
+// prettier-ignore
+const FULL_CASTER_SLOTS: number[][] = [
+  //  L1  L2  L3  L4  L5  L6  L7  L8  L9
+  [   2,   0,   0,   0,   0,   0,   0,   0,   0 ], // level  1
+  [   3,   0,   0,   0,   0,   0,   0,   0,   0 ], // level  2
+  [   4,   2,   0,   0,   0,   0,   0,   0,   0 ], // level  3
+  [   4,   3,   0,   0,   0,   0,   0,   0,   0 ], // level  4
+  [   4,   3,   2,   0,   0,   0,   0,   0,   0 ], // level  5
+  [   4,   3,   3,   0,   0,   0,   0,   0,   0 ], // level  6
+  [   4,   3,   3,   1,   0,   0,   0,   0,   0 ], // level  7
+  [   4,   3,   3,   2,   0,   0,   0,   0,   0 ], // level  8
+  [   4,   3,   3,   3,   1,   0,   0,   0,   0 ], // level  9
+  [   4,   3,   3,   3,   2,   0,   0,   0,   0 ], // level 10
+  [   4,   3,   3,   3,   2,   1,   0,   0,   0 ], // level 11
+  [   4,   3,   3,   3,   2,   1,   0,   0,   0 ], // level 12
+  [   4,   3,   3,   3,   2,   1,   1,   0,   0 ], // level 13
+  [   4,   3,   3,   3,   2,   1,   1,   0,   0 ], // level 14
+  [   4,   3,   3,   3,   2,   1,   1,   1,   0 ], // level 15
+  [   4,   3,   3,   3,   2,   1,   1,   1,   0 ], // level 16
+  [   4,   3,   3,   3,   2,   1,   1,   1,   1 ], // level 17
+  [   4,   3,   3,   3,   3,   1,   1,   1,   1 ], // level 18
+  [   4,   3,   3,   3,   3,   2,   1,   1,   1 ], // level 19
+  [   4,   3,   3,   3,   3,   2,   2,   1,   1 ], // level 20
+];
+
+// prettier-ignore
+/** Paladin / Ranger — half-caster (rounds down). Level 1 = no slots. */
+const HALF_CASTER_SLOTS: number[][] = [
+  //  L1  L2  L3  L4  L5  L6  L7  L8  L9
+  [   0,   0,   0,   0,   0,   0,   0,   0,   0 ], // level  1 — no slots
+  [   2,   0,   0,   0,   0,   0,   0,   0,   0 ], // level  2
+  [   3,   0,   0,   0,   0,   0,   0,   0,   0 ], // level  3
+  [   3,   0,   0,   0,   0,   0,   0,   0,   0 ], // level  4
+  [   4,   2,   0,   0,   0,   0,   0,   0,   0 ], // level  5
+  [   4,   2,   0,   0,   0,   0,   0,   0,   0 ], // level  6
+  [   4,   3,   0,   0,   0,   0,   0,   0,   0 ], // level  7
+  [   4,   3,   0,   0,   0,   0,   0,   0,   0 ], // level  8
+  [   4,   3,   2,   0,   0,   0,   0,   0,   0 ], // level  9
+  [   4,   3,   2,   0,   0,   0,   0,   0,   0 ], // level 10
+  [   4,   3,   3,   0,   0,   0,   0,   0,   0 ], // level 11
+  [   4,   3,   3,   0,   0,   0,   0,   0,   0 ], // level 12
+  [   4,   3,   3,   1,   0,   0,   0,   0,   0 ], // level 13
+  [   4,   3,   3,   1,   0,   0,   0,   0,   0 ], // level 14
+  [   4,   3,   3,   2,   0,   0,   0,   0,   0 ], // level 15
+  [   4,   3,   3,   2,   0,   0,   0,   0,   0 ], // level 16
+  [   4,   3,   3,   3,   1,   0,   0,   0,   0 ], // level 17
+  [   4,   3,   3,   3,   1,   0,   0,   0,   0 ], // level 18
+  [   4,   3,   3,   3,   2,   0,   0,   0,   0 ], // level 19
+  [   4,   3,   3,   3,   2,   0,   0,   0,   0 ], // level 20
+];
+
+// prettier-ignore
+/** Artificer — half-caster (rounds UP). Starts at level 1. Max 5th-level slots. */
+const ARTIFICER_SLOTS: number[][] = [
+  //  L1  L2  L3  L4  L5  L6  L7  L8  L9
+  [   2,   0,   0,   0,   0,   0,   0,   0,   0 ], // level  1
+  [   2,   0,   0,   0,   0,   0,   0,   0,   0 ], // level  2
+  [   3,   0,   0,   0,   0,   0,   0,   0,   0 ], // level  3
+  [   3,   0,   0,   0,   0,   0,   0,   0,   0 ], // level  4
+  [   4,   2,   0,   0,   0,   0,   0,   0,   0 ], // level  5
+  [   4,   2,   0,   0,   0,   0,   0,   0,   0 ], // level  6
+  [   4,   3,   0,   0,   0,   0,   0,   0,   0 ], // level  7
+  [   4,   3,   0,   0,   0,   0,   0,   0,   0 ], // level  8
+  [   4,   3,   2,   0,   0,   0,   0,   0,   0 ], // level  9
+  [   4,   3,   2,   0,   0,   0,   0,   0,   0 ], // level 10
+  [   4,   3,   3,   0,   0,   0,   0,   0,   0 ], // level 11
+  [   4,   3,   3,   0,   0,   0,   0,   0,   0 ], // level 12
+  [   4,   3,   3,   1,   0,   0,   0,   0,   0 ], // level 13
+  [   4,   3,   3,   1,   0,   0,   0,   0,   0 ], // level 14
+  [   4,   3,   3,   2,   0,   0,   0,   0,   0 ], // level 15
+  [   4,   3,   3,   2,   0,   0,   0,   0,   0 ], // level 16
+  [   4,   3,   3,   3,   1,   0,   0,   0,   0 ], // level 17
+  [   4,   3,   3,   3,   1,   0,   0,   0,   0 ], // level 18
+  [   4,   3,   3,   3,   2,   0,   0,   0,   0 ], // level 19
+  [   4,   3,   3,   3,   2,   0,   0,   0,   0 ], // level 20
+];
+
+// prettier-ignore
+/** Warlock Pact Magic — slot count and slot level per warlock level. */
+const WARLOCK_PACT_TABLE: Array<{ max: number; level: number }> = [
+  { max: 1, level: 1 }, // level  1
+  { max: 2, level: 1 }, // level  2
+  { max: 2, level: 2 }, // level  3
+  { max: 2, level: 2 }, // level  4
+  { max: 2, level: 3 }, // level  5
+  { max: 2, level: 3 }, // level  6
+  { max: 2, level: 4 }, // level  7
+  { max: 2, level: 4 }, // level  8
+  { max: 2, level: 5 }, // level  9
+  { max: 2, level: 5 }, // level 10
+  { max: 3, level: 5 }, // level 11
+  { max: 3, level: 5 }, // level 12
+  { max: 3, level: 5 }, // level 13
+  { max: 3, level: 5 }, // level 14
+  { max: 3, level: 5 }, // level 15
+  { max: 3, level: 5 }, // level 16
+  { max: 4, level: 5 }, // level 17
+  { max: 4, level: 5 }, // level 18
+  { max: 4, level: 5 }, // level 19
+  { max: 4, level: 5 }, // level 20
+];

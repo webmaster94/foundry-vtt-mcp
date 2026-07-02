@@ -11,7 +11,7 @@ import { z } from 'zod';
  * Supported game system identifiers
  * Extend this type when adding new systems
  */
-export type SystemId = 'dnd5e' | 'pf2e' | 'dsa5' | 'other';
+export type SystemId = 'dnd5e' | 'pf2e' | 'dsa5' | 'cosmere-rpg' | 'wfrp4e' | 'other';
 
 /**
  * System metadata returned by adapters
@@ -130,6 +130,19 @@ export interface SystemAdapter {
    * @param actorData - Raw Foundry actor data
    */
   extractCharacterStats(actorData: any): any;
+
+  /**
+   * Extract system-specific "basic info" from actor data
+   * (e.g. resources/HP, AC, level, deflect — anything that belongs in
+   * the top-level `basicInfo` block of the get-character response).
+   *
+   * Optional: if not implemented, the get-character tool falls back
+   * to its built-in cross-system extractor (which works for dnd5e/pf2e).
+   *
+   * @param actorData - Raw Foundry actor data
+   * @returns Object merged into the get-character response's basicInfo
+   */
+  extractBasicInfo?(actorData: any): any;
 }
 
 /**
@@ -222,6 +235,70 @@ export interface DSA5CreatureIndex extends SystemCreatureIndex {
 }
 
 /**
+ * Cosmere RPG specific creature index structure
+ *
+ * Schema reference: github.com/the-metalworks/cosmere-rpg
+ *
+ * Most cosmere-rpg compendium creatures are `adversary`-type actors. The
+ * fields below are extracted from the live (post-derive) `system.*` block
+ * so DerivedValueField overrides (e.g. health max set via the sheet) are
+ * resolved before indexing — see `readDerived` in ./cosmere-rpg/constants.ts.
+ */
+export interface CosmereRpgCreatureIndex extends SystemCreatureIndex {
+  system: 'cosmere-rpg';
+  systemData: {
+    /** Player-character level (rare in compendium adversaries). */
+    level?: number;
+    /** Adversary tier — 1 (minion-tier) to 4 (legendary). Primary power-level proxy. */
+    tier?: number;
+    /** Adversary role — `minion` | `rival` | `boss` (and any system-defined extension). */
+    role?: string;
+    /** Size category (tiny/small/medium/large/huge/gargantuan). */
+    size?: string;
+    /** Primary creature type (`humanoid`, `animal`, `spren`, `parshendi`, ...). */
+    creatureType?: string;
+    /** Free-form subtype (e.g. specific singer form, beast variant). */
+    subtype?: string;
+    /** Health max (resources.hea.max, override-aware). */
+    health?: number;
+    /** Focus max (resources.foc.max, override-aware). */
+    focus?: number;
+    /** Investiture max (resources.inv.max, override-aware) — usually 0 for non-Surge-users. */
+    investiture?: number;
+    /** Convenience flag: `investiture > 0`. */
+    hasInvestiture?: boolean;
+    /** Final defense values (post-derive). */
+    defenses?: {
+      phy?: number;
+      cog?: number;
+      spi?: number;
+    };
+    /** Deflect rating. */
+    deflect?: number;
+    /** Walk speed in feet (movement.walk.rate, override-aware). */
+    walkSpeed?: number;
+  };
+}
+
+/**
+ * WFRP4e (Warhammer Fantasy Roleplay 4e) specific creature index structure.
+ *
+ * Character-focused adapter: the creature index is intentionally lightweight
+ * (WFRP4e has no Challenge Rating / level metric).
+ */
+export interface WFRP4eCreatureIndex extends SystemCreatureIndex {
+  system: 'wfrp4e';
+  systemData: {
+    species?: string; // Species/race (Human, Beastman, Goblin, ...)
+    size?: string; // Normalized size label
+    wounds?: number; // Maximum wounds
+    hasSpells: boolean; // Has arcane spell items
+    hasPrayers: boolean; // Has divine prayer items
+    traits?: string[]; // Creature trait item names
+  };
+}
+
+/**
  * Generic creature index for unsupported systems
  */
 export interface GenericCreatureIndex extends SystemCreatureIndex {
@@ -232,4 +309,10 @@ export interface GenericCreatureIndex extends SystemCreatureIndex {
 /**
  * Union type of all creature index types
  */
-export type AnyCreatureIndex = DnD5eCreatureIndex | PF2eCreatureIndex | DSA5CreatureIndex | GenericCreatureIndex;
+export type AnyCreatureIndex =
+  | DnD5eCreatureIndex
+  | PF2eCreatureIndex
+  | DSA5CreatureIndex
+  | CosmereRpgCreatureIndex
+  | WFRP4eCreatureIndex
+  | GenericCreatureIndex;

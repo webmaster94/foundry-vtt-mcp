@@ -1,3 +1,24 @@
+## v0.8.2 (2026-06-07)
+
+### New Features
+
+- **D&D 5e NPC Creation Suite** (PR #41 by @LManfre)
+  - `dnd5e-create-npc` — build a full NPC stat block from scratch (abilities, saves, skills, senses, AC/HP, CR)
+  - `dnd5e-add-feature` — one tool with modes: `passive`, `save`, `attack`, `attack-with-save`, `aura`, `spellcasting`, `spells`
+  - `dnd5e-add-features-from-compendium` — bulk-import features/spells from compendium packs
+  - Targets the dnd5e activities data model (4.x/5.x)
+
+- **WFRP4e (Warhammer Fantasy Roleplay 4e) System Support** (PR #53 by @nyoung)
+  - Character extraction: 10 characteristics, wounds, fate/fortune, resilience/resolve, corruption, career/species/class, skills, and arcane/divine spellcasting
+  - `get-character` / `list-characters` / `search-character-items` now work on WFRP4e worlds
+
+### Fixes
+
+- **macOS installer** (PR #54): the Claude Desktop config is now merged rather than overwritten, preserving any other configured MCP servers; more robust logged-in-user detection; postinstall scripts no longer abort on a non-critical failure; additional Foundry data-dir locations probed
+- **Node 26 install failure** (Issue #51, reported by @frankyh75): removed the unused `better-sqlite3` dependency, which failed to build against Node 26's V8 ABI
+
+---
+
 ## v0.6.2 (2025-12-03)
 
 ### New Features
@@ -80,6 +101,6 @@
 - Build scripts: added root convenience scripts (`build:release`, `bundle:server`, `installer:stage`); NSIS script accepts `--skip-download` and `--skip-nsis` for staging-only runs.
 
 Notes
+
 - No changes needed for CI; existing workflows continue to build bundles and the installer.
 - Foundry MCP Bridge port remains `31415`. Control channel is `31414` (internal wrapper↔backend only).
-

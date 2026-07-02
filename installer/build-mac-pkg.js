@@ -65,12 +65,33 @@ console.log('📁 Cleaning build directory...');
   }
 });
 
+// Shared snippet for postinstall scripts: resolve the logged-in GUI user.
+// The installer runs as root, and `stat /dev/console` can return root/empty
+// under non-GUI installs (CLI `installer`, MDM, SSH); fall back to scutil's
+// ConsoleUser before giving up so the config lands in the right home dir.
+const resolveUserSnippet = `# Resolve the logged-in GUI user (installer runs as root)
+CURRENT_USER=$(stat -f '%Su' /dev/console 2>/dev/null)
+if [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ] || [ "$CURRENT_USER" = "loginwindow" ]; then
+  CURRENT_USER=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null | awk '/Name :/ && ! /loginwindow/ { print $3 }')
+fi
+if [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ]; then
+  echo "⚠️  Could not determine the logged-in user; skipping."
+  exit 0
+fi
+USER_HOME=$(eval echo ~$CURRENT_USER)`;
+
 // ============================================================================
 // COMPONENT 1: Core MCP Server (Required)
 // ============================================================================
 console.log('\n📦 Building Component 1: MCP Server (Required)...');
 
-const coreAppBundle = path.join(CORE_ROOT, 'Applications', 'FoundryMCPServer.app', 'Contents', 'Resources');
+const coreAppBundle = path.join(
+  CORE_ROOT,
+  'Applications',
+  'FoundryMCPServer.app',
+  'Contents',
+  'Resources'
+);
 fs.mkdirSync(coreAppBundle, { recursive: true });
 
 // Copy MCP server bundles
@@ -104,11 +125,9 @@ fs.mkdirSync(coreScripts, { recursive: true });
 
 const corePostinstall = `#!/bin/bash
 # Core MCP Server postinstall - Configures Claude Desktop
+# Best-effort: never abort the whole install on a non-critical failure.
 
-set -e
-
-CURRENT_USER=$(stat -f '%Su' /dev/console)
-USER_HOME=$(eval echo ~$CURRENT_USER)
+${resolveUserSnippet}
 
 echo "Configuring Claude Desktop for user: $CURRENT_USER"
 
@@ -117,21 +136,50 @@ CLAUDE_CONFIG="$CLAUDE_CONFIG_DIR/claude_desktop_config.json"
 MCP_SERVER_DIR="$USER_HOME/Library/Application Support/FoundryMCPServer"
 SERVER_PATH="/Applications/FoundryMCPServer.app/Contents/Resources/foundry-mcp-server/index.cjs"
 
-# Create Claude config directory
-mkdir -p "$CLAUDE_CONFIG_DIR"
-chown "$CURRENT_USER:staff" "$CLAUDE_CONFIG_DIR"
+mkdir -p "$CLAUDE_CONFIG_DIR" && chown "$CURRENT_USER:staff" "$CLAUDE_CONFIG_DIR"
+mkdir -p "$MCP_SERVER_DIR" && chown "$CURRENT_USER:staff" "$MCP_SERVER_DIR"
 
-# Create MCP Server directory for logs
-mkdir -p "$MCP_SERVER_DIR"
-chown "$CURRENT_USER:staff" "$MCP_SERVER_DIR"
-
-# Backup existing config
+# Backup existing config before any change
 if [ -f "$CLAUDE_CONFIG" ]; then
   cp "$CLAUDE_CONFIG" "$CLAUDE_CONFIG.backup.$(date +%s)"
 fi
 
-# Write Claude config
-cat > "$CLAUDE_CONFIG" <<EOF
+# Locate node so we can MERGE into an existing config (preserving other MCP servers)
+NODE_PATH=""
+for c in /usr/local/bin/node /opt/homebrew/bin/node; do
+  [ -x "$c" ] && NODE_PATH="$c" && break
+done
+[ -z "$NODE_PATH" ] && command -v node >/dev/null 2>&1 && NODE_PATH=$(command -v node)
+
+MERGED=0
+if [ -n "$NODE_PATH" ]; then
+  CLAUDE_CONFIG="$CLAUDE_CONFIG" SERVER_PATH="$SERVER_PATH" "$NODE_PATH" <<'NODE_EOF'
+const fs = require('fs');
+const cfgPath = process.env.CLAUDE_CONFIG;
+const serverPath = process.env.SERVER_PATH;
+let cfg = {};
+try {
+  if (fs.existsSync(cfgPath)) cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+} catch (e) {
+  cfg = {}; // corrupt/unreadable: start fresh (a .backup was already made)
+}
+if (!cfg || typeof cfg !== 'object') cfg = {};
+if (!cfg.mcpServers || typeof cfg.mcpServers !== 'object') cfg.mcpServers = {};
+cfg.mcpServers['foundry-mcp'] = {
+  command: 'node',
+  args: [serverPath],
+  env: { FOUNDRY_HOST: 'localhost', FOUNDRY_PORT: '31415' },
+};
+fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+NODE_EOF
+  [ $? -eq 0 ] && MERGED=1
+fi
+
+if [ "$MERGED" -eq 1 ]; then
+  echo "✅ Merged foundry-mcp into Claude config (existing servers preserved)"
+else
+  echo "ℹ️  node unavailable for merge - writing a fresh Claude config"
+  cat > "$CLAUDE_CONFIG" <<EOF
 {
   "mcpServers": {
     "foundry-mcp": {
@@ -147,6 +195,7 @@ cat > "$CLAUDE_CONFIG" <<EOF
   }
 }
 EOF
+fi
 
 chown "$CURRENT_USER:staff" "$CLAUDE_CONFIG"
 chmod 644 "$CLAUDE_CONFIG"
@@ -159,15 +208,18 @@ fs.writeFileSync(path.join(coreScripts, 'postinstall'), corePostinstall);
 fs.chmodSync(path.join(coreScripts, 'postinstall'), 0o755);
 
 // Build core component package
-execSync(`pkgbuild \\
+execSync(
+  `pkgbuild \\
   --root "${CORE_ROOT}" \\
   --scripts "${coreScripts}" \\
   --identifier com.foundry-mcp.core \\
   --version "${VERSION}" \\
   --install-location / \\
-  "${CORE_PKG}"`, {
-  stdio: 'inherit'
-});
+  "${CORE_PKG}"`,
+  {
+    stdio: 'inherit',
+  }
+);
 
 console.log('✅ Core component package built');
 
@@ -176,7 +228,13 @@ console.log('✅ Core component package built');
 // ============================================================================
 console.log('\n📦 Building Component 2: Foundry Module (Optional)...');
 
-const foundryAppBundle = path.join(FOUNDRY_ROOT, 'Applications', 'FoundryMCPServer.app', 'Contents', 'Resources');
+const foundryAppBundle = path.join(
+  FOUNDRY_ROOT,
+  'Applications',
+  'FoundryMCPServer.app',
+  'Contents',
+  'Resources'
+);
 fs.mkdirSync(foundryAppBundle, { recursive: true });
 
 // Copy Foundry module
@@ -195,10 +253,7 @@ copyRecursive(path.join(moduleSourceRoot, 'dist'), path.join(moduleDest, 'dist')
     copyRecursive(srcPath, path.join(moduleDest, folder));
   }
 });
-fs.copyFileSync(
-  path.join(moduleSourceRoot, 'module.json'),
-  path.join(moduleDest, 'module.json')
-);
+fs.copyFileSync(path.join(moduleSourceRoot, 'module.json'), path.join(moduleDest, 'module.json'));
 
 console.log('✅ Foundry module files copied');
 
@@ -208,42 +263,40 @@ fs.mkdirSync(foundryScripts, { recursive: true });
 
 const foundryPostinstall = `#!/bin/bash
 # Foundry Module postinstall - Installs module to Foundry VTT
+# Best-effort: never abort the whole install on a non-critical failure.
 
-set -e
-
-CURRENT_USER=$(stat -f '%Su' /dev/console)
-USER_HOME=$(eval echo ~$CURRENT_USER)
+${resolveUserSnippet}
 
 echo "Installing Foundry MCP Bridge module..."
 
 MODULE_SOURCE="/Applications/FoundryMCPServer.app/Contents/Resources/foundry-module"
 
-# Try to find Foundry VTT installation
+# Try common Foundry VTT data locations
 FOUNDRY_PATHS=(
   "$USER_HOME/Library/Application Support/FoundryVTT/Data/modules"
+  "$USER_HOME/Documents/FoundryVTT/Data/modules"
   "$USER_HOME/FoundryVTT/Data/modules"
+  "$USER_HOME/.local/share/FoundryVTT/Data/modules"
   "/Applications/FoundryVTT/Data/modules"
 )
 
+INSTALLED=0
 for FOUNDRY_PATH in "\${FOUNDRY_PATHS[@]}"; do
   if [ -d "$FOUNDRY_PATH" ]; then
     MODULE_DEST="$FOUNDRY_PATH/foundry-mcp-bridge"
-
-    # Remove old version
-    if [ -d "$MODULE_DEST" ]; then
-      rm -rf "$MODULE_DEST"
+    rm -rf "$MODULE_DEST"
+    if cp -R "$MODULE_SOURCE" "$MODULE_DEST"; then
+      chown -R "$CURRENT_USER:staff" "$MODULE_DEST"
+      echo "✅ Foundry module installed to: $MODULE_DEST"
+      INSTALLED=1
+      break
     fi
-
-    # Copy module
-    cp -R "$MODULE_SOURCE" "$MODULE_DEST"
-    chown -R "$CURRENT_USER:staff" "$MODULE_DEST"
-
-    echo "✅ Foundry module installed to: $MODULE_DEST"
-    exit 0
   fi
 done
 
-echo "ℹ️  Foundry VTT not detected - module will be installed on first connection"
+if [ "$INSTALLED" -ne 1 ]; then
+  echo "ℹ️  Foundry VTT data folder not found - the module will install on first connection"
+fi
 exit 0
 `;
 
@@ -251,15 +304,18 @@ fs.writeFileSync(path.join(foundryScripts, 'postinstall'), foundryPostinstall);
 fs.chmodSync(path.join(foundryScripts, 'postinstall'), 0o755);
 
 // Build Foundry component package
-execSync(`pkgbuild \\
+execSync(
+  `pkgbuild \\
   --root "${FOUNDRY_ROOT}" \\
   --scripts "${foundryScripts}" \\
   --identifier com.foundry-mcp.foundry-module \\
   --version "${VERSION}" \\
   --install-location / \\
-  "${FOUNDRY_PKG}"`, {
-  stdio: 'inherit'
-});
+  "${FOUNDRY_PKG}"`,
+  {
+    stdio: 'inherit',
+  }
+);
 
 console.log('✅ Foundry module component package built');
 
@@ -268,7 +324,13 @@ console.log('✅ Foundry module component package built');
 // ============================================================================
 console.log('\n📦 Building Component 3: ComfyUI AI Maps (Optional)...');
 
-const comfyuiAppBundle = path.join(COMFYUI_ROOT, 'Applications', 'FoundryMCPServer.app', 'Contents', 'Resources');
+const comfyuiAppBundle = path.join(
+  COMFYUI_ROOT,
+  'Applications',
+  'FoundryMCPServer.app',
+  'Contents',
+  'Resources'
+);
 fs.mkdirSync(comfyuiAppBundle, { recursive: true });
 
 // Copy ComfyUI setup script
@@ -289,11 +351,9 @@ fs.mkdirSync(comfyuiScripts, { recursive: true });
 
 const comfyuiPostinstall = `#!/bin/bash
 # ComfyUI postinstall - Downloads and installs ComfyUI + AI models
+# Best-effort: never abort the whole install on a non-critical failure.
 
-set -e
-
-CURRENT_USER=$(stat -f '%Su' /dev/console)
-USER_HOME=$(eval echo ~$CURRENT_USER)
+${resolveUserSnippet}
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -352,15 +412,18 @@ fs.writeFileSync(path.join(comfyuiScripts, 'postinstall'), comfyuiPostinstall);
 fs.chmodSync(path.join(comfyuiScripts, 'postinstall'), 0o755);
 
 // Build ComfyUI component package
-execSync(`pkgbuild \\
+execSync(
+  `pkgbuild \\
   --root "${COMFYUI_ROOT}" \\
   --scripts "${comfyuiScripts}" \\
   --identifier com.foundry-mcp.comfyui \\
   --version "${VERSION}" \\
   --install-location / \\
-  "${COMFYUI_PKG}"`, {
-  stdio: 'inherit'
-});
+  "${COMFYUI_PKG}"`,
+  {
+    stdio: 'inherit',
+  }
+);
 
 console.log('✅ ComfyUI component package built');
 
@@ -479,26 +542,35 @@ console.log('✅ Distribution XML created');
 // ============================================================================
 console.log('\n🔨 Building final installer package...');
 
-execSync(`productbuild \\
+execSync(
+  `productbuild \\
   --distribution "${distXMLPath}" \\
   --resources "${BUILD_DIR}" \\
   --package-path "${BUILD_DIR}" \\
-  "${FINAL_PKG}"`, {
-  stdio: 'inherit'
-});
+  "${FINAL_PKG}"`,
+  {
+    stdio: 'inherit',
+  }
+);
 
 console.log('✅ Final package built');
 
 // Clean up
 console.log('\n🧹 Cleaning up build artifacts...');
 const cleanupItems = [
-  CORE_ROOT, FOUNDRY_ROOT, COMFYUI_ROOT,
-  coreScripts, foundryScripts, comfyuiScripts,
-  CORE_PKG, FOUNDRY_PKG, COMFYUI_PKG,
+  CORE_ROOT,
+  FOUNDRY_ROOT,
+  COMFYUI_ROOT,
+  coreScripts,
+  foundryScripts,
+  comfyuiScripts,
+  CORE_PKG,
+  FOUNDRY_PKG,
+  COMFYUI_PKG,
   distXMLPath,
   path.join(BUILD_DIR, 'welcome.html'),
   path.join(BUILD_DIR, 'conclusion.html'),
-  path.join(BUILD_DIR, 'license.txt')
+  path.join(BUILD_DIR, 'license.txt'),
 ];
 cleanupItems.forEach(item => {
   if (fs.existsSync(item)) {

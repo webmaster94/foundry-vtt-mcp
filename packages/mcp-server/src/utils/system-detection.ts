@@ -11,7 +11,7 @@ import { Logger } from '../logger.js';
 /**
  * Supported game systems
  */
-export type GameSystem = 'dnd5e' | 'pf2e' | 'other';
+export type GameSystem = 'dnd5e' | 'pf2e' | 'cosmere-rpg' | 'other';
 
 /**
  * Cache for system detection (avoid repeated queries)
@@ -23,14 +23,17 @@ let cachedSystemId: string | null = null;
  * Detect the active Foundry game system
  * Results are cached to avoid repeated queries
  */
-export async function detectGameSystem(foundryClient: FoundryClient, logger?: Logger): Promise<GameSystem> {
+export async function detectGameSystem(
+  foundryClient: FoundryClient,
+  logger?: Logger
+): Promise<GameSystem> {
   if (cachedSystem) {
     return cachedSystem;
   }
 
   try {
     const worldInfo = await foundryClient.query('foundry-mcp-bridge.getWorldInfo');
-    const systemId = worldInfo.system?.toLowerCase() || '';
+    const systemId = (worldInfo.system ?? '').toLowerCase();
 
     cachedSystemId = systemId;
 
@@ -38,6 +41,8 @@ export async function detectGameSystem(foundryClient: FoundryClient, logger?: Lo
       cachedSystem = 'dnd5e';
     } else if (systemId === 'pf2e') {
       cachedSystem = 'pf2e';
+    } else if (systemId === 'cosmere-rpg') {
+      cachedSystem = 'cosmere-rpg';
     } else {
       cachedSystem = 'other';
     }
@@ -88,7 +93,7 @@ export const SystemPaths = {
     skills: 'system.skills',
     spells: 'system.spells',
     legendaryActions: 'system.resources.legact',
-    legendaryResistances: 'system.resources.legres'
+    legendaryResistances: 'system.resources.legres',
   },
   pf2e: {
     // Pathfinder 2e specific paths
@@ -106,12 +111,16 @@ export const SystemPaths = {
     saves: 'system.saves',
     // PF2e doesn't have CR or legendary actions
     challengeRating: null,
-    legendaryActions: null
-  }
+    legendaryActions: null,
+  },
 } as const;
 
 /**
- * Get system-specific data paths based on detected system
+ * Get system-specific data paths based on detected system.
+ *
+ * Returns null for systems without registered paths (cosmere-rpg, dsa5, other).
+ * Callers must branch on `system` for those — falling back to dnd5e paths
+ * silently produces wrong values when called against a non-dnd5e actor.
  */
 export function getSystemPaths(system: GameSystem) {
   if (system === 'dnd5e') {
@@ -119,8 +128,7 @@ export function getSystemPaths(system: GameSystem) {
   } else if (system === 'pf2e') {
     return SystemPaths.pf2e;
   }
-  // Default to dnd5e paths for unknown systems (best effort)
-  return SystemPaths.dnd5e;
+  return null;
 }
 
 /**
@@ -147,22 +155,27 @@ export function extractSystemValue(data: any, path: string | null): any {
 
 /**
  * Get creature level/CR based on system
- * Returns a normalized level value for both D&D 5e and PF2e
+ * Returns a normalized level value for D&D 5e, PF2e, and Cosmere RPG.
  */
 export function getCreatureLevel(actorData: any, system: GameSystem): number | undefined {
-  const paths = getSystemPaths(system);
-
   if (system === 'dnd5e') {
     // D&D 5e: Try CR first, then level
-    const cr = extractSystemValue(actorData, paths.challengeRating);
+    const cr = extractSystemValue(actorData, SystemPaths.dnd5e.challengeRating);
     if (cr !== undefined) return Number(cr);
 
-    const level = extractSystemValue(actorData, paths.level);
+    const level = extractSystemValue(actorData, SystemPaths.dnd5e.level);
     if (level !== undefined) return Number(level);
   } else if (system === 'pf2e') {
     // PF2e: Level is the primary metric
-    const level = extractSystemValue(actorData, paths.level);
+    const level = extractSystemValue(actorData, SystemPaths.pf2e.level);
     if (level !== undefined) return Number(level);
+  } else if (system === 'cosmere-rpg') {
+    // Cosmere: tier (1-4) for adversaries, level for player characters
+    const tier = extractSystemValue(actorData, 'system.tier');
+    if (typeof tier === 'number') return tier;
+
+    const level = extractSystemValue(actorData, 'system.level');
+    if (typeof level === 'number') return level;
   }
 
   return undefined;

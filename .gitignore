@@ -87,3 +87,23 @@ DEPLOYMENT-FIX.md
 DEVELOPMENT.md
 VERIFY.md
 VISUAL-CONFIRMATION.md
+
+# Internal planning / analysis docs — keep in chat or under docs/, not repo root.
+# These accumulate as cruft and aren't useful for contributors.
+/*_PLAN.md
+/*_ANALYSIS.md
+/*_SUMMARY.md
+/*_COMPARISON.md
+/*_NOTES.md
+/NOTES.md
+/TODO.md
+/PR*_*.md
+/TEST_*.md
+/*_TEST_*.md
+/*_TEST_PROMPT.md
+/IMPLEMENTATION_*.md
+/MIGRATION_*.md
+/RISK_*.md
+/MISSING_*.md
+/REGISTRY_*.md
+/TOOL_INVENTORY.md
