@@ -51,8 +51,10 @@ export class FoundryConnector {
       res.end();
     });
 
-    // Create SEPARATE HTTP server for WebRTC signaling (port 31416)
-    const WEBRTC_PORT = 31416;
+    // Create SEPARATE HTTP server for WebRTC signaling.
+    // Port is configurable per server profile; defaults to main port + 1
+    // (31415 -> 31416, matching the module's expectation).
+    const WEBRTC_PORT = this.config.webrtcSignalingPort ?? this.config.port + 1;
     this.webrtcSignalingServer = createServer(async (req, res) => {
       // Set CORS headers for all requests
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -81,19 +83,25 @@ export class FoundryConnector {
       }
     });
 
-    // Start WebRTC signaling server
-    await new Promise<void>((resolve, reject) => {
-      this.webrtcSignalingServer.listen(WEBRTC_PORT, '0.0.0.0', () => {
-        this.logger.info(`WebRTC signaling server listening on port ${WEBRTC_PORT}`);
-        console.error(`[WebRTC] Server started on 0.0.0.0:${WEBRTC_PORT}`);
-        resolve();
+    // Start WebRTC signaling server (skipped for websocket-only profiles so
+    // multiple websocket profiles don't fight over signaling ports)
+    if (this.config.connectionType === 'websocket') {
+      this.webrtcSignalingServer = null;
+      this.logger.info('WebRTC signaling server skipped (websocket-only connection type)');
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        this.webrtcSignalingServer.listen(WEBRTC_PORT, '0.0.0.0', () => {
+          this.logger.info(`WebRTC signaling server listening on port ${WEBRTC_PORT}`);
+          console.error(`[WebRTC] Server started on 0.0.0.0:${WEBRTC_PORT}`);
+          resolve();
+        });
+        this.webrtcSignalingServer.on('error', (error: Error) => {
+          this.logger.error('Failed to start WebRTC signaling server', error);
+          console.error(`[WebRTC] Server error:`, error);
+          reject(error);
+        });
       });
-      this.webrtcSignalingServer.on('error', (error: Error) => {
-        this.logger.error('Failed to start WebRTC signaling server', error);
-        console.error(`[WebRTC] Server error:`, error);
-        reject(error);
-      });
-    });
+    }
 
     // Create WebSocket server in noServer mode to avoid request consumption
     this.wss = new WebSocketServer({ noServer: true });
@@ -206,6 +214,15 @@ export class FoundryConnector {
         });
       });
       this.httpServer = null;
+    }
+
+    if (this.webrtcSignalingServer) {
+      await new Promise<void>(resolve => {
+        this.webrtcSignalingServer.close(() => {
+          resolve();
+        });
+      });
+      this.webrtcSignalingServer = null;
     }
 
     this.isStarted = false;

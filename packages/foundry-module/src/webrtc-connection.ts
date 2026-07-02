@@ -142,7 +142,9 @@ export class WebRTCConnection {
     const isHttps = window.location.protocol === 'https:';
     const signalingHost = isHttps ? 'localhost' : this.config.serverHost;
     const protocol = 'http'; // Always http:// - localhost exception allows this from HTTPS
-    const WEBRTC_SIGNALING_PORT = 31416; // Dedicated port for WebRTC signaling
+    // Signaling port is main server port + 1 (31415 -> 31416), matching the
+    // MCP server's per-profile signaling listener
+    const WEBRTC_SIGNALING_PORT = (this.config.serverPort ?? 31415) + 1;
     const httpUrl = `${protocol}://${signalingHost}:${WEBRTC_SIGNALING_PORT}/webrtc-offer`;
 
     this.log(`Sending WebRTC offer via HTTP POST: ${httpUrl} (HTTPS page: ${isHttps})`);

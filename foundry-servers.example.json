@@ -1,0 +1,18 @@
+{
+  "$comment": "Named Foundry server profiles for the MCP server. Copy to foundry-servers.json (next to the server, or point FOUNDRY_SERVERS_CONFIG at it). Each profile needs a unique port; the module's connection settings in each Foundry world must point at that profile's port. WebRTC signaling uses port + 1. Unset fields inherit from environment variables (FOUNDRY_HOST, FOUNDRY_PORT, ...).",
+  "defaultServer": "forge",
+  "servers": {
+    "forge": {
+      "label": "My Forge Campaign (remote)",
+      "port": 31415,
+      "connectionType": "webrtc",
+      "remoteMode": true
+    },
+    "local": {
+      "label": "Local development world",
+      "host": "localhost",
+      "port": 31417,
+      "connectionType": "websocket"
+    }
+  }
+}

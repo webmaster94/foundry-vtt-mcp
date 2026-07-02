@@ -14,7 +14,9 @@ import { config } from './config.js';
 
 import { Logger } from './logger.js';
 
-import { FoundryClient } from './foundry-client.js';
+import { ServerRegistry } from './server-registry.js';
+
+import { ServerManagementTools } from './tools/server-management.js';
 
 import { CharacterTools } from './tools/character.js';
 
@@ -1167,9 +1169,15 @@ async function startBackend(): Promise<void> {
     foundryPort: config.foundry.port,
   });
 
-  // Initialize Foundry client and tools
+  // Initialize Foundry server registry (named connection profiles) and the
+  // routing client facade all tools share. The active profile is switched at
+  // runtime via the use-foundry-server tool.
 
-  const foundryClient = new FoundryClient(config.foundry, logger);
+  const serverRegistry = new ServerRegistry(config, logger);
+
+  const foundryClient = serverRegistry.routingClient;
+
+  const serverManagementTools = new ServerManagementTools({ registry: serverRegistry, logger });
 
   // Initialize system registry and register adapters
   const { getSystemRegistry } = await import('./systems/index.js');
@@ -1465,6 +1473,8 @@ async function startBackend(): Promise<void> {
 
     ...foundryScriptToolDefinitions,
 
+    ...serverManagementTools.getToolDefinitions(),
+
     ...mapGenerationTools.getToolDefinitions(),
   ];
 
@@ -1481,11 +1491,15 @@ async function startBackend(): Promise<void> {
     additionalToolHandlers[tool.name] = (args: any) =>
       foundryScriptTools.handleToolCall(tool.name, args);
   }
+  for (const tool of serverManagementTools.getToolDefinitions()) {
+    additionalToolHandlers[tool.name] = (args: any) =>
+      serverManagementTools.handleToolCall(tool.name, args);
+  }
 
-  // Start Foundry connector (owns app port 31415)
+  // Start Foundry connectors for every configured server profile
 
-  foundryClient.connect().catch(e => {
-    logger.error('Foundry connector failed to start', e);
+  serverRegistry.connectAll().catch(e => {
+    logger.error('Foundry connectors failed to start', e);
   });
 
   const autoStartComfyUI = async () => {

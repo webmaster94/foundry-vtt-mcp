@@ -2,6 +2,46 @@
 
 Connect Foundry VTT to Claude Desktop for AI-powered campaign management through the Model Context Protocol (MCP). It currently supports Dungeons and Dragons Fifth Edition, Pathfinder Second Edition, Das Schwarze Augen Fifth Edition, Cosmere RPG System, & Warhammer Fantasy Roleplay 4th Edition. The majority of MCP tools are system agnostic or have features that are aware of the system it is working with, excluding some DSA 5 specific tools.
 
+> **This fork** ([webmaster94/foundry-vtt-mcp](https://github.com/webmaster94/foundry-vtt-mcp)) extends the upstream project with much deeper Foundry integration:
+>
+> - **Generic document management API** — list/get/create/update/delete any world document (actors, items, journals, scenes, folders, playlists, cards, combats, roll tables...) plus embedded documents, schema introspection, and folder organization
+> - **Script execution** — run JavaScript in the connected GM browser through `execute-foundry-script`
+> - **Macro management** — create, update, execute, and delete macros
+> - **Browser console capture** — read the Foundry client's console output for debugging
+> - **Multiple Foundry servers** — define named connection profiles and switch between live Foundry instances mid-conversation (see [Multiple Foundry Servers](#multiple-foundry-servers))
+> - **Audit logging** of all write operations
+>
+> **Foundry module install (this fork):** paste this manifest URL into Foundry's _Install Module_ dialog:
+> `https://github.com/webmaster94/foundry-vtt-mcp/releases/latest/download/module.json`
+
+## Multiple Foundry Servers
+
+The MCP server can hold connections to several Foundry instances at once (for example a live Forge campaign and a local test world). Define friendly-named profiles in a `foundry-servers.json` file (see [`foundry-servers.example.json`](foundry-servers.example.json)):
+
+```json
+{
+  "defaultServer": "forge",
+  "servers": {
+    "forge": {
+      "label": "My Forge Campaign",
+      "port": 31415,
+      "connectionType": "webrtc",
+      "remoteMode": true
+    },
+    "local": { "label": "Local dev world", "port": 31417, "connectionType": "websocket" }
+  }
+}
+```
+
+Place the file next to the MCP server (or point the `FOUNDRY_SERVERS_CONFIG` environment variable at it). Each profile listens on its own port — configure each Foundry world's MCP Bridge module settings to connect to its profile's port. WebRTC signaling uses `port + 1`.
+
+Your AI agent can then call:
+
+- **`list-foundry-servers`** — see all profiles, which one is active, and which are connected
+- **`use-foundry-server`** — switch every subsequent tool call to the named server (e.g. "use the local server")
+
+Without a config file, behavior is identical to upstream: one server from environment variables.
+
 ## Overview
 
 The Foundry MCP Bridge enables natural AI conversations with your Foundry VTT game data:

@@ -21,6 +21,8 @@ const ConfigSchema = z.object({
     remoteMode: z.boolean().default(false),
     dataPath: z.string().optional(), // Custom path for generated maps (remote mode)
     rejectUnauthorized: z.boolean().default(true), // TLS certificate validation
+    // WebRTC signaling HTTP port; defaults to port + 1 when unset
+    webrtcSignalingPort: z.number().min(1024).max(65535).optional(),
     // WebRTC configuration
     webrtc: z
       .object({
@@ -74,6 +76,9 @@ const rawConfig = {
     remoteMode: process.env.FOUNDRY_REMOTE_MODE === 'true',
     dataPath: process.env.FOUNDRY_DATA_PATH,
     rejectUnauthorized: process.env.FOUNDRY_REJECT_UNAUTHORIZED !== 'false',
+    webrtcSignalingPort: process.env.FOUNDRY_WEBRTC_SIGNALING_PORT
+      ? parseInt(process.env.FOUNDRY_WEBRTC_SIGNALING_PORT, 10)
+      : undefined,
     webrtc: {
       stunServers: process.env.FOUNDRY_STUN_SERVERS
         ? process.env.FOUNDRY_STUN_SERVERS.split(',')
