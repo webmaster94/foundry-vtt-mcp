@@ -1,6 +1,10 @@
 import { MODULE_ID } from './constants.js';
 import { FoundryDataAccess } from './data-access.js';
 import { ComfyUIManager } from './comfyui-manager.js';
+import { browserConsoleCapture, type BrowserConsoleLevel } from './console-capture.js';
+import { auditService } from './audit-service.js';
+import { documentService } from './document-service.js';
+import { scriptExecutor } from './script-executor.js';
 
 export class QueryHandlers {
   public dataAccess: FoundryDataAccess;
@@ -47,6 +51,30 @@ export class QueryHandlers {
 
     // Utility queries
     CONFIG.queries[`${modulePrefix}.ping`] = this.handlePing.bind(this);
+    CONFIG.queries[`${modulePrefix}.getBrowserConsole`] = this.handleGetBrowserConsole.bind(this);
+    CONFIG.queries[`${modulePrefix}.clearBrowserConsole`] = this.handleClearBrowserConsole.bind(this);
+    CONFIG.queries[`${modulePrefix}.getBrowserConsoleStatus`] = this.handleGetBrowserConsoleStatus.bind(this);
+    CONFIG.queries[`${modulePrefix}.listDocumentTypes`] = this.handleListDocumentTypes.bind(this);
+    CONFIG.queries[`${modulePrefix}.listDocuments`] = this.handleListDocuments.bind(this);
+    CONFIG.queries[`${modulePrefix}.getDocument`] = this.handleGetDocument.bind(this);
+    CONFIG.queries[`${modulePrefix}.createDocument`] = this.handleCreateDocument.bind(this);
+    CONFIG.queries[`${modulePrefix}.updateDocument`] = this.handleUpdateDocument.bind(this);
+    CONFIG.queries[`${modulePrefix}.deleteDocument`] = this.handleDeleteDocument.bind(this);
+    CONFIG.queries[`${modulePrefix}.listEmbeddedDocuments`] = this.handleListEmbeddedDocuments.bind(this);
+    CONFIG.queries[`${modulePrefix}.getEmbeddedDocument`] = this.handleGetEmbeddedDocument.bind(this);
+    CONFIG.queries[`${modulePrefix}.createEmbeddedDocument`] = this.handleCreateEmbeddedDocument.bind(this);
+    CONFIG.queries[`${modulePrefix}.updateEmbeddedDocument`] = this.handleUpdateEmbeddedDocument.bind(this);
+    CONFIG.queries[`${modulePrefix}.deleteEmbeddedDocument`] = this.handleDeleteEmbeddedDocument.bind(this);
+    CONFIG.queries[`${modulePrefix}.getDocumentSchema`] = this.handleGetDocumentSchema.bind(this);
+    CONFIG.queries[`${modulePrefix}.executeMacro`] = this.handleExecuteMacro.bind(this);
+    CONFIG.queries[`${modulePrefix}.rollRollTable`] = this.handleRollRollTable.bind(this);
+    CONFIG.queries[`${modulePrefix}.playlistSoundAction`] = this.handlePlaylistSoundAction.bind(this);
+    CONFIG.queries[`${modulePrefix}.cardsAction`] = this.handleCardsAction.bind(this);
+    CONFIG.queries[`${modulePrefix}.combatAction`] = this.handleCombatAction.bind(this);
+    CONFIG.queries[`${modulePrefix}.executeFoundryScript`] = this.handleExecuteFoundryScript.bind(this);
+    CONFIG.queries[`${modulePrefix}.queryFoundryData`] = this.handleQueryFoundryData.bind(this);
+    CONFIG.queries[`${modulePrefix}.getMcpAuditLog`] = this.handleGetMcpAuditLog.bind(this);
+    CONFIG.queries[`${modulePrefix}.clearMcpAuditLog`] = this.handleClearMcpAuditLog.bind(this);
 
     // Phase 2 & 3: Write operation queries
     CONFIG.queries[`${modulePrefix}.createActorFromCompendium`] = this.handleCreateActorFromCompendium.bind(this);
@@ -329,6 +357,195 @@ export class QueryHandlers {
       worldId: game.world?.id,
       userId: game.user?.id,
     };
+  }
+
+  private async handleGetBrowserConsole(data: {
+    levels?: BrowserConsoleLevel[];
+    sinceId?: number;
+    sinceTimestamp?: string;
+    limit?: number;
+    search?: string;
+    includeStack?: boolean;
+    includeRawArgs?: boolean;
+  }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      return {
+        success: true,
+        ...browserConsoleCapture.getEntries(data || {}),
+      };
+    } catch (error) {
+      throw new Error(`Failed to get browser console: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleClearBrowserConsole(data: { confirmClear?: boolean }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      return browserConsoleCapture.clear(data?.confirmClear === true);
+    } catch (error) {
+      throw new Error(`Failed to clear browser console: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleGetBrowserConsoleStatus(): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      return {
+        success: true,
+        ...browserConsoleCapture.getStatus(),
+      };
+    } catch (error) {
+      throw new Error(`Failed to get browser console status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private assertGM(): { error: string; success: false } | null {
+    const gmCheck = this.validateGMAccess();
+    if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+    this.dataAccess.validateFoundryState();
+    return null;
+  }
+
+  private async handleListDocumentTypes(): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, documentTypes: documentService.listDocumentTypes() };
+  }
+
+  private async handleListDocuments(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, ...(await documentService.listDocuments(data || {})) };
+  }
+
+  private async handleGetDocument(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, document: await documentService.getDocument(data || {}) };
+  }
+
+  private async handleCreateDocument(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, document: await documentService.createDocument(data || {}) };
+  }
+
+  private async handleUpdateDocument(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, document: await documentService.updateDocument(data || {}) };
+  }
+
+  private async handleDeleteDocument(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return await documentService.deleteDocument(data || {});
+  }
+
+  private async handleListEmbeddedDocuments(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, ...(await documentService.listEmbeddedDocuments(data || {})) };
+  }
+
+  private async handleGetEmbeddedDocument(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, document: await documentService.getEmbeddedDocument(data || {}) };
+  }
+
+  private async handleCreateEmbeddedDocument(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, document: await documentService.createEmbeddedDocument(data || {}) };
+  }
+
+  private async handleUpdateEmbeddedDocument(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, document: await documentService.updateEmbeddedDocument(data || {}) };
+  }
+
+  private async handleDeleteEmbeddedDocument(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return await documentService.deleteEmbeddedDocument(data || {});
+  }
+
+  private async handleGetDocumentSchema(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, schema: await documentService.getDocumentSchema(data?.documentType) };
+  }
+
+  private async handleExecuteMacro(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return await documentService.executeMacro(data || {});
+  }
+
+  private async handleRollRollTable(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, result: await documentService.rollRollTable(data?.ref || data || {}) };
+  }
+
+  private async handlePlaylistSoundAction(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return {
+      success: true,
+      result: await documentService.playlistSoundAction(data?.ref || {}, data?.soundId, data?.action),
+    };
+  }
+
+  private async handleCardsAction(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, result: await documentService.cardsAction(data?.ref || data || {}, data?.action) };
+  }
+
+  private async handleCombatAction(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, result: await documentService.combatAction(data?.ref || data || {}, data?.action) };
+  }
+
+  private async handleExecuteFoundryScript(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return await scriptExecutor.execute(data || {});
+  }
+
+  private async handleQueryFoundryData(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, ...(await documentService.queryFoundryData(data || {})) };
+  }
+
+  private async handleGetMcpAuditLog(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, ...auditService.getLog(data || {}) };
+  }
+
+  private async handleClearMcpAuditLog(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return await auditService.clear(data?.confirmClear === true);
   }
 
   /**

@@ -63,6 +63,90 @@ export class PermissionManager {
       settingKey: 'allowWriteOperations',
       requiresGM: true,
     },
+    'document.read': {
+      name: 'Read Documents',
+      level: PERMISSION_LEVELS.LOW_RISK,
+      description: 'Read Foundry world documents',
+      settingKey: 'enabled',
+      requiresGM: true,
+    },
+    'document.create': {
+      name: 'Create Documents',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Create Foundry world documents',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'document.update': {
+      name: 'Update Documents',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Update Foundry world documents',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'document.delete': {
+      name: 'Delete Documents',
+      level: PERMISSION_LEVELS.HIGH_RISK,
+      description: 'Delete Foundry world documents',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'document.execute': {
+      name: 'Execute Document Action',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Execute a Foundry document action',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'macro.execute': {
+      name: 'Execute Macro',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Execute a Foundry Macro in the GM browser',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'script.execute': {
+      name: 'Execute Browser Script',
+      level: PERMISSION_LEVELS.HIGH_RISK,
+      description: 'Execute arbitrary JavaScript in the GM browser',
+      settingKey: 'allowBrowserCodeExecution',
+      requiresGM: true,
+    },
+    'highRisk.read': {
+      name: 'Read High Risk Documents',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Read high-risk internal Foundry documents',
+      settingKey: 'enabled',
+      requiresGM: true,
+    },
+    'highRisk.write': {
+      name: 'Write High Risk Documents',
+      level: PERMISSION_LEVELS.HIGH_RISK,
+      description: 'Mutate high-risk internal Foundry documents',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'combat.modify': {
+      name: 'Modify Combat',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Modify combats or combatants',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'sceneEmbedded.modify': {
+      name: 'Modify Scene Embedded Documents',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Modify scene embedded documents like walls, tiles, drawings, lights, and tokens',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'chat.create': {
+      name: 'Create Chat Message',
+      level: PERMISSION_LEVELS.LOW_RISK,
+      description: 'Create Foundry chat messages',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
   };
 
   /**
@@ -74,6 +158,13 @@ export class PermissionManager {
       return {
         allowed: false,
         reason: `Unknown operation: ${operationName}`,
+      };
+    }
+
+    if (operation.requiresGM && !game.user?.isGM) {
+      return {
+        allowed: false,
+        reason: `${operation.name} requires a GM user`,
       };
     }
 

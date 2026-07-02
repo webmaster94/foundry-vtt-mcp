@@ -1,0 +1,76 @@
+# Foundry module release workflow.
+#
+# Pattern follows the League of Foundry Developers module template
+# (https://github.com/League-of-Foundry-Developers/FoundryVTT-Module-Template):
+# on a published GitHub release, rewrite module.json with release-specific
+# values, zip the module, and attach module.json + module.zip to the release.
+#
+# Foundry update-checking relies on two URLs:
+#   - manifest (stable):   .../releases/latest/download/module.json
+#   - download (versioned): .../releases/download/<tag>/module.zip
+#
+# Usage: create a GitHub release with a tag like `v0.9.0`. That's it.
+name: Release Foundry Module
+
+on:
+  release:
+    types: [published]
+
+env:
+  module_dir: packages/foundry-module
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Stamp release values into module.json
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DOWNLOAD="https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/module.zip"
+          MANIFEST="https://github.com/${{ github.repository }}/releases/latest/download/module.json"
+          jq --arg version "$VERSION" \
+             --arg download "$DOWNLOAD" \
+             --arg manifest "$MANIFEST" \
+             --arg url "https://github.com/${{ github.repository }}" \
+             '.version = $version | .download = $download | .manifest = $manifest | .url = $url' \
+             "$module_dir/module.json" > /tmp/module.json
+          mv /tmp/module.json "$module_dir/module.json"
+          cat "$module_dir/module.json"
+
+      - name: Create module archive
+        run: |
+          cd "$module_dir"
+          # zip warns (does not fail) on missing paths, so optional dirs are safe
+          zip --recurse-paths ./module.zip \
+            module.json \
+            dist \
+            lang \
+            styles \
+            templates \
+            scripts
+
+      - name: Attach files to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            ${{ env.module_dir }}/module.json
+            ${{ env.module_dir }}/module.zip

@@ -261,6 +261,154 @@ export class ModuleSettings {
       },
     });
 
+    game.settings.register(this.moduleId, 'enableConsoleCapture', {
+      name: 'Capture Browser Console',
+      hint: 'Capture recent GM browser console output so MCP clients can inspect logs, warnings, errors, and information messages.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: true,
+      onChange: this.onConsoleCaptureChange.bind(this),
+    });
+
+    game.settings.register(this.moduleId, 'consoleCaptureMaxEntries', {
+      name: 'Console Capture Max Entries',
+      hint: 'Maximum number of recent browser console entries kept in memory. Refreshing the browser tab clears this buffer.',
+      scope: 'world',
+      config: true,
+      type: Number,
+      default: 1000,
+      range: {
+        min: 100,
+        max: 10000,
+        step: 100,
+      },
+      onChange: this.onConsoleCaptureChange.bind(this),
+    });
+
+    game.settings.register(this.moduleId, 'consoleCaptureMaxEntryBytes', {
+      name: 'Console Capture Max Entry Size',
+      hint: 'Maximum serialized size for a single captured console entry.',
+      scope: 'world',
+      config: true,
+      type: Number,
+      default: 8192,
+      range: {
+        min: 512,
+        max: 65536,
+        step: 512,
+      },
+      onChange: this.onConsoleCaptureChange.bind(this),
+    });
+
+    game.settings.register(this.moduleId, 'consoleCaptureIncludeDebug', {
+      name: 'Capture Debug Console Messages',
+      hint: 'Include console.debug output in browser console capture.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: true,
+      onChange: this.onConsoleCaptureChange.bind(this),
+    });
+
+    game.settings.register(this.moduleId, 'consoleCaptureIncludeTrace', {
+      name: 'Capture Trace Console Messages',
+      hint: 'Include console.trace output in browser console capture.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: true,
+      onChange: this.onConsoleCaptureChange.bind(this),
+    });
+
+    game.settings.register(this.moduleId, 'allowBrowserCodeExecution', {
+      name: 'Allow Browser Code Execution',
+      hint: 'Allow MCP clients to execute JavaScript immediately in this GM browser. This is powerful and separate from normal write-operation permissions.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: true,
+    });
+
+    game.settings.register(this.moduleId, 'scriptTimeoutMs', {
+      name: 'Script Timeout',
+      hint: 'Maximum time to wait for async browser script execution. CPU-blocking loops can still freeze the browser tab.',
+      scope: 'world',
+      config: true,
+      type: Number,
+      default: 5000,
+      range: {
+        min: 100,
+        max: 30000,
+        step: 100,
+      },
+    });
+
+    game.settings.register(this.moduleId, 'scriptMaxLength', {
+      name: 'Script Max Length',
+      hint: 'Maximum number of characters in a browser script execution request.',
+      scope: 'world',
+      config: true,
+      type: Number,
+      default: 20000,
+      range: {
+        min: 1000,
+        max: 100000,
+        step: 1000,
+      },
+    });
+
+    game.settings.register(this.moduleId, 'scriptResultMaxBytes', {
+      name: 'Script Result Max Bytes',
+      hint: 'Maximum serialized result size returned by browser script execution.',
+      scope: 'world',
+      config: true,
+      type: Number,
+      default: 256000,
+      range: {
+        min: 1000,
+        max: 2000000,
+        step: 1000,
+      },
+    });
+
+    game.settings.register(this.moduleId, 'documentResultMaxBytes', {
+      name: 'Document Result Max Bytes',
+      hint: 'Maximum serialized result size returned by document and query explorer tools.',
+      scope: 'world',
+      config: true,
+      type: Number,
+      default: 256000,
+      range: {
+        min: 1000,
+        max: 2000000,
+        step: 1000,
+      },
+    });
+
+    game.settings.register(this.moduleId, 'auditRetention', {
+      name: 'Audit Log Retention',
+      hint: 'Number of MCP audit entries retained in world flags.',
+      scope: 'world',
+      config: true,
+      type: Number,
+      default: 500,
+      range: {
+        min: 10,
+        max: 5000,
+        step: 10,
+      },
+    });
+
+    game.settings.register(this.moduleId, 'readOnlyRiskyDocuments', {
+      name: 'Read Only Risky Documents',
+      hint: 'Keep Setting, FogExploration, and Adventure documents read-only through MCP.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: true,
+    });
+
     // Removed 'enableWriteAuditLog' setting as it provides no rollback functionality
     // and only creates log entries without user-actionable features
 
@@ -452,6 +600,12 @@ export class ModuleSettings {
       'allowWriteOperations',
       // Safety Controls
       'maxActorsPerRequest',
+      // Console Capture
+      'enableConsoleCapture', 'consoleCaptureMaxEntries', 'consoleCaptureMaxEntryBytes',
+      'consoleCaptureIncludeDebug', 'consoleCaptureIncludeTrace',
+      // Advanced API
+      'allowBrowserCodeExecution', 'scriptTimeoutMs', 'scriptMaxLength', 'scriptResultMaxBytes',
+      'documentResultMaxBytes', 'auditRetention', 'readOnlyRiskyDocuments',
       // Enhanced Creature Index
       'enableEnhancedCreatureIndex', 'autoRebuildIndex',
       // Connection Behavior
@@ -492,6 +646,31 @@ export class ModuleSettings {
       errors.push('Heartbeat interval must be between 10 and 120 seconds');
     }
 
+    const consoleMaxEntries = this.getSetting('consoleCaptureMaxEntries');
+    if (!consoleMaxEntries || typeof consoleMaxEntries !== 'number' || consoleMaxEntries < 1 || consoleMaxEntries > 10000) {
+      errors.push('Console capture max entries must be between 1 and 10000');
+    }
+
+    const consoleMaxEntryBytes = this.getSetting('consoleCaptureMaxEntryBytes');
+    if (!consoleMaxEntryBytes || typeof consoleMaxEntryBytes !== 'number' || consoleMaxEntryBytes < 512 || consoleMaxEntryBytes > 65536) {
+      errors.push('Console capture max entry size must be between 512 and 65536 bytes');
+    }
+
+    const scriptTimeoutMs = this.getSetting('scriptTimeoutMs');
+    if (!scriptTimeoutMs || typeof scriptTimeoutMs !== 'number' || scriptTimeoutMs < 100 || scriptTimeoutMs > 30000) {
+      errors.push('Script timeout must be between 100 and 30000 milliseconds');
+    }
+
+    const scriptMaxLength = this.getSetting('scriptMaxLength');
+    if (!scriptMaxLength || typeof scriptMaxLength !== 'number' || scriptMaxLength < 1000 || scriptMaxLength > 100000) {
+      errors.push('Script max length must be between 1000 and 100000 characters');
+    }
+
+    const auditRetention = this.getSetting('auditRetention');
+    if (!auditRetention || typeof auditRetention !== 'number' || auditRetention < 10 || auditRetention > 5000) {
+      errors.push('Audit retention must be between 10 and 5000 entries');
+    }
+
     return {
       valid: errors.length === 0,
       errors,
@@ -521,6 +700,19 @@ export class ModuleSettings {
     // If bridge is running, restart it with new settings
     if (window.foundryMCPBridge && this.getSetting('enabled')) {
       window.foundryMCPBridge.restart?.();
+    }
+  }
+
+  private onConsoleCaptureChange(): void {
+    const capture = (globalThis as any).foundryMCPBridge?.consoleCapture;
+    if (!capture) {
+      return;
+    }
+
+    if (this.getSetting('enableConsoleCapture')) {
+      capture.restart?.();
+    } else {
+      capture.stop?.();
     }
   }
 
@@ -566,6 +758,12 @@ export class ModuleSettings {
       'allowWriteOperations',
       // Safety Controls
       'maxActorsPerRequest',
+      // Console Capture
+      'enableConsoleCapture', 'consoleCaptureMaxEntries', 'consoleCaptureMaxEntryBytes',
+      'consoleCaptureIncludeDebug', 'consoleCaptureIncludeTrace',
+      // Advanced API
+      'allowBrowserCodeExecution', 'scriptTimeoutMs', 'scriptMaxLength', 'scriptResultMaxBytes',
+      'documentResultMaxBytes', 'auditRetention', 'readOnlyRiskyDocuments',
       // Enhanced Creature Index
       'enableEnhancedCreatureIndex', 'autoRebuildIndex',
       // Connection Behavior

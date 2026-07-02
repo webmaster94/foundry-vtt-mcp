@@ -1,14 +1,8 @@
 name: Build Complete Release
 
+# Fork note: installer builds are manual-only here. Module releases are
+# handled by module-release.yml on published releases.
 on:
-  push:
-    tags:
-      - 'v*'
-    branches:
-      - feature/nsis-installer
-  pull_request:
-    branches:
-      - master
   workflow_dispatch:
     inputs:
       version:

@@ -4,6 +4,7 @@ import { QueryHandlers } from './queries.js';
 import { ModuleSettings } from './settings.js';
 import { CampaignHooks } from './campaign-hooks.js';
 import { ComfyUIManager } from './comfyui-manager.js';
+import { browserConsoleCapture, type BrowserConsoleCapture } from './console-capture.js';
 // Connection control now handled through settings menu
 
 /**
@@ -13,6 +14,7 @@ class FoundryMCPBridge {
   private settings: ModuleSettings;
   private queryHandlers: QueryHandlers;
   private campaignHooks: CampaignHooks;
+  public consoleCapture: BrowserConsoleCapture;
   public comfyuiManager: ComfyUIManager;
   private socketBridge: SocketBridge | null = null;
   private isInitialized = false;
@@ -24,6 +26,7 @@ class FoundryMCPBridge {
     this.settings = new ModuleSettings();
     this.queryHandlers = new QueryHandlers();
     this.campaignHooks = new CampaignHooks(this);
+    this.consoleCapture = browserConsoleCapture;
     this.comfyuiManager = new ComfyUIManager();
   }
 
@@ -43,6 +46,9 @@ class FoundryMCPBridge {
 
       // Register module settings
       this.settings.registerSettings();
+
+      // Expose console capture globally for settings callbacks and diagnostics
+      (window as any).foundryMCPBridge.consoleCapture = this.consoleCapture;
 
       // Register query handlers
       this.queryHandlers.registerHandlers();
@@ -75,6 +81,10 @@ class FoundryMCPBridge {
       }
 
       console.log(`[${MODULE_ID}] Foundry ready, checking bridge status...`);
+
+      if (this.settings.getSetting('enableConsoleCapture')) {
+        this.consoleCapture.start();
+      }
 
       // Connection control now handled through settings menu
 
@@ -190,7 +200,7 @@ class FoundryMCPBridge {
       this.updateLastActivity();
 
       // Update settings display with connection status
-      this.settings.updateConnectionStatusDisplay(true, 17); // 17 MCP tools
+      this.settings.updateConnectionStatusDisplay(true, 0);
       
       // Start heartbeat monitoring if enabled
       this.startHeartbeat();
@@ -299,6 +309,7 @@ class FoundryMCPBridge {
       connectionInfo: this.socketBridge?.getConnectionInfo(),
       settings: this.settings.getAllSettings(),
       registeredMethods: this.queryHandlers.getRegisteredMethods(),
+      consoleCapture: this.consoleCapture.getStatus(),
       lastConnectionState: this.settings.getSetting('lastConnectionState'),
       lastActivity: this.lastActivity.toISOString(),
       heartbeatActive: this.heartbeatInterval !== null,
@@ -466,6 +477,7 @@ class FoundryMCPBridge {
     console.log(`[${MODULE_ID}] Cleaning up...`);
 
     await this.stop();
+    this.consoleCapture.stop();
     this.queryHandlers.unregisterHandlers();
     this.campaignHooks.unregister();
     

@@ -318,3 +318,178 @@ export const CampaignTemplateSchema = z.object({
   })),
   metadata: CampaignMetadataSchema.partial(),
 });
+
+/**
+ * Generic Foundry document management schemas
+ */
+export const DocumentMutationPolicySchema = z.enum(['full', 'read-only', 'unsupported']);
+
+export const DocumentTypeSchema = z.object({
+  documentType: z.string().min(1),
+  collection: z.string().optional(),
+  mutationPolicy: DocumentMutationPolicySchema,
+  embeddedTypes: z.array(z.string()).default([]),
+  risk: z.enum(['normal', 'high']).default('normal'),
+});
+
+export const DocumentProjectionSchema = z.object({
+  fields: z.array(z.string()).optional(),
+  includeSystem: z.boolean().default(true),
+  includeFlags: z.boolean().default(false),
+  includeSource: z.boolean().default(false),
+  includeEmbedded: z.boolean().default(false),
+  maxBytes: z.number().int().positive().max(2_000_000).default(256_000),
+});
+
+export const DocumentReferenceSchema = z.object({
+  uuid: z.string().optional(),
+  documentType: z.string().optional(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  packId: z.string().optional(),
+});
+
+export const EmbeddedDocumentReferenceSchema = z.object({
+  parentUuid: z.string(),
+  embeddedType: z.string(),
+  embeddedId: z.string().optional(),
+  embeddedName: z.string().optional(),
+});
+
+export const SerializedDocumentSchema = z.object({
+  id: z.string().optional(),
+  uuid: z.string().optional(),
+  documentName: z.string().optional(),
+  name: z.string().optional(),
+  type: z.string().optional(),
+  data: z.record(z.unknown()).optional(),
+  truncated: z.boolean().default(false),
+  truncatedPaths: z.array(z.string()).default([]),
+});
+
+export const ListDocumentsRequestSchema = DocumentProjectionSchema.extend({
+  documentType: z.string().min(1),
+  packId: z.string().optional(),
+  search: z.string().optional(),
+  limit: z.number().int().min(1).max(500).default(50),
+});
+
+export const GetDocumentRequestSchema = DocumentProjectionSchema.extend({
+  ref: DocumentReferenceSchema,
+});
+
+export const CreateDocumentRequestSchema = DocumentProjectionSchema.extend({
+  documentType: z.string().min(1),
+  data: z.record(z.unknown()),
+  confirmBulkOperation: z.boolean().default(false),
+});
+
+export const UpdateDocumentRequestSchema = DocumentProjectionSchema.extend({
+  ref: DocumentReferenceSchema,
+  updates: z.record(z.unknown()),
+});
+
+export const DeleteDocumentRequestSchema = z.object({
+  ref: DocumentReferenceSchema,
+  confirmDeletion: z.boolean().default(false),
+});
+
+export const DocumentSchemaRequestSchema = z.object({
+  documentType: z.string().min(1),
+});
+
+export const ListEmbeddedDocumentsRequestSchema = DocumentProjectionSchema.extend({
+  parentUuid: z.string(),
+  embeddedType: z.string(),
+  search: z.string().optional(),
+  limit: z.number().int().min(1).max(500).default(50),
+});
+
+export const GetEmbeddedDocumentRequestSchema = DocumentProjectionSchema.extend({
+  ref: EmbeddedDocumentReferenceSchema,
+});
+
+export const CreateEmbeddedDocumentRequestSchema = DocumentProjectionSchema.extend({
+  parentUuid: z.string(),
+  embeddedType: z.string(),
+  data: z.record(z.unknown()),
+  confirmBulkOperation: z.boolean().default(false),
+});
+
+export const UpdateEmbeddedDocumentRequestSchema = DocumentProjectionSchema.extend({
+  ref: EmbeddedDocumentReferenceSchema,
+  updates: z.record(z.unknown()),
+});
+
+export const DeleteEmbeddedDocumentRequestSchema = z.object({
+  ref: EmbeddedDocumentReferenceSchema,
+  confirmDeletion: z.boolean().default(false),
+});
+
+export const QueryFoundryDataRequestSchema = DocumentProjectionSchema.extend({
+  root: z.enum([
+    'game.actors',
+    'game.items',
+    'game.scenes',
+    'game.journal',
+    'game.macros',
+    'game.tables',
+    'game.playlists',
+    'game.cards',
+    'game.combats',
+    'game.folders',
+    'game.users',
+    'game.messages',
+    'game.settings.storage',
+  ]),
+  filters: z.record(z.unknown()).optional(),
+  fields: z.array(z.string()).optional(),
+  sort: z.object({
+    field: z.string(),
+    direction: z.enum(['asc', 'desc']).default('asc'),
+  }).optional(),
+  limit: z.number().int().min(1).max(500).default(50),
+});
+
+export const MacroCreateRequestSchema = DocumentProjectionSchema.extend({
+  name: z.string().min(1),
+  type: z.enum(['script', 'chat']).default('script'),
+  command: z.string().default(''),
+  img: z.string().optional(),
+  folderId: z.string().optional(),
+  ownership: z.record(z.number()).optional(),
+});
+
+export const MacroExecuteRequestSchema = z.object({
+  uuid: z.string().optional(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  actorUuid: z.string().optional(),
+  tokenId: z.string().optional(),
+  speaker: z.record(z.unknown()).optional(),
+});
+
+export const FoundryScriptExecuteRequestSchema = z.object({
+  code: z.string().min(1),
+  mode: z.enum(['script', 'expression']).default('script'),
+  timeoutMs: z.number().int().min(100).max(30_000).default(5_000),
+  resultLimitBytes: z.number().int().min(1_000).max(2_000_000).default(256_000),
+  description: z.string().optional(),
+});
+
+export const AuditLogEntrySchema = z.object({
+  id: z.number(),
+  timestamp: z.string(),
+  operation: z.string(),
+  toolName: z.string(),
+  executionId: z.string().optional(),
+  userId: z.string(),
+  userName: z.string(),
+  worldId: z.string(),
+  documentRefs: z.array(z.record(z.unknown())).default([]),
+  payloadSummary: z.unknown().optional(),
+  resultSummary: z.unknown().optional(),
+  durationMs: z.number().optional(),
+  success: z.boolean(),
+  error: z.string().optional(),
+});

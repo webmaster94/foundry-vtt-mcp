@@ -74,6 +74,9 @@ test-*.ps1
 
 # Local Configuration
 config.local.json
+AI Worker/
+release/
+build-vermeillon-actors.js
 .claude/foundry-mcp-server-*.zip
 foundry-vtt-mcp.zip
 .foundry-deploy-config

@@ -34,6 +34,14 @@ import { MapGenerationTools } from './tools/map-generation.js';
 
 import { TokenManipulationTools } from './tools/token-manipulation.js';
 
+import { BrowserConsoleTools } from './tools/browser-console.js';
+
+import { DocumentManagementTools } from './tools/document-management.js';
+
+import { MacroManagementTools } from './tools/macro-management.js';
+
+import { FoundryScriptTools } from './tools/foundry-script.js';
+
 import { DSA5CharacterCreator } from './systems/dsa5/character-creator.js';
 
 const CONTROL_HOST = '127.0.0.1';
@@ -1078,6 +1086,14 @@ async function startBackend(): Promise<void> {
 
   const tokenManipulationTools = new TokenManipulationTools({ foundryClient, logger });
 
+  const browserConsoleTools = new BrowserConsoleTools({ foundryClient, logger });
+
+  const documentManagementTools = new DocumentManagementTools({ foundryClient, logger });
+
+  const macroManagementTools = new MacroManagementTools({ foundryClient, logger });
+
+  const foundryScriptTools = new FoundryScriptTools({ foundryClient, logger });
+
   // Initialize mapgen-style backend components for map generation
   let mapGenerationJobQueue: any = null;
   let mapGenerationComfyUIClient: any = null;
@@ -1287,6 +1303,10 @@ async function startBackend(): Promise<void> {
     backendComfyUIHandlers: (globalThis as any).backendComfyUIHandlers
   });
 
+  const documentToolDefinitions = documentManagementTools.getToolDefinitions();
+  const macroToolDefinitions = macroManagementTools.getToolDefinitions();
+  const foundryScriptToolDefinitions = foundryScriptTools.getToolDefinitions();
+
   const allTools = [
 
     ...characterTools.getToolDefinitions(),
@@ -1309,9 +1329,28 @@ async function startBackend(): Promise<void> {
 
     ...tokenManipulationTools.getToolDefinitions(),
 
+    ...browserConsoleTools.getToolDefinitions(),
+
+    ...documentToolDefinitions,
+
+    ...macroToolDefinitions,
+
+    ...foundryScriptToolDefinitions,
+
     ...mapGenerationTools.getToolDefinitions(),
 
   ];
+
+  const additionalToolHandlers: Record<string, (args: any) => Promise<any>> = {};
+  for (const tool of documentToolDefinitions) {
+    additionalToolHandlers[tool.name] = (args: any) => documentManagementTools.handleToolCall(tool.name, args);
+  }
+  for (const tool of macroToolDefinitions) {
+    additionalToolHandlers[tool.name] = (args: any) => macroManagementTools.handleToolCall(tool.name, args);
+  }
+  for (const tool of foundryScriptToolDefinitions) {
+    additionalToolHandlers[tool.name] = (args: any) => foundryScriptTools.handleToolCall(tool.name, args);
+  }
 
   // Start Foundry connector (owns app port 31415)
 
@@ -1395,7 +1434,13 @@ async function startBackend(): Promise<void> {
 
               let result: any;
 
-              switch (name) {
+              const additionalToolHandler = additionalToolHandlers[name];
+
+              if (additionalToolHandler) {
+
+                result = await additionalToolHandler(args);
+
+              } else switch (name) {
 
                 // Character tools
 
@@ -1600,6 +1645,26 @@ async function startBackend(): Promise<void> {
                 case 'get-available-conditions':
 
                   result = await tokenManipulationTools.handleGetAvailableConditions(args);
+
+                  break;
+
+                // Browser console tools
+
+                case 'get-browser-console':
+
+                  result = await browserConsoleTools.handleGetBrowserConsole(args);
+
+                  break;
+
+                case 'clear-browser-console':
+
+                  result = await browserConsoleTools.handleClearBrowserConsole(args);
+
+                  break;
+
+                case 'get-browser-console-status':
+
+                  result = await browserConsoleTools.handleGetBrowserConsoleStatus(args);
 
                   break;
 
