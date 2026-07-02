@@ -32,8 +32,8 @@ export interface AuditLogEntry {
   scriptPreview?: string;
 }
 
-const AUDIT_FLAG = 'auditLogs';
-const AUDIT_SEQUENCE_FLAG = 'auditLogSequence';
+const AUDIT_SETTING = 'auditLogs';
+const AUDIT_SEQUENCE_SETTING = 'auditLogSequence';
 
 export class AuditService {
   private moduleId = MODULE_ID;
@@ -49,8 +49,8 @@ export class AuditService {
         logs.splice(0, logs.length - retention);
       }
 
-      await (game.world as any).setFlag(this.moduleId, AUDIT_FLAG, logs);
-      await (game.world as any).setFlag(this.moduleId, AUDIT_SEQUENCE_FLAG, entry.id);
+      await game.settings.set(this.moduleId, AUDIT_SETTING, logs);
+      await game.settings.set(this.moduleId, AUDIT_SEQUENCE_SETTING, entry.id);
     } catch (error) {
       console.warn(`[${this.moduleId}] Failed to write audit log`, error);
     }
@@ -64,11 +64,11 @@ export class AuditService {
     let entries = this.getLogsInternal();
 
     if (options.operation) {
-      entries = entries.filter((entry) => entry.operation === options.operation);
+      entries = entries.filter(entry => entry.operation === options.operation);
     }
 
     if (typeof options.success === 'boolean') {
-      entries = entries.filter((entry) => entry.success === options.success);
+      entries = entries.filter(entry => entry.success === options.success);
     }
 
     return {
@@ -83,7 +83,7 @@ export class AuditService {
     }
 
     const clearedCount = this.getLogsInternal().length;
-    await (game.world as any).setFlag(this.moduleId, AUDIT_FLAG, []);
+    await game.settings.set(this.moduleId, AUDIT_SETTING, []);
     await this.record({
       operation: 'audit.clear',
       toolName: 'clear-mcp-audit-log',
@@ -108,8 +108,10 @@ export class AuditService {
     };
 
     if (input.executionId) entry.executionId = input.executionId;
-    if (input.payloadSummary !== undefined) entry.payloadSummary = this.summarize(input.payloadSummary);
-    if (input.resultSummary !== undefined) entry.resultSummary = this.summarize(input.resultSummary);
+    if (input.payloadSummary !== undefined)
+      entry.payloadSummary = this.summarize(input.payloadSummary);
+    if (input.resultSummary !== undefined)
+      entry.resultSummary = this.summarize(input.resultSummary);
     if (input.durationMs !== undefined) entry.durationMs = input.durationMs;
     if (input.error) entry.error = input.error;
 
@@ -122,12 +124,21 @@ export class AuditService {
   }
 
   private getLogsInternal(): AuditLogEntry[] {
-    return ((game.world as any)?.getFlag(this.moduleId, AUDIT_FLAG) || []) as AuditLogEntry[];
+    try {
+      const logs = game.settings.get(this.moduleId, AUDIT_SETTING);
+      return Array.isArray(logs) ? ([...logs] as AuditLogEntry[]) : [];
+    } catch {
+      return [];
+    }
   }
 
   private nextId(): number {
-    const current = Number((game.world as any)?.getFlag(this.moduleId, AUDIT_SEQUENCE_FLAG) || 0);
-    return Number.isFinite(current) ? current + 1 : 1;
+    try {
+      const current = Number(game.settings.get(this.moduleId, AUDIT_SEQUENCE_SETTING) || 0);
+      return Number.isFinite(current) ? current + 1 : 1;
+    } catch {
+      return 1;
+    }
   }
 
   private getRetention(): number {
@@ -159,7 +170,7 @@ export class AuditService {
       const bytes = new TextEncoder().encode(value);
       const digest = await crypto.subtle.digest('SHA-256', bytes);
       return Array.from(new Uint8Array(digest))
-        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .map(byte => byte.toString(16).padStart(2, '0'))
         .join('');
     } catch {
       let hash = 0;

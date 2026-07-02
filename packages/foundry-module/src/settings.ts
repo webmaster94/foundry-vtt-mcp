@@ -392,9 +392,25 @@ export class ModuleSettings {
       },
     });
 
+    // Hidden storage for the MCP audit log (world scope; game.world has no
+    // flag API on the client, so a setting is the reliable world-level store)
+    game.settings.register(this.moduleId, 'auditLogs', {
+      scope: 'world',
+      config: false,
+      type: Array,
+      default: [],
+    });
+
+    game.settings.register(this.moduleId, 'auditLogSequence', {
+      scope: 'world',
+      config: false,
+      type: Number,
+      default: 0,
+    });
+
     game.settings.register(this.moduleId, 'auditRetention', {
       name: 'Audit Log Retention',
-      hint: 'Number of MCP audit entries retained in world flags.',
+      hint: 'Number of MCP audit entries retained in world settings.',
       scope: 'world',
       config: true,
       type: Number,
