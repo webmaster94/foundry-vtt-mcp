@@ -5,11 +5,16 @@ Connect Foundry VTT to Claude Desktop for AI-powered campaign management through
 > **This fork** ([webmaster94/foundry-vtt-mcp](https://github.com/webmaster94/foundry-vtt-mcp)) extends the upstream project with much deeper Foundry integration:
 >
 > - **Generic document management API** — list/get/create/update/delete any world document (actors, items, journals, scenes, folders, playlists, cards, combats, roll tables...) plus embedded documents, schema introspection, and folder organization
+> - **Dry-run & undo** — preview any update/delete as a before/after diff (`dryRun: true`), and revert the last write with `undo-last-mcp-operation`
+> - **Batch operations** — `create-embedded-documents` (many at once), `batch-document-operations` (ordered sequences), and `build-actor-from-spec` (a complete NPC — template clone, stats, compendium spells/items, custom features — in one call)
+> - **System-data compendium search** — `search-compendium-contents` filters on real fields (spell level, school, item type) with optional description full-text
 > - **Script execution** — run JavaScript in the connected GM browser through `execute-foundry-script`
 > - **Macro management** — create, update, execute, and delete macros
 > - **Browser console capture** — read the Foundry client's console output for debugging
-> - **Multiple Foundry servers** — define named connection profiles and switch between live Foundry instances mid-conversation (see [Multiple Foundry Servers](#multiple-foundry-servers))
-> - **Audit logging** of all write operations
+> - **Multiple Foundry servers** — named connection profiles, per-call `server` overrides, live config reload (see [Multiple Foundry Servers](#multiple-foundry-servers))
+> - **Version handshake** — mismatched module/server versions produce actionable errors instead of "No handler found"
+> - **Audit logging** of all write operations, with structured error codes and an agent-facing `get-bridge-recipes` knowledge tool
+> - **Integration smoke test** — `npm run smoke` exercises the full write surface against a live world before each release
 >
 > **Foundry module install (this fork):** paste this manifest URL into Foundry's _Install Module_ dialog:
 > `https://github.com/webmaster94/foundry-vtt-mcp/releases/latest/download/module.json`

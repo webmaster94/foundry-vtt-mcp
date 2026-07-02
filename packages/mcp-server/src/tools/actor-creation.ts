@@ -92,7 +92,7 @@ export class ActorCreationTools {
       {
         name: 'get-compendium-entry-full',
         description:
-          'Retrieve complete stat block data including items, spells, and abilities for actor creation',
+          'Retrieve complete stat block data including items, spells, and abilities for actor creation. Large entries can be huge — use fields to project only what you need (e.g. ["name","system.attributes","items"]) and maxBytes to cap the response.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -103,6 +103,16 @@ export class ActorCreationTools {
             entryId: {
               type: 'string',
               description: 'Entry identifier within the pack',
+            },
+            fields: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Dotted paths to project; omit for the full entry',
+            },
+            maxBytes: {
+              type: 'number',
+              description:
+                'Response size cap in bytes (default 256000); oversized results return a summary instead',
             },
           },
           required: ['packId', 'entryId'],
@@ -199,9 +209,11 @@ export class ActorCreationTools {
     const schema = z.object({
       packId: z.string().min(1, 'Pack ID cannot be empty'),
       entryId: z.string().min(1, 'Entry ID cannot be empty'),
+      fields: z.array(z.string()).optional(),
+      maxBytes: z.number().optional(),
     });
 
-    const { packId, entryId } = schema.parse(args);
+    const { packId, entryId, fields, maxBytes } = schema.parse(args);
 
     this.logger.info('Getting full compendium entry', { packId, entryId });
 
@@ -211,6 +223,8 @@ export class ActorCreationTools {
         {
           packId,
           documentId: entryId,
+          ...(fields ? { fields } : {}),
+          ...(maxBytes ? { maxBytes } : {}),
         }
       );
 
@@ -221,6 +235,9 @@ export class ActorCreationTools {
         hasItems: !!fullEntry.items?.length,
         hasEffects: !!fullEntry.effects?.length,
       });
+
+      // Projected or truncated results pass through untouched
+      if (fields || fullEntry?.truncated) return fullEntry;
 
       return this.formatCompendiumEntryResponse(fullEntry);
     } catch (error) {

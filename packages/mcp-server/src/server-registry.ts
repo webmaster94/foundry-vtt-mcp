@@ -2,9 +2,21 @@ import { z } from 'zod';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { AsyncLocalStorage } from 'async_hooks';
 import { Logger } from './logger.js';
 import { Config } from './config.js';
 import { FoundryClient } from './foundry-client.js';
+
+/**
+ * Per-call server override. backend.ts wraps each tool invocation in
+ * runWithServer(name, ...) when the caller passes a `server` argument, so any
+ * tool can target a specific profile without the tool knowing about routing.
+ */
+const serverContext = new AsyncLocalStorage<string>();
+
+export function runWithServer<T>(serverName: string, fn: () => Promise<T>): Promise<T> {
+  return serverContext.run(serverName, fn);
+}
 
 /**
  * Multi-server support: named Foundry connection profiles.
@@ -179,9 +191,16 @@ export class ServerRegistry {
   }
 
   getActive(): RegisteredServer {
-    const server = this.servers.get(this.activeName);
+    const contextName = serverContext.getStore();
+    const name = contextName ?? this.activeName;
+    const server = this.servers.get(name);
     if (!server) {
-      throw new Error(`Active server "${this.activeName}" is not registered`);
+      const available = [...this.servers.keys()].join(', ');
+      throw new Error(
+        contextName
+          ? `Unknown server "${contextName}" in per-call override. Available servers: ${available}`
+          : `Active server "${name}" is not registered`
+      );
     }
     return server;
   }
@@ -214,6 +233,126 @@ export class ServerRegistry {
         }
       })
     );
+  }
+
+  /** Restart the listener for one profile (module reconnects on its own). */
+  async reconnect(name: string): Promise<RegisteredServer> {
+    const server = this.servers.get(name);
+    if (!server) {
+      throw new Error(
+        `Unknown server "${name}". Available servers: ${[...this.servers.keys()].join(', ')}`
+      );
+    }
+    try {
+      server.client.disconnect();
+    } catch {
+      // already stopped
+    }
+    // disconnect() stops async; give the port a moment to free before rebinding
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await server.client.connect();
+    this.logger.info('Server connector restarted', { server: name });
+    return server;
+  }
+
+  /**
+   * Re-read the servers config file and apply the difference: new profiles
+   * start, removed profiles stop, changed profiles restart. Unchanged
+   * profiles keep their live connections.
+   */
+  async reloadConfig(
+    config: Config,
+    logger: Logger
+  ): Promise<{ added: string[]; removed: string[]; changed: string[]; unchanged: string[] }> {
+    const file = this.loadServersFile();
+    const profiles: Record<string, ServerProfile> = file?.servers ?? {
+      default: { label: 'Default (from environment)' },
+    };
+
+    const added: string[] = [];
+    const removed: string[] = [];
+    const changed: string[] = [];
+    const unchanged: string[] = [];
+
+    // Remove profiles that disappeared
+    for (const name of [...this.servers.keys()]) {
+      if (!(name in profiles)) {
+        const server = this.servers.get(name)!;
+        try {
+          server.client.disconnect();
+        } catch {
+          // best effort
+        }
+        this.servers.delete(name);
+        removed.push(name);
+      }
+    }
+
+    // Add new or apply changed
+    for (const [name, profile] of Object.entries(profiles)) {
+      const foundryConfig: Config['foundry'] = {
+        ...config.foundry,
+        ...Object.fromEntries(
+          Object.entries(profile).filter(([key, v]) => key !== 'label' && v !== undefined)
+        ),
+      };
+      const existing = this.servers.get(name);
+      if (existing) {
+        if (JSON.stringify(existing.foundryConfig) === JSON.stringify(foundryConfig)) {
+          existing.label = profile.label || name;
+          unchanged.push(name);
+          continue;
+        }
+        try {
+          existing.client.disconnect();
+        } catch {
+          // best effort
+        }
+        this.servers.delete(name);
+        changed.push(name);
+      } else {
+        added.push(name);
+      }
+
+      const server: RegisteredServer = {
+        name,
+        label: profile.label || name,
+        foundryConfig,
+        client: new FoundryClient(foundryConfig, logger.child({ server: name })),
+      };
+      this.servers.set(name, server);
+      await new Promise(resolve => setTimeout(resolve, changed.includes(name) ? 500 : 0));
+      server.client.connect().catch(error => {
+        this.logger.error(`Failed to start connector for reloaded server "${name}"`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+
+    // Keep a valid active server
+    if (!this.servers.has(this.activeName)) {
+      const fallback =
+        file?.defaultServer && this.servers.has(file.defaultServer)
+          ? file.defaultServer
+          : this.servers.keys().next().value!;
+      this.activeName = fallback;
+    } else if (
+      file?.defaultServer &&
+      this.servers.has(file.defaultServer) &&
+      (added.length || removed.length)
+    ) {
+      // honor a changed defaultServer on structural reloads
+      this.activeName = file.defaultServer;
+    }
+
+    this.logger.info('Servers config reloaded', {
+      added,
+      removed,
+      changed,
+      unchanged,
+      active: this.activeName,
+    });
+    return { added, removed, changed, unchanged };
   }
 
   disconnectAll(): void {
@@ -282,5 +421,9 @@ export class RoutingFoundryClient extends FoundryClient {
 
   override isConnected(): boolean {
     return this.registry.getActive().client.isConnected();
+  }
+
+  override getCapabilities(force = false): Promise<any> {
+    return this.registry.getActive().client.getCapabilities(force);
   }
 }

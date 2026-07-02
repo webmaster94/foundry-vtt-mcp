@@ -89,10 +89,12 @@ export class FoundryConnector {
       this.webrtcSignalingServer = null;
       this.logger.info('WebRTC signaling server skipped (websocket-only connection type)');
     } else {
+      // Only expose beyond loopback when remote Foundry instances must reach us
+      const bindHost = this.config.remoteMode ? '0.0.0.0' : '127.0.0.1';
       await new Promise<void>((resolve, reject) => {
-        this.webrtcSignalingServer.listen(WEBRTC_PORT, '0.0.0.0', () => {
-          this.logger.info(`WebRTC signaling server listening on port ${WEBRTC_PORT}`);
-          console.error(`[WebRTC] Server started on 0.0.0.0:${WEBRTC_PORT}`);
+        this.webrtcSignalingServer.listen(WEBRTC_PORT, bindHost, () => {
+          this.logger.info(`WebRTC signaling server listening on ${bindHost}:${WEBRTC_PORT}`);
+          console.error(`[WebRTC] Server started on ${bindHost}:${WEBRTC_PORT}`);
           resolve();
         });
         this.webrtcSignalingServer.on('error', (error: Error) => {
@@ -168,11 +170,12 @@ export class FoundryConnector {
       });
     });
 
-    // Start the HTTP server
+    // Start the HTTP server (loopback-only unless remote instances connect in)
     await new Promise<void>((resolve, reject) => {
-      this.httpServer.listen(this.config.port, () => {
+      const bindHost = this.config.remoteMode ? '0.0.0.0' : '127.0.0.1';
+      this.httpServer.listen(this.config.port, bindHost, () => {
         this.isStarted = true;
-        this.logger.info('Foundry connector listening', { port: this.config.port });
+        this.logger.info('Foundry connector listening', { host: bindHost, port: this.config.port });
         resolve();
       });
 

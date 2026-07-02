@@ -1,5 +1,23 @@
 import { MODULE_ID } from './constants.js';
 
+/**
+ * Inverse operation stored alongside a successful write so it can be undone.
+ * kind describes how to revert:
+ *  - 'delete': delete the document referenced by ref (reverts a create)
+ *  - 'update': re-apply `updates` to ref (reverts an update)
+ *  - 'create': recreate `data` as documentType (reverts a delete)
+ *  - 'embedded-delete' / 'embedded-update' / 'embedded-create': same, under parentUuid
+ */
+export interface InverseOperation {
+  kind: 'delete' | 'update' | 'create' | 'embedded-delete' | 'embedded-update' | 'embedded-create';
+  documentType?: string;
+  ref?: Record<string, unknown>;
+  parentUuid?: string;
+  embeddedType?: string;
+  updates?: Record<string, unknown>;
+  data?: Record<string, unknown>;
+}
+
 export interface AuditRecordInput {
   operation: string;
   toolName: string;
@@ -11,6 +29,7 @@ export interface AuditRecordInput {
   success: boolean;
   error?: string;
   scriptCode?: string;
+  inverse?: InverseOperation;
 }
 
 export interface AuditLogEntry {
@@ -30,6 +49,8 @@ export interface AuditLogEntry {
   error?: string;
   scriptHash?: string;
   scriptPreview?: string;
+  inverse?: InverseOperation;
+  undone?: boolean;
 }
 
 const AUDIT_SETTING = 'auditLogs';
@@ -120,7 +141,32 @@ export class AuditService {
       entry.scriptPreview = input.scriptCode.slice(0, 200);
     }
 
+    if (input.inverse) {
+      entry.inverse = input.inverse;
+    }
+
     return entry;
+  }
+
+  /** Most recent successful, not-yet-undone entry that carries an inverse. */
+  getLastUndoable(): AuditLogEntry | null {
+    const entries = this.getLogsInternal();
+    for (let index = entries.length - 1; index >= 0; index--) {
+      const entry = entries[index]!;
+      if (entry.success && entry.inverse && !entry.undone) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  async markUndone(id: number): Promise<void> {
+    const logs = this.getLogsInternal();
+    const entry = logs.find(candidate => candidate.id === id);
+    if (entry) {
+      entry.undone = true;
+      await game.settings.set(this.moduleId, AUDIT_SETTING, logs);
+    }
   }
 
   private getLogsInternal(): AuditLogEntry[] {

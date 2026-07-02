@@ -13,10 +13,38 @@ export interface FoundryResponse {
   error?: string;
 }
 
+export type BridgeErrorCode =
+  | 'NOT_CONNECTED'
+  | 'NO_HANDLER'
+  | 'VERSION_MISMATCH'
+  | 'TIMEOUT'
+  | 'QUERY_FAILED';
+
+/** Error with a machine-readable code so agents can branch on failure class. */
+export class BridgeError extends Error {
+  constructor(
+    public code: BridgeErrorCode,
+    message: string
+  ) {
+    super(`[${code}] ${message}`);
+    this.name = 'BridgeError';
+  }
+}
+
+export interface ModuleCapabilities {
+  moduleId: string;
+  moduleVersion: string;
+  foundryVersion: string;
+  system: { id: string; version: string };
+  world: { id: string; title: string };
+  handlers: string[];
+}
+
 export class FoundryClient {
   private logger: Logger;
   private config: Config['foundry'];
   private connector: FoundryConnector;
+  private capabilities: ModuleCapabilities | null = null;
 
   constructor(config: Config['foundry'], logger: Logger) {
     this.config = config;
@@ -56,7 +84,9 @@ export class FoundryClient {
 
   async query(method: string, data?: any): Promise<any> {
     if (!this.connector.isConnected()) {
-      throw new Error(
+      this.capabilities = null;
+      throw new BridgeError(
+        'NOT_CONNECTED',
         'Foundry VTT module not connected. Please ensure Foundry is running and the MCP Bridge module is enabled.'
       );
     }
@@ -70,7 +100,55 @@ export class FoundryClient {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown query error';
       this.logger.error('Query failed', { method, error: errorMessage });
-      throw new Error(`Query ${method} failed: ${errorMessage}`);
+      throw await this.classifyQueryError(method, errorMessage);
+    }
+  }
+
+  /**
+   * Turn raw query failures into coded errors. "No handler found" almost
+   * always means the installed module predates this server — say so, with the
+   * module version when we can discover it.
+   */
+  private async classifyQueryError(method: string, errorMessage: string): Promise<Error> {
+    if (/No handler found/i.test(errorMessage)) {
+      const caps = await this.getCapabilities().catch(() => null);
+      if (caps) {
+        return new BridgeError(
+          'VERSION_MISMATCH',
+          `The connected Foundry module (v${caps.moduleVersion}, world "${caps.world?.title}") does not support "${method}". ` +
+            `Update the Foundry MCP Bridge module to match this MCP server, then reload the world.`
+        );
+      }
+      return new BridgeError(
+        'NO_HANDLER',
+        `The connected Foundry module does not support "${method}" — it likely predates this MCP server. Update the module and reload the world.`
+      );
+    }
+    if (/timeout/i.test(errorMessage)) {
+      return new BridgeError('TIMEOUT', `Query ${method} timed out: ${errorMessage}`);
+    }
+    return new BridgeError('QUERY_FAILED', `Query ${method} failed: ${errorMessage}`);
+  }
+
+  /**
+   * Module capabilities (version + supported handlers), cached until
+   * disconnect. Returns null when the module predates getCapabilities.
+   */
+  async getCapabilities(force = false): Promise<ModuleCapabilities | null> {
+    if (!this.connector.isConnected()) {
+      this.capabilities = null;
+      return null;
+    }
+    if (this.capabilities && !force) return this.capabilities;
+    try {
+      const result = await this.connector.query('foundry-mcp-bridge.getCapabilities', {});
+      if (result?.moduleVersion) {
+        this.capabilities = result as ModuleCapabilities;
+        return this.capabilities;
+      }
+      return null;
+    } catch {
+      return null; // old module without the handler
     }
   }
 

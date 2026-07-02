@@ -14,9 +14,11 @@ import { config } from './config.js';
 
 import { Logger } from './logger.js';
 
-import { ServerRegistry } from './server-registry.js';
+import { ServerRegistry, runWithServer } from './server-registry.js';
 
 import { ServerManagementTools } from './tools/server-management.js';
+
+import { RecipeTools } from './tools/recipes.js';
 
 import { CharacterTools } from './tools/character.js';
 
@@ -1179,6 +1181,8 @@ async function startBackend(): Promise<void> {
 
   const serverManagementTools = new ServerManagementTools({ registry: serverRegistry, logger });
 
+  const recipeTools = new RecipeTools({ logger });
+
   // Initialize system registry and register adapters
   const { getSystemRegistry } = await import('./systems/index.js');
   const { DnD5eAdapter } = await import('./systems/dnd5e/adapter.js');
@@ -1475,6 +1479,8 @@ async function startBackend(): Promise<void> {
 
     ...serverManagementTools.getToolDefinitions(),
 
+    ...recipeTools.getToolDefinitions(),
+
     ...mapGenerationTools.getToolDefinitions(),
   ];
 
@@ -1494,6 +1500,9 @@ async function startBackend(): Promise<void> {
   for (const tool of serverManagementTools.getToolDefinitions()) {
     additionalToolHandlers[tool.name] = (args: any) =>
       serverManagementTools.handleToolCall(tool.name, args);
+  }
+  for (const tool of recipeTools.getToolDefinitions()) {
+    additionalToolHandlers[tool.name] = (args: any) => recipeTools.handleToolCall(tool.name, args);
   }
 
   // Start Foundry connectors for every configured server profile
@@ -1553,9 +1562,25 @@ async function startBackend(): Promise<void> {
           }
 
           if (msg.method === 'call_tool') {
-            const { name, args } = (msg.params || {}) as { name: string; args?: any };
+            const { name, args: rawArgs } = (msg.params || {}) as { name: string; args?: any };
 
-            try {
+            // Universal per-call server override: any tool may pass
+            // `server: "<profile>"` to target a specific Foundry instance
+            // for just that call, without changing the active server.
+            let args = rawArgs;
+            let serverOverride: string | undefined;
+            if (
+              rawArgs &&
+              typeof rawArgs.server === 'string' &&
+              name !== 'use-foundry-server' &&
+              name !== 'list-foundry-servers'
+            ) {
+              serverOverride = rawArgs.server;
+              const { server: _server, ...rest } = rawArgs;
+              args = rest;
+            }
+
+            const dispatch = async (): Promise<any> => {
               let result: any;
 
               const additionalToolHandler = additionalToolHandlers[name];
@@ -1820,6 +1845,14 @@ async function startBackend(): Promise<void> {
                     throw new Error(`Unknown tool: ${name}`);
                 }
 
+              return result;
+            };
+
+            try {
+              const result = serverOverride
+                ? await runWithServer(serverOverride, dispatch)
+                : await dispatch();
+
               const payload = {
                 content: [
                   {
@@ -1832,6 +1865,7 @@ async function startBackend(): Promise<void> {
               socket.write(JSON.stringify({ id: msg.id, result: payload }) + '\n');
             } catch (e: any) {
               const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
+              const errorCode = (e as any)?.code;
 
               socket.write(
                 JSON.stringify({
@@ -1839,6 +1873,7 @@ async function startBackend(): Promise<void> {
                   result: {
                     content: [{ type: 'text', text: `Error: ${errorMessage}` }],
                     isError: true,
+                    ...(errorCode ? { errorCode } : {}),
                   },
                 }) + '\n'
               );

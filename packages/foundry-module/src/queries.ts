@@ -5,6 +5,8 @@ import { browserConsoleCapture, type BrowserConsoleLevel } from './console-captu
 import { auditService } from './audit-service.js';
 import { documentService } from './document-service.js';
 import { scriptExecutor } from './script-executor.js';
+import { actorBuilder } from './actor-builder.js';
+import { compendiumContentSearch } from './compendium-search.js';
 
 export class QueryHandlers {
   public dataAccess: FoundryDataAccess;
@@ -85,6 +87,15 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.queryFoundryData`] = this.handleQueryFoundryData.bind(this);
     CONFIG.queries[`${modulePrefix}.getMcpAuditLog`] = this.handleGetMcpAuditLog.bind(this);
     CONFIG.queries[`${modulePrefix}.clearMcpAuditLog`] = this.handleClearMcpAuditLog.bind(this);
+    CONFIG.queries[`${modulePrefix}.getCapabilities`] = this.handleGetCapabilities.bind(this);
+    CONFIG.queries[`${modulePrefix}.createEmbeddedDocuments`] =
+      this.handleCreateEmbeddedDocuments.bind(this);
+    CONFIG.queries[`${modulePrefix}.batchDocumentOperations`] =
+      this.handleBatchDocumentOperations.bind(this);
+    CONFIG.queries[`${modulePrefix}.undoLastOperation`] = this.handleUndoLastOperation.bind(this);
+    CONFIG.queries[`${modulePrefix}.buildActorFromSpec`] = this.handleBuildActorFromSpec.bind(this);
+    CONFIG.queries[`${modulePrefix}.searchCompendiumContents`] =
+      this.handleSearchCompendiumContents.bind(this);
 
     // Phase 2 & 3: Write operation queries
     CONFIG.queries[`${modulePrefix}.createActorFromCompendium`] =
@@ -618,6 +629,55 @@ export class QueryHandlers {
     return { success: true, ...(await documentService.queryFoundryData(data || {})) };
   }
 
+  private async handleGetCapabilities(): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    const prefix = `${MODULE_ID}.`;
+    const handlers = Object.keys(CONFIG.queries || {})
+      .filter(name => name.startsWith(prefix))
+      .map(name => name.slice(prefix.length))
+      .sort();
+    return {
+      success: true,
+      moduleId: MODULE_ID,
+      moduleVersion: (game as any).modules?.get(MODULE_ID)?.version || 'unknown',
+      foundryVersion: game.version,
+      system: { id: (game as any).system?.id, version: (game as any).system?.version },
+      world: { id: game.world?.id, title: (game.world as any)?.title },
+      handlers,
+    };
+  }
+
+  private async handleCreateEmbeddedDocuments(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, ...(await documentService.createEmbeddedDocuments(data || {})) };
+  }
+
+  private async handleBatchDocumentOperations(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, ...(await documentService.batchOperations(data || {})) };
+  }
+
+  private async handleUndoLastOperation(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return documentService.undoLastOperation(data || {});
+  }
+
+  private async handleBuildActorFromSpec(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return actorBuilder.build(data?.spec || data || {});
+  }
+
+  private async handleSearchCompendiumContents(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, ...(await compendiumContentSearch.search(data || {})) };
+  }
+
   private async handleGetMcpAuditLog(data: any): Promise<any> {
     const denied = this.assertGM();
     if (denied) return denied;
@@ -702,6 +762,8 @@ export class QueryHandlers {
   private async handleGetCompendiumDocumentFull(data: {
     packId: string;
     documentId: string;
+    fields?: string[];
+    maxBytes?: number;
   }): Promise<any> {
     try {
       // SECURITY: Silent GM validation
@@ -720,7 +782,39 @@ export class QueryHandlers {
         throw new Error('documentId is required');
       }
 
-      return await this.dataAccess.getCompendiumDocumentFull(data.packId, data.documentId);
+      const full = await this.dataAccess.getCompendiumDocumentFull(data.packId, data.documentId);
+
+      // Optional projection: pick only requested top-level/dotted fields
+      let result: any = full;
+      if (Array.isArray(data.fields) && data.fields.length) {
+        const utils = (globalThis as any).foundry?.utils;
+        const projected: Record<string, unknown> = {};
+        for (const field of data.fields) {
+          const value = utils?.getProperty ? utils.getProperty(full, field) : undefined;
+          if (value !== undefined) projected[field] = value;
+        }
+        result = { packId: data.packId, documentId: data.documentId, fields: projected };
+      }
+
+      // Size guard: default 256KB, configurable per call
+      const maxBytes = Math.min(Math.max(data.maxBytes ?? 256_000, 10_000), 2_000_000);
+      const text = JSON.stringify(result);
+      if (text.length > maxBytes) {
+        return {
+          truncated: true,
+          maxBytes,
+          actualBytes: text.length,
+          note: 'Result exceeded maxBytes. Use the fields parameter to project only what you need (e.g. ["name","system.abilities","items"]), or raise maxBytes.',
+          name: (full as any)?.name,
+          type: (full as any)?.type,
+          topLevelKeys: Object.keys(full || {}),
+          itemNames: Array.isArray((full as any)?.items)
+            ? (full as any).items.map((item: any) => `${item?.type}: ${item?.name}`).slice(0, 100)
+            : undefined,
+        };
+      }
+
+      return result;
     } catch (error) {
       throw new Error(
         `Failed to get compendium document: ${error instanceof Error ? error.message : 'Unknown error'}`

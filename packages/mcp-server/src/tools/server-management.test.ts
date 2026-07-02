@@ -30,6 +30,18 @@ vi.mock('../foundry-client.js', () => {
       async query(method: string) {
         return { method, port: this.foundryConfig.port };
       }
+      async getCapabilities() {
+        return this.connected
+          ? {
+              moduleId: 'foundry-mcp-bridge',
+              moduleVersion: '0.10.0',
+              foundryVersion: '13.351',
+              system: { id: 'dnd5e', version: '5.3.1' },
+              world: { id: 'test', title: 'Test World' },
+              handlers: ['ping'],
+            }
+          : null;
+      }
     },
   };
 });
@@ -144,12 +156,14 @@ describe('ServerManagementTools', () => {
     );
   });
 
-  it('exposes both tool definitions', () => {
+  it('exposes all four tool definitions', () => {
     const registry = new ServerRegistry(config, logger, path.join(os.tmpdir(), 'nope.json'));
     const tools = new ServerManagementTools({ registry, logger });
     expect(tools.getToolDefinitions().map(t => t.name)).toEqual([
       'list-foundry-servers',
       'use-foundry-server',
+      'reconnect-foundry-server',
+      'reload-foundry-servers-config',
     ]);
   });
 });

@@ -397,11 +397,13 @@ export const CreateDocumentRequestSchema = DocumentProjectionSchema.extend({
 export const UpdateDocumentRequestSchema = DocumentProjectionSchema.extend({
   ref: DocumentReferenceSchema,
   updates: z.record(z.unknown()),
+  dryRun: z.boolean().optional(),
 });
 
 export const DeleteDocumentRequestSchema = z.object({
   ref: DocumentReferenceSchema,
   confirmDeletion: z.boolean().default(false),
+  dryRun: z.boolean().optional(),
 });
 
 export const DocumentSchemaRequestSchema = z.object({
@@ -429,11 +431,98 @@ export const CreateEmbeddedDocumentRequestSchema = DocumentProjectionSchema.exte
 export const UpdateEmbeddedDocumentRequestSchema = DocumentProjectionSchema.extend({
   ref: EmbeddedDocumentReferenceSchema,
   updates: z.record(z.unknown()),
+  dryRun: z.boolean().optional(),
 });
 
 export const DeleteEmbeddedDocumentRequestSchema = z.object({
   ref: EmbeddedDocumentReferenceSchema,
   confirmDeletion: z.boolean().default(false),
+});
+
+export const CreateEmbeddedDocumentsRequestSchema = DocumentProjectionSchema.extend({
+  parentUuid: z.string().min(1),
+  embeddedType: z.string().min(1),
+  data: z.array(z.record(z.unknown())).min(1).max(100),
+});
+
+export const BatchDocumentOperationsRequestSchema = z.object({
+  operations: z
+    .array(
+      z
+        .object({
+          action: z.enum([
+            'create',
+            'update',
+            'delete',
+            'createEmbedded',
+            'createEmbeddedMany',
+            'updateEmbedded',
+            'deleteEmbedded',
+          ]),
+        })
+        .passthrough()
+    )
+    .min(1)
+    .max(50),
+  continueOnError: z.boolean().default(false),
+});
+
+export const ActorSpecSchema = z.object({
+  name: z.string().min(1),
+  type: z.string().optional(),
+  folder: z.string().optional(),
+  template: z
+    .object({
+      packId: z.string().optional(),
+      entryId: z.string().optional(),
+      name: z.string().optional(),
+    })
+    .optional(),
+  img: z.string().optional(),
+  system: z.record(z.unknown()).optional(),
+  prototypeToken: z.record(z.unknown()).optional(),
+  spells: z.array(z.string()).optional(),
+  replaceTemplateSpells: z.boolean().optional(),
+  dropTemplateWeapons: z.boolean().optional(),
+  items: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        rename: z.string().optional(),
+        quantity: z.number().int().positive().optional(),
+        system: z.record(z.unknown()).optional(),
+        description: z.string().optional(),
+      })
+    )
+    .optional(),
+  features: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        description: z.string(),
+        activation: z.record(z.unknown()).optional(),
+      })
+    )
+    .optional(),
+  biography: z.string().optional(),
+});
+
+export const CompendiumContentSearchRequestSchema = z.object({
+  packIds: z.array(z.string()).optional(),
+  documentType: z.string().optional(),
+  name: z.string().optional(),
+  filters: z
+    .array(
+      z.object({
+        path: z.string().min(1),
+        op: z.enum(['eq', 'lte', 'gte', 'lt', 'gt', 'ne', 'in', 'contains']).optional(),
+        value: z.unknown(),
+      })
+    )
+    .optional(),
+  text: z.string().optional(),
+  fields: z.array(z.string()).optional(),
+  limit: z.number().int().positive().max(100).optional(),
 });
 
 export const QueryFoundryDataRequestSchema = DocumentProjectionSchema.extend({

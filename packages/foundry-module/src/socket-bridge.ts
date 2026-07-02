@@ -450,18 +450,23 @@ export class SocketBridge {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.log(`Max reconnection attempts reached (${this.maxReconnectAttempts})`);
-      return;
-    }
-
+    // Never give up: after the configured fast attempts are exhausted, keep
+    // retrying at a slow 30s cadence so MCP server restarts heal on their own.
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
     }
 
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000); // Exponential backoff, max 30s
+    const delay =
+      this.reconnectAttempts >= this.maxReconnectAttempts
+        ? 30000
+        : Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
     this.reconnectAttempts++;
 
+    if (this.reconnectAttempts === this.maxReconnectAttempts + 1) {
+      this.log(
+        `Fast reconnection attempts exhausted (${this.maxReconnectAttempts}); switching to slow retry every 30s`
+      );
+    }
     this.log(`Scheduling reconnection attempt ${this.reconnectAttempts} in ${delay}ms`);
     this.connectionState = CONNECTION_STATES.RECONNECTING;
 
