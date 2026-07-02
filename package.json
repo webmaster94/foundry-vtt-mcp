@@ -25,6 +25,7 @@
     "setup-comfyui": "node scripts/setup-comfyui.js",
     "test:mcp:schema": "node scripts/mcp-schema-smoke-test.mjs",
     "smoke": "node scripts/bridge-smoke-test.mjs",
+    "setup": "node scripts/install.mjs",
     "audit:deps": "npm audit && npm run audit --workspaces --if-present",
     "audit:unused": "npx knip",
     "audit:circular": "npx madge --circular --extensions ts packages/mcp-server/src packages/foundry-module/src shared/src",

@@ -18,42 +18,65 @@ https://github.com/webmaster94/foundry-vtt-mcp/releases/latest/download/module.j
 
 Enable **Foundry MCP Bridge** in your world's Module Management. Do not rename the module folder — the id `foundry-mcp-bridge` is load-bearing for socket routing. Updating over the upstream module works in place (same id).
 
-### 2. Install the MCP server
+### 2. Install the MCP server and connect your AI
 
-Requires Node.js 18+.
+Requires [Node.js 18+](https://nodejs.org) and [git](https://git-scm.com). Then it's three commands:
 
 ```bash
 git clone https://github.com/webmaster94/foundry-vtt-mcp.git
 cd foundry-vtt-mcp
-npm install
-npm run build
+npm install && npm run setup
 ```
 
-> Upstream's Windows/Mac installers work but ship the upstream (unextended) versions of both components. For this fork, build from source; the module and server versions must match (mismatches produce clear `VERSION_MISMATCH` errors rather than silent failures).
+`npm run setup` builds the server and **automatically registers it with every AI client it finds on your machine**:
 
-### 3. Connect your AI client
+| Client             | How it's configured                                                     |
+| ------------------ | ----------------------------------------------------------------------- |
+| **Claude Desktop** | adds `foundry-mcp` to `claude_desktop_config.json` (backup saved first) |
+| **Claude Code**    | `claude mcp add` at user scope — works from any folder                  |
+| **Codex CLI**      | `codex mcp add` (or `~/.codex/config.toml` on older versions)           |
 
-**Claude Desktop** — add to `claude_desktop_config.json`:
+Restart your AI client, start (or refresh) your Foundry world, and the tools appear. The module connects within ~30 seconds and reconnects automatically after either side restarts. Re-running setup is safe — existing entries are updated in place, and a `foundry-servers.json` (see below) is picked up automatically.
+
+Options: `node scripts/install.mjs --clients claude-desktop,codex` to configure specific clients only, `--list` to preview without changing anything.
+
+> Upstream's Windows/Mac installers work but ship the upstream (unextended) versions of both components. For this fork, use the setup script; the module and server versions must match (mismatches produce clear `VERSION_MISMATCH` errors rather than silent failures).
+
+<details>
+<summary><strong>Manual configuration</strong> (if you prefer, or for other MCP clients)</summary>
+
+The server entry point is `packages/mcp-server/dist/index.js`; any MCP client that can run a stdio server works.
+
+**Claude Desktop** — `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\`, macOS: `~/Library/Application Support/Claude/`, Linux: `~/.config/Claude/`):
 
 ```json
 {
   "mcpServers": {
     "foundry-mcp": {
       "command": "node",
-      "args": ["path/to/foundry-vtt-mcp/packages/mcp-server/dist/index.js"],
-      "env": { "FOUNDRY_HOST": "localhost", "FOUNDRY_PORT": "31415" }
+      "args": ["/absolute/path/to/foundry-vtt-mcp/packages/mcp-server/dist/index.js"]
     }
   }
 }
 ```
 
-**Claude Code** — from any project:
+**Claude Code:**
 
 ```bash
-claude mcp add foundry-mcp -- node path/to/foundry-vtt-mcp/packages/mcp-server/dist/index.js
+claude mcp add foundry-mcp --scope user -- node /absolute/path/to/foundry-vtt-mcp/packages/mcp-server/dist/index.js
 ```
 
-Start (or refresh) your Foundry world; the module connects to the MCP server within ~30 seconds and reconnects automatically after either side restarts.
+**Codex CLI** — `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.foundry-mcp]
+command = "node"
+args = ["/absolute/path/to/foundry-vtt-mcp/packages/mcp-server/dist/index.js"]
+```
+
+Optional environment variables: `FOUNDRY_HOST` / `FOUNDRY_PORT` (default `localhost:31415`), `FOUNDRY_SERVERS_CONFIG` (path to a multi-server profile file).
+
+</details>
 
 ## Multiple Foundry Servers
 

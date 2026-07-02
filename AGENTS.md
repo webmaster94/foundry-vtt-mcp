@@ -85,4 +85,6 @@ packages/mcp-server/src/
   foundry-connector.ts  WebSocket/WebRTC listeners
   tools/*.ts            one class per tool family
 scripts/bridge-smoke-test.mjs   live integration suite (npm run smoke)
+scripts/install.mjs             client setup: npm run setup — builds and registers
+                                the server with Claude Desktop / Claude Code / Codex
 ```
