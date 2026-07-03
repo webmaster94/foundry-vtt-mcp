@@ -36,7 +36,7 @@ npm install && npm run setup
 | **Claude Code**    | `claude mcp add` at user scope — works from any folder                  |
 | **Codex CLI**      | `codex mcp add` (or `~/.codex/config.toml` on older versions)           |
 
-Restart your AI client, start (or refresh) your Foundry world, and the tools appear. The module connects within ~30 seconds and reconnects automatically after either side restarts. Re-running setup is safe — existing entries are updated in place, and a `foundry-servers.json` (see below) is picked up automatically.
+Restart your AI client, start (or refresh) your Foundry world, and the tools appear. The connection is self-healing: the server side runs as a persistent background process that survives AI-client restarts and idle periods, the module retries forever, and a freshly started server waits for the module rather than failing your first prompt. Re-running setup is safe — existing entries are updated in place, and a `foundry-servers.json` (see below) is picked up automatically. `npm run stop` shuts the background process down if you ever need to.
 
 Options: `node scripts/install.mjs --clients claude-desktop,codex` to configure specific clients only, `--list` to preview without changing anything.
 

@@ -1163,8 +1163,22 @@ async function startBackend(): Promise<void> {
     filePath: path.join(os.tmpdir(), 'foundry-mcp-server', 'mcp-server.log'),
   });
 
+  // Identity for the wrapper's staleness check: signature of the entry file
+  // this process was started from. A rebuilt dist changes the signature and
+  // the next wrapper session restarts the daemon automatically.
+  const backendStartedAt = new Date().toISOString();
+  let backendEntrySig = '';
+  try {
+    const entryStat = fs.statSync(process.argv[1] || '');
+    backendEntrySig = `${entryStat.size}:${Math.round(entryStat.mtimeMs)}`;
+  } catch {
+    // stat failure just disables staleness detection
+  }
+
   logger.info('Starting Foundry MCP Backend', {
     version: config.server.version,
+
+    entrySig: backendEntrySig,
 
     foundryHost: config.foundry.host,
 
@@ -1550,7 +1564,29 @@ async function startBackend(): Promise<void> {
           const msg = JSON.parse(line) as { id: string; method: string; params?: any };
 
           if (msg.method === 'ping') {
+            socket.write(
+              JSON.stringify({
+                id: msg.id,
+                result: {
+                  ok: true,
+                  pid: process.pid,
+                  startedAt: backendStartedAt,
+                  entrySig: backendEntrySig,
+                },
+              }) + '\n'
+            );
+
+            continue;
+          }
+
+          if (msg.method === 'shutdown') {
+            // Graceful daemon shutdown, requested by a wrapper that detected a
+            // newer build on disk (or by npm run stop)
+            logger.info('Shutdown requested via control channel');
+
             socket.write(JSON.stringify({ id: msg.id, result: { ok: true } }) + '\n');
+
+            setTimeout(() => process.exit(0), 150);
 
             continue;
           }

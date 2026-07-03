@@ -8,7 +8,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 
 import { config } from './config.js';
 
-import { spawn, ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
 
 import * as net from 'net';
 
@@ -37,7 +37,7 @@ class BackendClient {
 
   private logFile = path.join(os.tmpdir(), 'foundry-mcp-server', 'wrapper.log');
 
-  private backendProcess: ChildProcess | null = null;
+  private freshnessChecked = false;
 
   private log(msg: string, meta?: any) {
     try {
@@ -57,6 +57,75 @@ class BackendClient {
     this.log('ensure(): connecting to backend');
 
     await this.connectWithRetry();
+
+    // The backend is a persistent daemon that outlives AI client sessions
+    // (so the Foundry module's connection survives idle periods). That means
+    // a rebuilt dist can leave a stale backend running — detect via the
+    // entry-file signature the backend reports and restart it once.
+    if (!this.freshnessChecked) {
+      this.freshnessChecked = true;
+      try {
+        const pong = await this.request('ping', {});
+        const currentSig = this.computeEntrySig();
+        if (pong?.entrySig && currentSig && pong.entrySig !== currentSig) {
+          this.log('ensure(): backend is stale, restarting it', {
+            running: pong.entrySig,
+            onDisk: currentSig,
+          });
+          await this.request('shutdown', {}).catch(() => {});
+          this.socket?.destroy();
+          this.socket = null;
+          await new Promise(resolve => setTimeout(resolve, 750));
+          await this.connectWithRetry();
+        }
+      } catch (e) {
+        this.log('ensure(): freshness check failed (continuing)', { error: (e as any)?.message });
+      }
+    }
+  }
+
+  private resolveBackendPath(): string {
+    try {
+      const backendUrl = new URL('./backend.js', import.meta.url as any);
+      return fileURLToPath(backendUrl);
+    } catch {
+      const baseDir =
+        typeof __dirname !== 'undefined'
+          ? __dirname
+          : path.dirname((process.argv && process.argv[1]) || process.cwd());
+      const bundleCandidate = path.join(baseDir, 'backend.bundle.cjs');
+      return fs.existsSync(bundleCandidate) ? bundleCandidate : path.join(baseDir, 'backend.js');
+    }
+  }
+
+  private computeEntrySig(): string {
+    try {
+      const stat = fs.statSync(this.resolveBackendPath());
+      return `${stat.size}:${Math.round(stat.mtimeMs)}`;
+    } catch {
+      return '';
+    }
+  }
+
+  /** Send over an already-established socket (no ensure(); used by ensure itself). */
+  private request(method: string, params: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket || this.socket.destroyed) return reject(new Error('Not connected'));
+      const id = Math.random().toString(36).slice(2);
+      this.pending.set(id, { resolve, reject });
+      setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          reject(new Error(`Timeout waiting for ${method}`));
+        }
+      }, 5000);
+      try {
+        this.socket.write(JSON.stringify({ id, method, params }) + '\n', 'utf8');
+      } catch (e) {
+        this.pending.delete(id);
+        reject(e);
+      }
+    });
   }
 
   private connect(): Promise<void> {
@@ -127,59 +196,34 @@ class BackendClient {
   }
 
   private startBackend(): Promise<void> {
-    return new Promise(async resolve => {
-      let backendPath: string | null = null;
+    return new Promise(resolve => {
+      const backendPath = this.resolveBackendPath();
 
-      try {
-        const backendUrl = new URL('./backend.js', import.meta.url as any);
+      this.log('startBackend(): spawning persistent backend', { path: backendPath });
 
-        backendPath = fileURLToPath(backendUrl);
-      } catch {
-        const pathMod = await import('path');
-
-        const fsMod = await import('fs');
-
-        const baseDir =
-          typeof __dirname !== 'undefined'
-            ? __dirname
-            : pathMod.dirname((process.argv && process.argv[1]) || process.cwd());
-
-        // Prefer bundled backend when present (contains deps), fallback to ESM
-
-        const bundleCandidate = pathMod.join(baseDir, 'backend.bundle.cjs');
-
-        const jsCandidate = pathMod.join(baseDir, 'backend.js');
-
-        backendPath = fsMod.existsSync(bundleCandidate) ? bundleCandidate : jsCandidate;
+      // Detached daemon: the backend must SURVIVE this wrapper's exit so the
+      // Foundry module's connection persists across AI client sessions and
+      // idle periods. It is shut down only by the staleness check above, an
+      // explicit `npm run stop`, or the machine restarting.
+      //
+      // On Windows, detached children are still reachable by tree-kills
+      // (taskkill /T walks parent PIDs), so launch through cmd's `start` —
+      // the intermediary exits instantly, orphaning the backend beyond any
+      // tree-kill. On POSIX, detached:true gives it its own process group.
+      if (process.platform === 'win32') {
+        const child = spawn(
+          'cmd.exe',
+          ['/d', '/s', '/c', `start "" /b "${process.execPath}" "${backendPath}"`],
+          { detached: true, stdio: 'ignore', windowsVerbatimArguments: true }
+        );
+        child.unref();
+      } else {
+        const child = spawn(process.execPath, [backendPath], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.unref();
       }
-
-      this.log('startBackend(): spawning', { path: backendPath });
-
-      const child = spawn(process.execPath, [backendPath!], {
-        detached: false, // Stay attached to monitor backend
-
-        stdio: ['ignore', 'ignore', 'pipe'], // Capture stderr to detect exit
-      });
-
-      // Store reference for cleanup
-
-      this.backendProcess = child;
-
-      // Monitor backend exit - if it exits cleanly (code 0), this wrapper should also exit
-
-      child.on('exit', code => {
-        this.backendProcess = null; // Clear reference when backend exits
-
-        if (code === 0) {
-          this.log('startBackend(): backend exited cleanly (likely lock failure), exiting wrapper');
-
-          process.exit(0); // Exit wrapper when backend fails to acquire lock
-        } else if (code !== null) {
-          this.log('startBackend(): backend exited unexpectedly', { exitCode: code });
-        }
-      });
-
-      // Don't unref since we want to monitor the process
 
       resolve();
     });
@@ -265,19 +309,9 @@ class BackendClient {
   }
 
   cleanup() {
-    this.log('cleanup(): shutting down backend');
-
-    if (this.backendProcess && !this.backendProcess.killed) {
-      try {
-        // Kill backend process - works cross-platform
-
-        this.backendProcess.kill();
-
-        this.log('cleanup(): backend process killed');
-      } catch (e) {
-        this.log('cleanup(): error killing backend', { error: (e as any)?.message });
-      }
-    }
+    // Deliberately do NOT kill the backend: it is a shared persistent daemon
+    // that keeps the Foundry module connected between AI client sessions.
+    this.log('cleanup(): closing control socket (backend stays running)');
 
     if (this.socket && !this.socket.destroyed) {
       this.socket.destroy();

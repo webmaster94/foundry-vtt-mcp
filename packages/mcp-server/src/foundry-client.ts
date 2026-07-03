@@ -45,6 +45,7 @@ export class FoundryClient {
   private config: Config['foundry'];
   private connector: FoundryConnector;
   private capabilities: ModuleCapabilities | null = null;
+  private listenerStartedAt = 0;
 
   constructor(config: Config['foundry'], logger: Logger) {
     this.config = config;
@@ -63,6 +64,7 @@ export class FoundryClient {
     try {
       // Start the socket.io server that Foundry will connect to
       await this.connector.start();
+      this.listenerStartedAt = Date.now();
       this.logger.info('Foundry connector started, waiting for module connection...');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown connection error';
@@ -83,6 +85,27 @@ export class FoundryClient {
   }
 
   async query(method: string, data?: any): Promise<any> {
+    if (!this.connector.isConnected()) {
+      // Startup grace: a freshly (re)started backend races the Foundry
+      // module's ~30s reconnect cadence. Instead of failing the user's first
+      // prompt, wait for the module to come back.
+      // listenerStartedAt === 0 means the listener is still starting — that
+      // is the earliest (and raciest) moment, so it is always within grace.
+      const withinGrace = !this.listenerStartedAt || Date.now() - this.listenerStartedAt < 90_000;
+      if (withinGrace) {
+        this.logger.info('Module not connected yet; waiting for reconnect (startup grace)', {
+          method,
+        });
+        const deadline = Date.now() + 45_000;
+        while (Date.now() < deadline && !this.connector.isConnected()) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        if (this.connector.isConnected()) {
+          this.logger.info('Module reconnected during startup grace');
+        }
+      }
+    }
+
     if (!this.connector.isConnected()) {
       this.capabilities = null;
       throw new BridgeError(

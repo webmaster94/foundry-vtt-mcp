@@ -55,6 +55,8 @@ then reload the Foundry world. `execute-foundry-script` with `window.location.re
 - The WebRTC signaling port is `port + 1` on BOTH sides (module `webrtc-connection.ts`, server `foundry-connector.ts`). Keep them in sync.
 - Only one Foundry connection per connector: two worlds pointed at the same profile port will fight. Distinct ports per profile; duplicate ports are rejected at registry load.
 - The module retries connection forever (30s cadence after fast retries): backend restarts self-heal in ≤30s. A stuck connection usually means the world tab needs a refresh or the ports mismatch.
+- The backend is a PERSISTENT DAEMON: wrappers spawn it orphaned (via `cmd start /b` on Windows) and never kill it, so the module's connection survives AI-client session ends and idle periods. It restarts itself when a wrapper detects a newer build on disk (entry-file signature in the control-channel ping), or via `npm run stop`. Queries during the first 90s of a listener's life wait up to 45s for the module to reconnect instead of failing (startup grace).
+- The module only exists while a (GM) browser tab has the world open — `users: 0` on Foundry's `/api/status` means nothing can reconnect, no matter how patient the server is.
 - `tsc` here uses `exactOptionalPropertyTypes` — `{ foo: maybeUndefined }` into an optional property fails; guard or assert first.
 - Vitest mocks of `FoundryClient` must include every method a code path touches (`getCapabilities` bit us once).
 
