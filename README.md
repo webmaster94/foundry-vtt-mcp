@@ -20,7 +20,11 @@ Enable **Foundry MCP Bridge** in your world's Module Management. Do not rename t
 
 ### 2. Install the MCP server and connect your AI
 
-Requires [Node.js 18+](https://nodejs.org) and [git](https://git-scm.com). Then it's three commands:
+Requires [Node.js 18+](https://nodejs.org) and [git](https://git-scm.com). 
+
+Navgiate to the folder you wish to run your agent from.
+
+Then it's three commands:
 
 ```bash
 git clone https://github.com/webmaster94/foundry-vtt-mcp.git
