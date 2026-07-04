@@ -148,6 +148,41 @@ export class PermissionManager {
       settingKey: 'allowWriteOperations',
       requiresGM: true,
     },
+    'combat.initiative': {
+      name: 'Roll Initiative',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Roll initiative for combatants',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'combat.damage': {
+      name: 'Apply Damage',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Apply damage to actors (undoable)',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'combat.healing': {
+      name: 'Apply Healing',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Apply healing to actors (undoable)',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'effect.create': {
+      name: 'Create Active Effect',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Add buffs/debuffs as ActiveEffects (undoable)',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
+    'asset.upload': {
+      name: 'Upload Asset',
+      level: PERMISSION_LEVELS.MEDIUM_RISK,
+      description: 'Upload files into the Foundry data directory',
+      settingKey: 'allowWriteOperations',
+      requiresGM: true,
+    },
   };
 
   /**

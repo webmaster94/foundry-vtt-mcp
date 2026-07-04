@@ -496,6 +496,27 @@ export class DocumentManagementTools {
   }
 
   /**
+   * All names this class can dispatch: the advertised definitions PLUS the
+   * unadvertised legacy wrappers (context budget: not in the catalog, but old
+   * scripts and saved workflows keep working). backend.ts registers handlers
+   * from THIS list, not from getToolDefinitions().
+   */
+  getDispatchToolNames(): string[] {
+    return [
+      ...this.getToolDefinitions().map(tool => tool.name),
+      ...Object.keys(workflowListTypes),
+      ...Object.keys(workflowCreateTypes),
+      ...Object.keys(workflowUpdateTypes),
+      ...Object.keys(workflowDeleteTypes),
+      'update-combatant',
+      'list-scene-embedded-documents',
+      'create-scene-embedded-document',
+      'update-scene-embedded-document',
+      'delete-scene-embedded-document',
+    ];
+  }
+
+  /**
    * Context budget: the per-type CRUD wrappers (create-world-item,
    * list-roll-tables, create-scene-embedded-document, ...) are NO LONGER
    * ADVERTISED — the generic document tools cover them with a documentType /

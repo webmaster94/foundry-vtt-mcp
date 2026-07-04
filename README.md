@@ -4,7 +4,7 @@ Connect Foundry VTT to AI agents (Claude Desktop, Claude Code, or any MCP client
 
 This is [webmaster94's fork](https://github.com/webmaster94/foundry-vtt-mcp) of [adambdooley/foundry-vtt-mcp](https://github.com/adambdooley/foundry-vtt-mcp), extended with a much deeper Foundry integration: a generic document API with dry-run and undo, one-call NPC building, batch operations, system-data compendium search, GM-browser script execution, and multi-server support. It tracks upstream (currently v0.8.2 merged) and keeps all upstream features: quests, dice coordination, map generation, campaign dashboards, and system support for D&D 5e, Pathfinder 2e, DSA5, Cosmere RPG, and WFRP4e.
 
-**108 MCP tools** as of v0.10, verified by a live integration suite before each release.
+**97 MCP tools** as of v0.11, verified by a 27-step live integration suite before each release — with a context-budget discipline that keeps the whole catalog under ~17k tokens (CI-enforced 70KB ceiling).
 
 ## Installation
 

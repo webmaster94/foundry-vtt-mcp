@@ -1505,9 +1505,11 @@ async function startBackend(): Promise<void> {
   ];
 
   const additionalToolHandlers: Record<string, (args: any) => Promise<any>> = {};
-  for (const tool of documentToolDefinitions) {
-    additionalToolHandlers[tool.name] = (args: any) =>
-      documentManagementTools.handleToolCall(tool.name, args);
+  // Dispatch names, not advertised definitions: keeps the unadvertised legacy
+  // wrapper tools callable (context budget keeps them out of the catalog)
+  for (const name of documentManagementTools.getDispatchToolNames()) {
+    additionalToolHandlers[name] = (args: any) =>
+      documentManagementTools.handleToolCall(name, args);
   }
   for (const tool of macroToolDefinitions) {
     additionalToolHandlers[tool.name] = (args: any) =>
