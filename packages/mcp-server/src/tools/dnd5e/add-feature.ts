@@ -104,50 +104,21 @@ export class DnD5eAddFeatureTool {
   }
 
   getToolDefinitions() {
+    const ability = { type: 'string', enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'] };
     return [
       {
         name: 'dnd5e-add-feature',
         description:
-          '[D&D 5e only] Add a feature, attack, spellcasting setup, or spells to an existing actor. ' +
-          'Set featureType to select the mode — each mode uses only its own parameters:\n\n' +
-          '• passive — descriptive trait, no roll (Multiattack, Magic Resistance, Spider Climb).\n' +
-          '  Required: actorIdentifier, featureName\n' +
-          '  Optional: description, sourceRules, sourceBook, sourcePage\n\n' +
-          '• save — feature that forces a saving throw (breath weapon, cone of cold, etc.).\n' +
-          '  Required: actorIdentifier, featureName, saveAbility, saveDC, damageParts\n' +
-          '  Optional: description, activationType, halfOnSave, areaType, areaSize ' +
-          '(required if areaType set), areaUnits, affectsType\n\n' +
-          '• attack — weapon attack with to-hit roll (Claw, Bite, Scimitar, etc.).\n' +
-          '  Required: actorIdentifier, featureName, attackType, damageParts\n' +
-          '  Required when ranged: rangeFt\n' +
-          '  Optional: description, activationType, weaponClass, abilityModifier, attackBonus, ' +
-          'proficient, equipped, reachFt, longRangeFt, properties, sourceRules, sourceBook, sourcePage\n\n' +
-          '• attack-with-save — attack roll on hit + forced save for bonus damage ' +
-          '(e.g. Stinger: piercing hit + CON save or poison damage).\n' +
-          '  Required: actorIdentifier, featureName, attackType, damageParts, ' +
-          'saveAbility, saveDC, saveDamageParts\n' +
-          '  Required when ranged: rangeFt\n' +
-          '  Optional: description, activationType, weaponClass, abilityModifier, attackBonus, ' +
-          'proficient, equipped, reachFt, longRangeFt, properties, saveOnSave, ' +
-          'sourceRules, sourceBook, sourcePage\n\n' +
-          '• aura — automatic-damage area, no to-hit, no save (all creatures in range take damage).\n' +
-          '  Required: actorIdentifier, featureName, damageParts, areaType, areaSize\n' +
-          '  Optional: description, activationType, areaUnits, affectsType, ' +
-          'sourceRules, sourceBook, sourcePage\n\n' +
-          '• spellcasting — configure spell slots and casting ability. ' +
-          'Run this BEFORE featureType "spells".\n' +
-          '  Required: actorIdentifier, spellcastingClass, spellcastingLevel\n' +
-          '  Optional: spellcastingAbility (default per class: wizard/artificer→INT, ' +
-          'cleric/druid/ranger→WIS, sorcerer/warlock/bard/paladin→CHA), sourceRules\n\n' +
-          '• spells — import named spells from compendium. Names must be in English.\n' +
-          '  Required: actorIdentifier, spellNames (max 50)\n' +
-          '  Optional: compendiumPacks (default ["dnd5e.spells"])\n\n' +
-          'Use list-characters or get-character first to find the actorIdentifier.',
-
+          '[D&D 5e] Add a feature/attack/spellcasting/spells to an actor. featureType selects the mode and its params: ' +
+          'passive{featureName}; save{featureName,saveAbility,saveDC,damageParts, +halfOnSave,areaType,areaSize}; ' +
+          'attack{featureName,attackType,damageParts, rangeFt if ranged, +weaponClass,abilityModifier,attackBonus,reachFt,properties}; ' +
+          'attack-with-save{attack params + saveAbility,saveDC,saveDamageParts,saveOnSave}; ' +
+          'aura{featureName,damageParts,areaType,areaSize} (auto damage, no save); ' +
+          'spellcasting{spellcastingClass,spellcastingLevel, +spellcastingAbility} (run BEFORE spells); ' +
+          'spells{spellNames, +compendiumPacks}. All modes need actorIdentifier.',
         inputSchema: {
           type: 'object',
           properties: {
-            // ── Discriminator ─────────────────────────────────────────────────
             featureType: {
               type: 'string',
               enum: [
@@ -159,194 +130,62 @@ export class DnD5eAddFeatureTool {
                 'spellcasting',
                 'spells',
               ],
-              description:
-                'Mode selector — determines which parameters are used and which Foundry handler is called.',
             },
-
-            // ── Common ────────────────────────────────────────────────────────
-            actorIdentifier: {
-              type: 'string',
-              description:
-                'Name or ID of the target actor (partial name match supported). Required for all featureTypes.',
-            },
-            featureName: {
-              type: 'string',
-              description:
-                'Name for the new feature/item — must be unique on the actor. ' +
-                'Required for: passive, save, attack, attack-with-save, aura.',
-            },
-            description: {
-              type: 'string',
-              description:
-                'HTML description of the feature (optional). Used by: passive, save, attack, attack-with-save, aura.',
-              default: '',
-            },
+            actorIdentifier: { type: 'string', description: 'Actor name or id' },
+            featureName: { type: 'string' },
+            description: { type: 'string', description: 'HTML body', default: '' },
             activationType: {
               type: 'string',
               enum: ['action', 'bonus', 'reaction', 'legendary', 'lair', 'special'],
-              description:
-                'Action economy type. Used by: save, attack, attack-with-save, aura. Default: "action".',
               default: 'action',
             },
-
-            // ── Damage ────────────────────────────────────────────────────────
             damageParts: {
               type: 'array',
               minItems: 1,
-              description:
-                'Damage components. ' +
-                'For attack: first entry is base weapon die, extra entries stack on top. ' +
-                'For save and aura: all damage dealt on trigger. ' +
-                'For attack-with-save: the attack roll damage (on hit). ' +
-                'Required for: save, attack, attack-with-save, aura.',
               items: damagePartSchema,
             },
-
-            // ── Save parameters ───────────────────────────────────────────────
-            saveAbility: {
-              type: 'string',
-              enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
-              description:
-                'Ability used for the saving throw. Required for: save, attack-with-save.',
-            },
-            saveDC: {
-              type: 'number',
-              description: 'Saving throw DC (1–30). Required for: save, attack-with-save.',
-              minimum: 1,
-              maximum: 30,
-            },
-            halfOnSave: {
-              type: 'boolean',
-              description:
-                'Whether the target takes half damage on a successful save. Used by: save. Default: true.',
-              default: true,
-            },
-            saveDamageParts: {
-              type: 'array',
-              minItems: 1,
-              description:
-                'Damage dealt by the save effect on a failed save (independent of attack damage). ' +
-                'Required for: attack-with-save.',
-              items: damagePartSchema,
-            },
-            saveOnSave: {
-              type: 'string',
-              enum: ['half', 'none'],
-              description:
-                '"none" — no damage on a successful save (default). ' +
-                '"half" — half save damage on a successful save. Used by: attack-with-save.',
-              default: 'none',
-            },
-
-            // ── Area parameters ───────────────────────────────────────────────
+            saveAbility: ability,
+            saveDC: { type: 'number', minimum: 1, maximum: 30 },
+            halfOnSave: { type: 'boolean', default: true },
+            saveDamageParts: { type: 'array', minItems: 1, items: damagePartSchema },
+            saveOnSave: { type: 'string', enum: ['half', 'none'], default: 'none' },
             areaType: {
               type: 'string',
               enum: ['cone', 'cube', 'cylinder', 'emanation', 'line', 'radius', 'sphere', ''],
-              description:
-                'Area-of-effect template shape. ' +
-                'For save: optional (omit or use "" for no template); if set, areaSize is required. ' +
-                'For aura: required — use "emanation" or "sphere" for radial auras.',
               default: '',
             },
-            areaSize: {
-              type: 'number',
-              description:
-                'Template size in areaUnits (e.g. 30 for a 30 ft cone). Must be > 0. ' +
-                'Required for: aura. Required for save when areaType is set.',
-              exclusiveMinimum: 0,
-            },
-            areaUnits: {
-              type: 'string',
-              enum: ['ft', 'm'],
-              description: 'Units for areaSize. Used by: save, aura. Default: "ft".',
-              default: 'ft',
-            },
+            areaSize: { type: 'number', exclusiveMinimum: 0, description: 'e.g. 30 for 30ft cone' },
+            areaUnits: { type: 'string', enum: ['ft', 'm'], default: 'ft' },
             affectsType: {
               type: 'string',
               enum: ['creature', 'object', 'space', ''],
-              description: 'What the area targets. Used by: save, aura. Default: "creature".',
               default: 'creature',
             },
-
-            // ── Attack parameters ─────────────────────────────────────────────
-            attackType: {
-              type: 'string',
-              enum: ['melee', 'ranged'],
-              description:
-                '"melee" for reach-based attacks; "ranged" for bow/thrown attacks. ' +
-                'Required for: attack, attack-with-save.',
-            },
+            attackType: { type: 'string', enum: ['melee', 'ranged'] },
             weaponClass: {
               type: 'string',
               enum: ['natural', 'simpleM', 'martialM', 'simpleR', 'martialR'],
-              description:
-                'Weapon category. Use "natural" for monster attacks (claws, bite, touch). ' +
-                'Used by: attack, attack-with-save. Default: "natural".',
               default: 'natural',
             },
-            abilityModifier: {
-              type: 'string',
-              enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
-              description:
-                'Ability used for to-hit and damage rolls. ' +
-                'Omit to use default: STR for melee, DEX for ranged. ' +
-                'Used by: attack, attack-with-save.',
-            },
+            abilityModifier: { ...ability, description: 'default STR melee / DEX ranged' },
             attackBonus: {
               type: 'number',
-              description:
-                'Flat bonus to the attack roll only, not damage (e.g. 1 for +1 to hit). ' +
-                'Used by: attack, attack-with-save. Default: 0.',
               minimum: 0,
               maximum: 10,
               default: 0,
+              description: 'to-hit only',
             },
-            proficient: {
-              type: 'boolean',
-              description:
-                'Whether the actor is proficient with this weapon (adds proficiency bonus to to-hit). ' +
-                'Used by: attack, attack-with-save. Default: true.',
-              default: true,
-            },
-            equipped: {
-              type: 'boolean',
-              description:
-                'Whether the weapon is equipped and available for attack rolls. ' +
-                'Used by: attack, attack-with-save. Default: true.',
-              default: true,
-            },
-            reachFt: {
-              type: 'number',
-              description:
-                'Melee reach in feet. Used by: attack, attack-with-save (melee only). Default: 5.',
-              minimum: 5,
-              default: 5,
-            },
-            rangeFt: {
-              type: 'number',
-              description:
-                'Normal range in feet. Used by: attack, attack-with-save. ' +
-                'Required when attackType is "ranged".',
-              minimum: 1,
-            },
-            longRangeFt: {
-              type: 'number',
-              description:
-                'Long range in feet — attacks beyond rangeFt up to this distance are at disadvantage. ' +
-                'Must be greater than rangeFt. Used by: attack, attack-with-save (ranged only).',
-              minimum: 1,
-            },
+            proficient: { type: 'boolean', default: true },
+            equipped: { type: 'boolean', default: true },
+            reachFt: { type: 'number', minimum: 5, default: 5 },
+            rangeFt: { type: 'number', minimum: 1 },
+            longRangeFt: { type: 'number', minimum: 1 },
             properties: {
               type: 'array',
-              description:
-                'Weapon property codes (e.g. ["fin", "lgt"]). ' +
-                'Canonical 2014 codes: ada, amm, fin, fir, foc, hvy, lgt, lod, mgc, rch, ret, spc, thr, two, ver. ' +
-                'Used by: attack, attack-with-save. Default: [].',
               items: { type: 'string' },
               default: [],
+              description: 'codes: ada amm fin fir foc hvy lgt lod mgc rch ret spc thr two ver',
             },
-
-            // ── Spellcasting parameters ───────────────────────────────────────
             spellcastingClass: {
               type: 'string',
               enum: [
@@ -360,72 +199,29 @@ export class DnD5eAddFeatureTool {
                 'warlock',
                 'wizard',
               ],
-              description:
-                'The spellcasting class — determines slot table and default casting ability. ' +
-                'Warlock uses Pact Magic. Required for: spellcasting.',
             },
-            spellcastingLevel: {
-              type: 'number',
-              description:
-                'Class level (1–20). Determines how many slots the actor receives. Required for: spellcasting.',
-              minimum: 1,
-              maximum: 20,
-            },
-            spellcastingAbility: {
-              type: 'string',
-              enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
-              description:
-                'Override the casting ability. Omit to use the class default. ' +
-                'Used by: spellcasting.',
-            },
-
-            // ── Spells parameters ─────────────────────────────────────────────
+            spellcastingLevel: { type: 'number', minimum: 1, maximum: 20 },
+            spellcastingAbility: { ...ability, description: 'default per class' },
             spellNames: {
               type: 'array',
-              description:
-                'English spell names to import (exact match, case-insensitive). Max 50 per call. ' +
-                'Required for: spells.',
               minItems: 1,
               maxItems: 50,
               items: { type: 'string', minLength: 1 },
             },
             compendiumPacks: {
               type: 'array',
-              description:
-                'Compendium pack IDs to search, in priority order (first match wins). ' +
-                'Default: ["dnd5e.spells"] (SRD 2014). Use "dnd5e.spells24" for 2024 rules. ' +
-                'Used by: spells.',
               items: { type: 'string', minLength: 1 },
               default: ['dnd5e.spells'],
             },
-
-            // ── Source metadata ───────────────────────────────────────────────
-            sourceRules: {
-              type: 'string',
-              enum: ['2014', '2024'],
-              description:
-                'Rules edition. Used by: passive, attack, attack-with-save, aura, spellcasting. Default: "2014".',
-              default: '2014',
-            },
-            sourceBook: {
-              type: 'string',
-              description:
-                'Source book abbreviation (e.g. "MM\'14"). Used by: passive, attack, attack-with-save, aura.',
-              default: '',
-            },
-            sourcePage: {
-              type: 'string',
-              description:
-                'Page number in the source book. Used by: passive, attack, attack-with-save, aura.',
-              default: '',
-            },
+            sourceRules: { type: 'string', enum: ['2014', '2024'], default: '2014' },
+            sourceBook: { type: 'string', default: '' },
+            sourcePage: { type: 'string', default: '' },
           },
           required: ['featureType', 'actorIdentifier'],
         },
       },
     ];
   }
-
   // ---------------------------------------------------------------------------
   // Master dispatcher
   // ---------------------------------------------------------------------------

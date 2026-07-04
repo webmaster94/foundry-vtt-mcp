@@ -49,6 +49,10 @@ export interface ActorSpec {
   features?: ActorSpecFeature[];
   /** Biography/notes HTML written to the standard biography path when the system has one. */
   biography?: string;
+  /** Place a token for the built actor on the active scene. */
+  addToScene?: boolean | { x?: number; y?: number; hidden?: boolean };
+  /** Audit group tag (set automatically by build-actors-from-spec / batches). */
+  groupId?: string;
 }
 
 interface ResolutionMiss {
@@ -105,10 +109,17 @@ export class ActorBuilder {
       utils.setProperty(data, 'system.details.biography.value', spec.biography);
     }
 
-    // 4. Prototype token
+    // 4. Prototype token — spec.img doubles as token art unless the caller
+    // set an explicit texture or a template supplied one
+    const tokenDefaults: Record<string, unknown> = { name: spec.name };
+    const templateHasTexture = !!utils.getProperty(data, 'prototypeToken.texture.src');
+    const specHasTexture = !!utils.getProperty(spec.prototypeToken || {}, 'texture.src');
+    if (spec.img && !templateHasTexture && !specHasTexture) {
+      tokenDefaults.texture = { src: spec.img };
+    }
     data.prototypeToken = utils.mergeObject(
       (data.prototypeToken as Record<string, unknown>) || {},
-      { name: spec.name, ...(spec.prototypeToken || {}) },
+      { ...tokenDefaults, ...(spec.prototypeToken || {}) },
       { overwrite: true, inplace: false }
     );
 
@@ -193,11 +204,39 @@ export class ActorBuilder {
     // 6. Create
     try {
       const actor = await (Actor as any).create(data);
+
+      // 7. Optional token placement on the active scene
+      let placedToken: Record<string, unknown> | null = null;
+      if (spec.addToScene) {
+        const scene = (game as any).scenes?.active || (game as any).scenes?.current;
+        if (!scene) {
+          misses.push({
+            kind: 'folder',
+            name: 'active scene',
+            note: 'No active scene; token not placed',
+          });
+        } else {
+          const placement = typeof spec.addToScene === 'object' ? spec.addToScene : {};
+          const x = placement.x ?? Math.round((scene.width || 4000) / 2);
+          const y = placement.y ?? Math.round((scene.height || 3000) / 2);
+          const tokenDoc = await actor.getTokenDocument({
+            x,
+            y,
+            hidden: placement.hidden ?? false,
+          });
+          const created = await scene.createEmbeddedDocuments('Token', [tokenDoc.toObject()]);
+          const token = Array.isArray(created) ? created[0] : created;
+          placedToken = { id: token?.id, sceneId: scene.id, x, y };
+          notes.push(`Token placed on "${scene.name}" at (${x}, ${y})`);
+        }
+      }
+
       const result = {
         success: true,
         actor: { uuid: actor.uuid, id: actor.id, name: actor.name, type: actor.type },
         folder: actor.folder ? { id: actor.folder.id, name: actor.folder.name } : null,
         itemCount: this.count(actor.items),
+        token: placedToken,
         notes,
         unresolved: misses,
       };
@@ -214,6 +253,7 @@ export class ActorBuilder {
         resultSummary: { itemCount: result.itemCount, unresolved: misses.length },
         durationMs: Date.now() - start,
         success: true,
+        ...(spec.groupId ? { groupId: spec.groupId } : {}),
         inverse: { kind: 'delete', documentType: 'Actor', ref: { uuid: actor.uuid } },
       });
       return result;
@@ -228,6 +268,41 @@ export class ActorBuilder {
       });
       throw error;
     }
+  }
+
+  /** Build several actors (a whole encounter or party) under one undo group. */
+  async buildMany(specs: ActorSpec[]): Promise<any> {
+    if (!Array.isArray(specs) || !specs.length) {
+      throw new Error('build-actors-from-spec requires a non-empty specs array');
+    }
+    if (specs.length > 20) {
+      throw new Error('build-actors-from-spec is limited to 20 actors per call');
+    }
+
+    const groupId = `party-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    const results: Array<Record<string, unknown>> = [];
+    for (const spec of specs) {
+      try {
+        const result = await this.build({ ...spec, groupId });
+        results.push({ name: spec.name, success: true, ...result });
+      } catch (error) {
+        results.push({
+          name: spec.name,
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const failed = results.filter(r => !r.success).length;
+    return {
+      total: specs.length,
+      succeeded: specs.length - failed,
+      failed,
+      groupId,
+      undoHint: `Revert all built actors with undo-last-mcp-operation { groupId: "${groupId}", confirmUndo: true }`,
+      results,
+    };
   }
 
   private normalize(value: string): string {

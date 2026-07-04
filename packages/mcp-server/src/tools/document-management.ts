@@ -91,7 +91,7 @@ export class DocumentManagementTools {
       ),
       this.tool(
         'list-documents',
-        'List world or compendium documents of a given type.',
+        'List world or compendium documents of a given type (Actor, Item, JournalEntry, RollTable, Folder, ChatMessage, Combat, Playlist, Cards, Scene, Macro...).',
         {
           documentType: { type: 'string' },
           packId: { type: 'string' },
@@ -119,7 +119,7 @@ export class DocumentManagementTools {
       ),
       this.tool(
         'create-document',
-        'Create a Foundry world document. Requires write operations enabled.',
+        'Create any Foundry world document by documentType (Item, RollTable, Folder, ChatMessage, Combat, Playlist, Cards, JournalEntry...). Requires write operations enabled.',
         {
           documentType: { type: 'string' },
           data: { type: 'object' },
@@ -149,7 +149,7 @@ export class DocumentManagementTools {
       ),
       this.tool(
         'list-embedded-documents',
-        'List embedded documents under a parent document UUID.',
+        'List embedded documents under a parent UUID: Item/ActiveEffect under Actor, Token/Wall/Tile/AmbientLight/Note under Scene, Combatant under Combat, JournalEntryPage under JournalEntry.',
         {
           parentUuid: { type: 'string' },
           embeddedType: { type: 'string' },
@@ -275,9 +275,11 @@ export class DocumentManagementTools {
       ),
       this.tool(
         'undo-last-mcp-operation',
-        'Revert the most recent undoable MCP write (create/update/delete of documents or embedded documents, including build-actor-from-spec). Requires confirmUndo=true. Check get-mcp-audit-log to see what will be undone.',
+        'Revert MCP writes: most recent by default, one audit entry via auditId, or a whole batch/builder run via groupId (reverse order). Requires confirmUndo=true. See get-mcp-audit-log for ids.',
         {
           confirmUndo: { type: 'boolean' },
+          auditId: { type: 'number' },
+          groupId: { type: 'string' },
         },
         ['confirmUndo']
       ),
@@ -334,7 +336,11 @@ export class DocumentManagementTools {
           CompendiumContentSearchRequestSchema.parse(args || {})
         );
       case 'undo-last-mcp-operation':
-        return this.query('undoLastOperation', { confirmUndo: args?.confirmUndo === true });
+        return this.query('undoLastOperation', {
+          confirmUndo: args?.confirmUndo === true,
+          ...(typeof args?.auditId === 'number' ? { auditId: args.auditId } : {}),
+          ...(typeof args?.groupId === 'string' && args.groupId ? { groupId: args.groupId } : {}),
+        });
       case 'update-embedded-document':
         return this.query(
           'updateEmbeddedDocument',
@@ -489,31 +495,15 @@ export class DocumentManagementTools {
     return Object.fromEntries(Object.entries(args).filter(([key]) => !skip.has(key)));
   }
 
+  /**
+   * Context budget: the per-type CRUD wrappers (create-world-item,
+   * list-roll-tables, create-scene-embedded-document, ...) are NO LONGER
+   * ADVERTISED — the generic document tools cover them with a documentType /
+   * embeddedType argument. Their dispatch cases remain so existing scripts
+   * and saved workflows keep working.
+   */
   private workflowToolDefinitions(): Tool[] {
-    const tools: Tool[] = [];
-    for (const name of Object.keys(workflowListTypes))
-      tools.push(this.tool(name, `List ${workflowListTypes[name]} documents.`, this.listProps()));
-    for (const name of Object.keys(workflowCreateTypes))
-      tools.push(
-        this.tool(name, `Create a ${workflowCreateTypes[name]} document.`, this.createProps())
-      );
-    for (const name of Object.keys(workflowUpdateTypes))
-      tools.push(
-        this.tool(name, `Update a ${workflowUpdateTypes[name]} document.`, this.updateProps(), [
-          'ref',
-          'updates',
-        ])
-      );
-    for (const name of Object.keys(workflowDeleteTypes))
-      tools.push(
-        this.tool(
-          name,
-          `Delete a ${workflowDeleteTypes[name]} document. Requires confirmDeletion=true.`,
-          this.deleteProps(),
-          ['ref', 'confirmDeletion']
-        )
-      );
-    tools.push(
+    return [
       this.tool('roll-roll-table', 'Roll or draw from a RollTable.', { ref: { type: 'object' } }, [
         'ref',
       ]),
@@ -536,14 +526,8 @@ export class DocumentManagementTools {
         ['ref']
       ),
       this.tool(
-        'update-combatant',
-        'Update a Combatant embedded document. Use parentUuid for the Combat UUID.',
-        { ref: { type: 'object' }, updates: { type: 'object' } },
-        ['ref', 'updates']
-      ),
-      this.tool(
         'play-playlist-sound',
-        'Play a PlaylistSound from a Playlist.',
+        'Play or stop a PlaylistSound (see also stop-playlist-sound).',
         { ref: { type: 'object' }, soundId: { type: 'string' } },
         ['ref', 'soundId']
       ),
@@ -557,32 +541,7 @@ export class DocumentManagementTools {
         'ref',
       ]),
       this.tool('draw-card', 'Draw from a Cards stack.', { ref: { type: 'object' } }, ['ref']),
-      this.tool(
-        'list-scene-embedded-documents',
-        'List Scene embedded documents such as Token, Wall, Tile, Drawing, AmbientLight, AmbientSound, or Note.',
-        this.embeddedListProps(),
-        ['parentUuid', 'embeddedType']
-      ),
-      this.tool(
-        'create-scene-embedded-document',
-        'Create a Scene embedded document.',
-        this.embeddedCreateProps(),
-        ['parentUuid', 'embeddedType', 'data']
-      ),
-      this.tool(
-        'update-scene-embedded-document',
-        'Update a Scene embedded document.',
-        this.updateProps(),
-        ['ref', 'updates']
-      ),
-      this.tool(
-        'delete-scene-embedded-document',
-        'Delete a Scene embedded document. Requires confirmDeletion=true.',
-        this.deleteProps(),
-        ['ref', 'confirmDeletion']
-      )
-    );
-    return tools;
+    ];
   }
 
   private tool(

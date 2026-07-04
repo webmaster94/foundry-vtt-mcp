@@ -80,6 +80,11 @@ export class FoundryClient {
     });
   }
 
+  /** Receive unsolicited game events pushed by the module. */
+  setEventHandler(handler: ((event: any) => void) | null): void {
+    this.connector.onBridgeEvent = handler;
+  }
+
   getConnectionType(): 'websocket' | 'webrtc' | null {
     return this.connector.getConnectionType();
   }

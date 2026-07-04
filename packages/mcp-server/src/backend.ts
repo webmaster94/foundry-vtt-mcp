@@ -20,6 +20,8 @@ import { ServerManagementTools } from './tools/server-management.js';
 
 import { RecipeTools } from './tools/recipes.js';
 
+import { GameActionTools } from './tools/game-actions.js';
+
 import { CharacterTools } from './tools/character.js';
 
 import { CompendiumTools } from './tools/compendium.js';
@@ -1197,6 +1199,8 @@ async function startBackend(): Promise<void> {
 
   const recipeTools = new RecipeTools({ logger });
 
+  const gameActionTools = new GameActionTools({ foundryClient, registry: serverRegistry, logger });
+
   // Initialize system registry and register adapters
   const { getSystemRegistry } = await import('./systems/index.js');
   const { DnD5eAdapter } = await import('./systems/dnd5e/adapter.js');
@@ -1495,6 +1499,8 @@ async function startBackend(): Promise<void> {
 
     ...recipeTools.getToolDefinitions(),
 
+    ...gameActionTools.getToolDefinitions(),
+
     ...mapGenerationTools.getToolDefinitions(),
   ];
 
@@ -1517,6 +1523,10 @@ async function startBackend(): Promise<void> {
   }
   for (const tool of recipeTools.getToolDefinitions()) {
     additionalToolHandlers[tool.name] = (args: any) => recipeTools.handleToolCall(tool.name, args);
+  }
+  for (const tool of gameActionTools.getToolDefinitions()) {
+    additionalToolHandlers[tool.name] = (args: any) =>
+      gameActionTools.handleToolCall(tool.name, args);
   }
 
   // Start Foundry connectors for every configured server profile

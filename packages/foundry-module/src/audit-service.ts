@@ -30,6 +30,8 @@ export interface AuditRecordInput {
   error?: string;
   scriptCode?: string;
   inverse?: InverseOperation;
+  /** Groups related writes (a batch, a builder run) for one-shot undo. */
+  groupId?: string;
 }
 
 export interface AuditLogEntry {
@@ -51,6 +53,7 @@ export interface AuditLogEntry {
   scriptPreview?: string;
   inverse?: InverseOperation;
   undone?: boolean;
+  groupId?: string;
 }
 
 const AUDIT_SETTING = 'auditLogs';
@@ -145,7 +148,22 @@ export class AuditService {
       entry.inverse = input.inverse;
     }
 
+    if (input.groupId) {
+      entry.groupId = input.groupId;
+    }
+
     return entry;
+  }
+
+  getEntry(id: number): AuditLogEntry | null {
+    return this.getLogsInternal().find(entry => entry.id === id) || null;
+  }
+
+  /** All undoable entries of a group, newest first (undo must run in reverse order). */
+  getGroupUndoable(groupId: string): AuditLogEntry[] {
+    return this.getLogsInternal()
+      .filter(entry => entry.groupId === groupId && entry.success && entry.inverse && !entry.undone)
+      .reverse();
   }
 
   /** Most recent successful, not-yet-undone entry that carries an inverse. */

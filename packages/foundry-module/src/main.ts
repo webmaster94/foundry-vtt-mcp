@@ -5,6 +5,7 @@ import { ModuleSettings } from './settings.js';
 import { CampaignHooks } from './campaign-hooks.js';
 import { ComfyUIManager } from './comfyui-manager.js';
 import { browserConsoleCapture, type BrowserConsoleCapture } from './console-capture.js';
+import { eventService } from './event-service.js';
 // Connection control now handled through settings menu
 
 /**
@@ -196,6 +197,10 @@ class FoundryMCPBridge {
       // Create and connect socket bridge
       this.socketBridge = new SocketBridge(config);
       await this.socketBridge.connect();
+
+      // Game-event push channel (combat turns, chat, dice results)
+      eventService.registerHooks();
+      eventService.setSender(event => this.socketBridge?.sendEvent(event));
 
       // Log connection details for debugging
       const connectionInfo = this.socketBridge.getConnectionInfo();

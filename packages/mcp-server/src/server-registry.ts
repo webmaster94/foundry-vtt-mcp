@@ -52,6 +52,7 @@ const ServerProfileSchema = z.object({
   dataPath: z.string().optional(),
   rejectUnauthorized: z.boolean().optional(),
   webrtcSignalingPort: z.number().min(1024).max(65535).optional(),
+  authToken: z.string().optional(),
 });
 
 const ServersFileSchema = z.object({
@@ -68,11 +69,26 @@ export interface RegisteredServer {
   client: FoundryClient;
 }
 
+export interface BufferedEvent {
+  seq: number;
+  server: string;
+  receivedAt: string;
+  type: string;
+  timestamp: string;
+  data: Record<string, unknown>;
+}
+
+const EVENT_BUFFER_SIZE = 200;
+
 export class ServerRegistry {
   private servers = new Map<string, RegisteredServer>();
   private activeName: string;
   private logger: Logger;
   public readonly routingClient: RoutingFoundryClient;
+
+  // Game-event ring buffer (all profiles share one sequence for simple cursors)
+  private events: BufferedEvent[] = [];
+  private eventSeq = 0;
 
   constructor(config: Config, logger: Logger, configFileOverride?: string) {
     this.logger = logger.child({ component: 'ServerRegistry' });
@@ -100,12 +116,14 @@ export class ServerRegistry {
       }
       usedPorts.set(foundryConfig.port, name);
 
-      this.servers.set(name, {
+      const server: RegisteredServer = {
         name,
         label: profile.label || name,
         foundryConfig,
         client: new FoundryClient(foundryConfig, logger.child({ server: name })),
-      });
+      };
+      server.client.setEventHandler(event => this.pushEvent(name, event));
+      this.servers.set(name, server);
     }
 
     if (this.servers.size === 0) {
@@ -235,6 +253,41 @@ export class ServerRegistry {
     );
   }
 
+  private pushEvent(serverName: string, event: any): void {
+    this.events.push({
+      seq: ++this.eventSeq,
+      server: serverName,
+      receivedAt: new Date().toISOString(),
+      type: String(event?.type || 'unknown'),
+      timestamp: String(event?.timestamp || ''),
+      data: (event?.data as Record<string, unknown>) || {},
+    });
+    if (this.events.length > EVENT_BUFFER_SIZE) {
+      this.events.splice(0, this.events.length - EVENT_BUFFER_SIZE);
+    }
+  }
+
+  latestEventSeq(): number {
+    return this.eventSeq;
+  }
+
+  getEventsSince(options: {
+    sinceSeq?: number;
+    types?: string[];
+    server?: string;
+    limit?: number;
+  }): BufferedEvent[] {
+    const limit = Math.min(Math.max(options.limit ?? 25, 1), EVENT_BUFFER_SIZE);
+    return this.events
+      .filter(
+        event =>
+          (!options.sinceSeq || event.seq > options.sinceSeq) &&
+          (!options.types?.length || options.types.includes(event.type)) &&
+          (!options.server || event.server === options.server)
+      )
+      .slice(-limit);
+  }
+
   /** Restart the listener for one profile (module reconnects on its own). */
   async reconnect(name: string): Promise<RegisteredServer> {
     const server = this.servers.get(name);
@@ -320,6 +373,7 @@ export class ServerRegistry {
         foundryConfig,
         client: new FoundryClient(foundryConfig, logger.child({ server: name })),
       };
+      server.client.setEventHandler(event => this.pushEvent(name, event));
       this.servers.set(name, server);
       await new Promise(resolve => setTimeout(resolve, changed.includes(name) ? 500 : 0));
       server.client.connect().catch(error => {

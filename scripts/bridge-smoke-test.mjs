@@ -111,6 +111,13 @@ const tools = await step('list_tools returns a healthy tool count', async () => 
   return { toolCount: res.tools.length };
 });
 
+await step('tool catalog stays inside the context budget (<70KB)', async () => {
+  const res = await control.send('list_tools', {});
+  const chars = JSON.stringify(res.tools).length;
+  if (chars > 70_000) throw new Error(`Catalog is ${chars} chars — budget regression (was 86KB pre-trim)`);
+  return { chars, estTokens: Math.round(chars / 4), tools: res.tools.length };
+});
+
 const world = await step('get-world-info (world connected)', async () => {
   const info = await control.callTool('get-world-info');
   if (!info?.id) throw new Error('No world id in response');
@@ -252,6 +259,113 @@ await step('execute-foundry-script runs in GM browser', async () => {
   });
   if (!res?.result?.ok) throw new Error('Script did not return ok');
   return res.result;
+});
+
+// --- v0.11: combat, effects, events, undo groups, assets, logs, scene builder
+await step('apply-damage / apply-healing round-trip with undo', async () => {
+  const before = await control.callTool('get-document', { ref: { uuid: actorUuid }, fields: ['system.attributes.hp'] });
+  const damaged = await control.callTool('apply-damage', { target: { uuid: actorUuid }, amount: 7 });
+  if (damaged?.hp?.value !== 26) throw new Error(`Expected HP 26 after 7 damage from 33, got ${damaged?.hp?.value}`);
+  const healed = await control.callTool('apply-healing', { target: { uuid: actorUuid }, amount: 3 });
+  if (healed?.hp?.value !== 29) throw new Error(`Expected HP 29 after heal, got ${healed?.hp?.value}`);
+  const undo = await control.callTool('undo-last-mcp-operation', { confirmUndo: true });
+  if (!undo?.success) throw new Error('Undo of healing failed');
+  return { damaged: damaged.hp, healed: healed.hp, undone: true };
+});
+
+await step('add-active-effect creates an undoable effect', async () => {
+  const res = await control.callTool('add-active-effect', {
+    target: { uuid: actorUuid },
+    name: 'Smoke Blessing',
+    changes: [{ key: 'system.attributes.ac.bonus', mode: 2, value: 2 }],
+    duration: { rounds: 10 },
+  });
+  if (!res?.effect?.id) throw new Error('No effect id returned');
+  await control.callTool('undo-last-mcp-operation', { confirmUndo: true });
+  return { effect: res.effect.name };
+});
+
+await step('combat: create, roll initiative, advance, cleanup', async () => {
+  const combat = await control.callTool('create-document', { documentType: 'Combat', data: { scene: null } });
+  const combatId = combat?.document?.id;
+  if (!combatId) throw new Error('No combat id');
+  const actorId = actorUuid.split('.').pop();
+  await control.callTool('create-embedded-document', {
+    parentUuid: `Combat.${combatId}`,
+    embeddedType: 'Combatant',
+    data: { actorId },
+  });
+  const rolled = await control.callTool('roll-initiative', { combatRef: { id: combatId }, mode: 'all' });
+  if (!rolled?.order?.length) throw new Error('No initiative order returned');
+  if (typeof rolled.order[0].initiative !== 'number') throw new Error('Initiative not rolled');
+  await control.callTool('delete-document', { ref: { documentType: 'Combat', id: combatId }, confirmDeletion: true });
+  return { order: rolled.order };
+});
+
+await step('events: chat message produces a bridge event', async () => {
+  const baseline = await control.callTool('get-recent-events', { limit: 1 });
+  const sinceSeq = baseline?.latestSeq ?? 0;
+  await control.callTool('create-document', {
+    documentType: 'ChatMessage',
+    data: { content: 'Smoke test event ping' },
+  });
+  const waited = await control.callTool('wait-for-event', { sinceSeq, types: ['chat-message'], timeoutMs: 8000 });
+  if (!waited?.matched) throw new Error('chat-message event not received within 8s');
+  return { events: waited.events.map(e => e.type) };
+});
+
+await step('get-roll-results returns cleanly', async () => {
+  const res = await control.callTool('get-roll-results', { limit: 3 });
+  if (typeof res?.count !== 'number') throw new Error('No count in response');
+  return { count: res.count };
+});
+
+await step('build-actors-from-spec creates a party under one undo group', async () => {
+  const res = await control.callTool('build-actors-from-spec', {
+    specs: [
+      { name: 'Smoke Grunt A', type: 'npc' },
+      { name: 'Smoke Grunt B', type: 'npc' },
+    ],
+  });
+  if (res?.succeeded !== 2 || !res?.groupId) throw new Error(`Party build failed: ${JSON.stringify(res)}`);
+  const undo = await control.callTool('undo-last-mcp-operation', { confirmUndo: true, groupId: res.groupId });
+  const undone = undo?.undone?.filter(u => u.success)?.length ?? 0;
+  if (undone !== 2) throw new Error(`Group undo reverted ${undone}/2 actors`);
+  return { built: 2, groupUndone: undone };
+});
+
+await step('browse-assets lists the data tree', async () => {
+  const res = await control.callTool('browse-assets', { directory: '' });
+  if (!Array.isArray(res?.dirs)) throw new Error('No dirs array');
+  return { dirs: res.dirs.length, files: res.files.length };
+});
+
+await step('upload-asset stores a tiny PNG and returns its path', async () => {
+  // 1x1 transparent PNG
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const res = await control.callTool('upload-asset', { filename: 'smoke-test.png', base64: png });
+  if (!res?.path) throw new Error('No path returned');
+  return { path: res.path, bytes: res.bytes };
+});
+
+await step('build-scene-from-spec creates and deletes a scene', async () => {
+  const res = await control.callTool('build-scene-from-spec', {
+    spec: {
+      name: 'Smoke Test Scene',
+      width: 2000,
+      height: 1400,
+      lights: [{ x: 1000, y: 700, dim: 40, bright: 20 }],
+    },
+  });
+  if (!res?.scene?.id) throw new Error('No scene id');
+  await control.callTool('delete-document', { ref: { documentType: 'Scene', id: res.scene.id }, confirmDeletion: true });
+  return { scene: res.scene.name, lights: 1 };
+});
+
+await step('get-bridge-logs tails the server log', async () => {
+  const res = await control.callTool('get-bridge-logs', { lines: 5 });
+  if (!res?.exists && !res?.lines?.length) throw new Error('Server log missing or empty');
+  return { returned: res.returned };
 });
 
 await step('get-mcp-audit-log recorded this run', async () => {

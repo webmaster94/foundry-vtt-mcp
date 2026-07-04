@@ -83,6 +83,7 @@ export class DocumentService {
         resultSummary: result,
         durationMs: Date.now() - start,
         success: true,
+        ...this.groupOf(request),
         inverse: {
           kind: 'delete',
           documentType: request.documentType,
@@ -138,6 +139,7 @@ export class DocumentService {
         resultSummary: result,
         durationMs: Date.now() - start,
         success: true,
+        ...this.groupOf(request),
         inverse: {
           kind: 'update',
           ref: { uuid: doc.uuid },
@@ -200,6 +202,7 @@ export class DocumentService {
         resultSummary: result,
         durationMs: Date.now() - start,
         success: true,
+        ...this.groupOf(request),
         ...(inverse ? { inverse } : {}),
       });
       return result;
@@ -276,6 +279,7 @@ export class DocumentService {
         resultSummary: result,
         durationMs: Date.now() - start,
         success: true,
+        ...this.groupOf(request),
         inverse: {
           kind: 'embedded-delete',
           parentUuid: request.parentUuid,
@@ -387,6 +391,7 @@ export class DocumentService {
         resultSummary: result,
         durationMs: Date.now() - start,
         success: true,
+        ...this.groupOf(request),
         inverse: {
           kind: 'embedded-update',
           parentUuid: request.ref.parentUuid,
@@ -443,6 +448,7 @@ export class DocumentService {
         resultSummary: result,
         durationMs: Date.now() - start,
         success: true,
+        ...this.groupOf(request),
         ...(inverse ? { inverse } : {}),
       });
       return result;
@@ -540,9 +546,13 @@ export class DocumentService {
       throw new Error('batchOperations is limited to 50 operations per call');
     }
 
+    // Every op in a batch shares one audit group so the whole batch can be
+    // reverted with undo-last-mcp-operation { groupId }
+    const groupId = `batch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
     const results: Array<Record<string, unknown>> = [];
     for (let index = 0; index < request.operations.length; index++) {
-      const op = request.operations[index]! as any;
+      const op = { ...(request.operations[index]! as any), groupId };
       try {
         let result: unknown;
         switch (op.action) {
@@ -589,23 +599,92 @@ export class DocumentService {
       succeeded: results.length - failed,
       failed,
       stoppedEarly: results.length < request.operations.length,
+      groupId,
+      undoHint: `Revert the whole batch with undo-last-mcp-operation { groupId: "${groupId}", confirmUndo: true }`,
       results,
     };
   }
 
-  /** Revert the most recent undoable write recorded in the audit log. */
-  async undoLastOperation(request: { confirmUndo?: boolean } = {}): Promise<any> {
+  /**
+   * Revert an undoable write: the most recent one by default, a specific
+   * audit entry via auditId, or a whole group (batch/builder run) via groupId
+   * — group entries revert in reverse order.
+   */
+  async undoLastOperation(
+    request: { confirmUndo?: boolean; auditId?: number; groupId?: string } = {}
+  ): Promise<any> {
     if (!request.confirmUndo) {
-      throw new Error('undo-last-mcp-operation requires confirmUndo=true');
+      throw new Error('undo requires confirmUndo=true');
     }
 
-    const entry = auditService.getLastUndoable();
+    if (request.groupId) {
+      const entries = auditService.getGroupUndoable(request.groupId);
+      if (!entries.length) {
+        throw new Error(`No undoable operations found for group "${request.groupId}"`);
+      }
+      const results: Array<Record<string, unknown>> = [];
+      for (const entry of entries) {
+        try {
+          const result = await this.applyInverse(entry);
+          await auditService.markUndone(entry.id);
+          results.push({ id: entry.id, operation: entry.operation, success: true, result });
+        } catch (error) {
+          results.push({
+            id: entry.id,
+            operation: entry.operation,
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      await auditService.record({
+        operation: 'document.undoGroup',
+        toolName: 'undo-last-mcp-operation',
+        payloadSummary: { groupId: request.groupId, entries: entries.length },
+        resultSummary: { undone: results.filter(r => r.success).length },
+        success: true,
+      });
+      return { success: true, groupId: request.groupId, undone: results };
+    }
+
+    const entry = request.auditId
+      ? auditService.getEntry(request.auditId)
+      : auditService.getLastUndoable();
     if (!entry) {
-      throw new Error('No undoable operation found in the audit log');
+      throw new Error(
+        request.auditId
+          ? `Audit entry ${request.auditId} not found`
+          : 'No undoable operation found in the audit log'
+      );
+    }
+    if (!entry.inverse || entry.undone || !entry.success) {
+      throw new Error(
+        `Audit entry ${entry.id} is not undoable (no inverse, already undone, or failed)`
+      );
     }
 
-    const inverse = entry.inverse!;
     const start = Date.now();
+    const result = await this.applyInverse(entry);
+
+    await auditService.markUndone(entry.id);
+    await auditService.record({
+      operation: 'document.undo',
+      toolName: 'undo-last-mcp-operation',
+      payloadSummary: { undoneEntryId: entry.id, undoneOperation: entry.operation },
+      resultSummary: result,
+      durationMs: Date.now() - start,
+      success: true,
+    });
+
+    return {
+      success: true,
+      undoneEntry: { id: entry.id, operation: entry.operation, timestamp: entry.timestamp },
+      result,
+    };
+  }
+
+  private async applyInverse(entry: { inverse?: InverseOperation }): Promise<unknown> {
+    const inverse = entry.inverse!;
     let result: unknown;
 
     switch (inverse.kind) {
@@ -657,21 +736,7 @@ export class DocumentService {
         throw new Error(`Unknown inverse kind "${(inverse as any).kind}"`);
     }
 
-    await auditService.markUndone(entry.id);
-    await auditService.record({
-      operation: 'document.undo',
-      toolName: 'undo-last-mcp-operation',
-      payloadSummary: { undoneEntryId: entry.id, undoneOperation: entry.operation },
-      resultSummary: result,
-      durationMs: Date.now() - start,
-      success: true,
-    });
-
-    return {
-      success: true,
-      undoneEntry: { id: entry.id, operation: entry.operation, timestamp: entry.timestamp },
-      result,
-    };
+    return result;
   }
 
   async executeMacro(request: {
@@ -891,6 +956,12 @@ export class DocumentService {
       truncated: serialized.truncated,
       truncatedPaths: serialized.truncatedPaths,
     };
+  }
+
+  /** Optional audit group tag threaded through requests (batches, builders). */
+  private groupOf(request: unknown): { groupId?: string } {
+    const groupId = (request as any)?.groupId;
+    return typeof groupId === 'string' && groupId ? { groupId } : {};
   }
 
   private requireUuid(uuid: string | undefined): string {

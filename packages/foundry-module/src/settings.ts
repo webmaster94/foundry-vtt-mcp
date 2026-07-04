@@ -392,6 +392,24 @@ export class ModuleSettings {
       },
     });
 
+    game.settings.register(this.moduleId, 'authToken', {
+      name: 'Bridge Auth Token',
+      hint: 'Optional shared secret. When the MCP server profile sets the same authToken, connections without it are rejected. Required for safe remote (0.0.0.0) setups.',
+      scope: 'world',
+      config: true,
+      type: String,
+      default: '',
+    });
+
+    game.settings.register(this.moduleId, 'enableEventPush', {
+      name: 'Push Game Events to MCP',
+      hint: 'Send combat turns, chat messages, and dice results to the MCP server so AI agents can react to them (wait-for-event).',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: true,
+    });
+
     // Hidden storage for the MCP audit log (world scope; game.world has no
     // flag API on the client, so a setting is the reliable world-level store)
     game.settings.register(this.moduleId, 'auditLogs', {
@@ -592,6 +610,7 @@ export class ModuleSettings {
       connectionTimeout: DEFAULT_CONFIG.CONNECTION_TIMEOUT, // Use sensible default
       debugLogging: false, // Always false - use browser console for debugging
       connectionType: connectionType as 'auto' | 'webrtc' | 'websocket',
+      authToken: String(this.getSetting('authToken') || ''),
     };
   }
 

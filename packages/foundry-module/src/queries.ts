@@ -7,6 +7,9 @@ import { documentService } from './document-service.js';
 import { scriptExecutor } from './script-executor.js';
 import { actorBuilder } from './actor-builder.js';
 import { compendiumContentSearch } from './compendium-search.js';
+import { combatService } from './combat-service.js';
+import { assetService } from './asset-service.js';
+import { sceneBuilder } from './scene-builder.js';
 
 export class QueryHandlers {
   public dataAccess: FoundryDataAccess;
@@ -96,6 +99,16 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.buildActorFromSpec`] = this.handleBuildActorFromSpec.bind(this);
     CONFIG.queries[`${modulePrefix}.searchCompendiumContents`] =
       this.handleSearchCompendiumContents.bind(this);
+    CONFIG.queries[`${modulePrefix}.rollInitiative`] = this.handleRollInitiative.bind(this);
+    CONFIG.queries[`${modulePrefix}.applyDamage`] = this.handleApplyDamage.bind(this);
+    CONFIG.queries[`${modulePrefix}.applyHealing`] = this.handleApplyHealing.bind(this);
+    CONFIG.queries[`${modulePrefix}.addActiveEffect`] = this.handleAddActiveEffect.bind(this);
+    CONFIG.queries[`${modulePrefix}.getRollResults`] = this.handleGetRollResults.bind(this);
+    CONFIG.queries[`${modulePrefix}.browseAssets`] = this.handleBrowseAssets.bind(this);
+    CONFIG.queries[`${modulePrefix}.uploadAsset`] = this.handleUploadAsset.bind(this);
+    CONFIG.queries[`${modulePrefix}.buildSceneFromSpec`] = this.handleBuildSceneFromSpec.bind(this);
+    CONFIG.queries[`${modulePrefix}.buildActorsFromSpec`] =
+      this.handleBuildActorsFromSpec.bind(this);
 
     // Phase 2 & 3: Write operation queries
     CONFIG.queries[`${modulePrefix}.createActorFromCompendium`] =
@@ -676,6 +689,60 @@ export class QueryHandlers {
     const denied = this.assertGM();
     if (denied) return denied;
     return { success: true, ...(await compendiumContentSearch.search(data || {})) };
+  }
+
+  private async handleRollInitiative(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return combatService.rollInitiative(data || {});
+  }
+
+  private async handleApplyDamage(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return combatService.applyDamage(data || {});
+  }
+
+  private async handleApplyHealing(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return combatService.applyHealing(data || {});
+  }
+
+  private async handleAddActiveEffect(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return combatService.addActiveEffect(data || {});
+  }
+
+  private async handleGetRollResults(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, ...combatService.getRollResults(data || {}) };
+  }
+
+  private async handleBrowseAssets(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return { success: true, ...(await assetService.browse(data || {})) };
+  }
+
+  private async handleUploadAsset(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return assetService.upload(data || {});
+  }
+
+  private async handleBuildSceneFromSpec(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return sceneBuilder.build(data?.spec || data || {});
+  }
+
+  private async handleBuildActorsFromSpec(data: any): Promise<any> {
+    const denied = this.assertGM();
+    if (denied) return denied;
+    return actorBuilder.buildMany(data?.specs || []);
   }
 
   private async handleGetMcpAuditLog(data: any): Promise<any> {

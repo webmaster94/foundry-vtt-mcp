@@ -124,8 +124,17 @@ Without a config file, behavior is identical to upstream: one server from enviro
 **Search (fork)**
 `search-compendium-contents` — filters on real system data (`{"path": "system.level", "op": "lte", "value": 3}`), optional description full-text. Complements upstream's name-based `search-compendium` and the enhanced creature index.
 
+**Combat & events (fork, v0.11)**
+`roll-initiative`, `apply-damage` / `apply-healing` (temp-HP aware, undoable), `add-active-effect` (buffs/debuffs with durations). Foundry pushes game events to the server — `wait-for-event` / `get-recent-events` react to combat turns, chat messages, and dice results; `get-roll-results` finally makes player roll outcomes visible to the agent.
+
+**Scenes & assets (fork, v0.11)**
+`build-scene-from-spec` (background, grid, lights, walls, tokens by actor name in one call), `build-actors-from-spec` (whole encounters/parties, one undo group), token placement + token art from `build-actor-from-spec`, `browse-assets` / `upload-asset` for portraits and battle maps.
+
 **Automation (fork)**
-`execute-foundry-script` (JavaScript in the GM browser), macro CRUD + `execute-macro`, browser console capture (`get-browser-console`), `get-bridge-recipes` (curated dnd5e NPC math and API patterns for agents).
+`execute-foundry-script` (JavaScript in the GM browser), macro CRUD + `execute-macro`, browser console capture (`get-browser-console`), `get-bridge-logs` (server self-diagnosis), `get-bridge-recipes` (curated dnd5e NPC math, combat-loop, and API patterns for agents).
+
+**Security**
+Optional shared-secret auth: set the module's _Bridge Auth Token_ and the matching `authToken` in the server profile — unauthenticated connections are rejected. Strongly recommended for remote (`0.0.0.0`) setups; loopback binding remains the default otherwise.
 
 **Inherited from upstream**
 Characters and inventories, scenes and tokens (movement, conditions, updates), compendium browsing, quest journals and campaign dashboards, interactive player dice requests, actor ownership, actor creation from compendium, AI map generation via ComfyUI, and system-specific suites for D&D 5e NPCs, DSA5 archetypes, and WFRP4e actor editing.

@@ -23,6 +23,8 @@ const ConfigSchema = z.object({
     rejectUnauthorized: z.boolean().default(true), // TLS certificate validation
     // WebRTC signaling HTTP port; defaults to port + 1 when unset
     webrtcSignalingPort: z.number().min(1024).max(65535).optional(),
+    // Shared secret; when set, module connections must present the same token
+    authToken: z.string().optional(),
     // WebRTC configuration
     webrtc: z
       .object({
@@ -79,6 +81,7 @@ const rawConfig = {
     webrtcSignalingPort: process.env.FOUNDRY_WEBRTC_SIGNALING_PORT
       ? parseInt(process.env.FOUNDRY_WEBRTC_SIGNALING_PORT, 10)
       : undefined,
+    authToken: process.env.FOUNDRY_AUTH_TOKEN || undefined,
     webrtc: {
       stunServers: process.env.FOUNDRY_STUN_SERVERS
         ? process.env.FOUNDRY_STUN_SERVERS.split(',')

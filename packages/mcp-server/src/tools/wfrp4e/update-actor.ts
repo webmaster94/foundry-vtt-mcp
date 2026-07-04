@@ -51,9 +51,9 @@ export class WFRP4eUpdateActorTools {
     const charProperty = {
       type: 'object',
       properties: {
-        initial: { type: 'number', description: 'Base characteristic value' },
-        advances: { type: 'number', description: 'Points advanced in this characteristic' },
-        modifier: { type: 'number', description: 'Modifier (may be negative)' },
+        initial: { type: 'number' },
+        advances: { type: 'number' },
+        modifier: { type: 'number' },
       },
       additionalProperties: false,
     };
@@ -64,79 +64,43 @@ export class WFRP4eUpdateActorTools {
       {
         name: 'wfrp4e-update-actor',
         description:
-          "[WFRP4e only] Update an existing actor's stat block: characteristic " +
-          'initial/advances/modifier, wounds (current value and max), the advances on ' +
-          'skills the actor already has, which career is current, base movement, and/or ' +
-          'the biography text. Only the fields ' +
-          'you provide change; the characteristic Total/Bonus and skill totals recompute ' +
-          'automatically. USE THIS to tweak a creature/NPC/PC you already have — e.g. after ' +
-          'cloning a creature to make a tougher variant, or to advance a skill. To ADD a new ' +
-          'skill, talent, trait, trapping or career use wfrp4e-add-items; to create an actor ' +
-          'use create-actor-from-compendium.',
+          "[WFRP4e] Update an actor's stat block: characteristics (initial/advances/modifier), wounds, " +
+          'advances on existing skills, current career, movement, biography. Only provided fields change; ' +
+          'totals recompute. To ADD skills/talents/trappings use wfrp4e-add-items.',
         inputSchema: {
           type: 'object',
           properties: {
-            actor: {
-              type: 'string',
-              description: 'Actor name or 16-character Foundry id',
-            },
+            actor: { type: 'string', description: 'Actor name or id' },
             characteristics: {
               type: 'object',
-              description:
-                'Per-characteristic updates. Keys: ws, bs, s, t, i, ag, dex, int, wp, fel. ' +
-                'Each may set initial, advances and/or modifier.',
+              description: 'Keys: ws bs s t i ag dex int wp fel',
               properties: characteristicProps,
               additionalProperties: false,
             },
             wounds: {
               type: 'object',
-              description: 'Wound (hit point) updates.',
-              properties: {
-                value: { type: 'number', description: 'Current wounds' },
-                max: { type: 'number', description: 'Maximum wounds' },
-              },
+              properties: { value: { type: 'number' }, max: { type: 'number' } },
               additionalProperties: false,
             },
             skills: {
               type: 'array',
-              description:
-                'Set advances on skills the actor ALREADY has. To add a new skill use ' +
-                'wfrp4e-add-items instead.',
+              description: 'Set advances on skills the actor already has',
               items: {
                 type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                    description: 'Existing skill name (e.g. "Stealth (Rural)").',
-                  },
-                  advances: { type: 'number', description: 'Advances to set on the skill.' },
-                },
+                properties: { name: { type: 'string' }, advances: { type: 'number' } },
                 required: ['name', 'advances'],
                 additionalProperties: false,
               },
             },
-            career: {
-              type: 'string',
-              description:
-                "Name of an existing career item to make the actor's current career (the others " +
-                'are set non-current).',
-            },
-            movement: {
-              type: 'number',
-              description: 'Base Movement value (system.details.move).',
-            },
-            biography: {
-              type: 'string',
-              description:
-                'Biography / notes text for the actor (replaces the current biography; HTML allowed).',
-            },
+            career: { type: 'string', description: 'Existing career item to make current' },
+            movement: { type: 'number' },
+            biography: { type: 'string', description: 'Replaces biography; HTML allowed' },
           },
           required: ['actor'],
         },
       },
     ];
   }
-
   async handleUpdateActor(args: unknown) {
     const parsed = updateActorSchema.safeParse(args);
     if (!parsed.success) {

@@ -11,6 +11,8 @@ export interface BridgeConfig {
   connectionTimeout: number;
   debugLogging: boolean;
   connectionType?: 'auto' | 'webrtc' | 'websocket'; // Connection type: auto (HTTPS→WebRTC, HTTP→WebSocket), webrtc, websocket
+  /** Optional shared secret; must match the MCP server profile's authToken. */
+  authToken?: string;
 }
 
 /**
@@ -77,6 +79,7 @@ export class SocketBridge {
       stunServers: [], // Empty for localhost - must match server configuration
       connectionTimeout: this.config.connectionTimeout,
       debugLogging: this.config.debugLogging,
+      ...(this.config.authToken ? { authToken: this.config.authToken } : {}),
     };
 
     this.webrtc = new WebRTCConnection(webrtcConfig);
@@ -102,7 +105,9 @@ export class SocketBridge {
     const host = this.config.serverHost;
     this.log(`Using WebSocket (${protocol}://${host}:${this.config.serverPort})`);
 
-    const wsUrl = `${protocol}://${host}:${this.config.serverPort}${this.config.namespace}`;
+    const wsUrl = `${protocol}://${host}:${this.config.serverPort}${this.config.namespace}${
+      this.config.authToken ? `?token=${encodeURIComponent(this.config.authToken)}` : ''
+    }`;
 
     return new Promise((resolve, reject) => {
       const connectTimeout = setTimeout(() => {
@@ -477,6 +482,11 @@ export class SocketBridge {
         // Connection failed, scheduleReconnect will be called again from connect()
       }
     }, delay);
+  }
+
+  /** Push a game event to the MCP server (see event-service.ts). */
+  sendEvent(event: unknown): void {
+    this.sendMessage({ type: 'bridge-event', event });
   }
 
   private sendMessage(message: any): void {

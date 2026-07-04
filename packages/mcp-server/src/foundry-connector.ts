@@ -28,6 +28,9 @@ export class FoundryConnector {
   private pendingQueries = new Map<string, PendingQuery>();
   private queryIdCounter = 0;
 
+  /** Called for every unsolicited game event the module pushes (bridge-event). */
+  public onBridgeEvent: ((event: any) => void) | null = null;
+
   constructor({ config, logger }: FoundryConnectorOptions) {
     this.config = config;
     this.logger = logger.child({ component: 'FoundryConnector' });
@@ -110,16 +113,27 @@ export class FoundryConnector {
 
     // Manually handle upgrade for WebSocket connections
     this.httpServer.on('upgrade', (req: any, socket: any, head: any) => {
-      const pathname = req.url || '/';
+      const url = new URL(req.url || '/', 'http://localhost');
+      const pathname = url.pathname;
 
       // Only upgrade if path matches WebSocket namespace
-      if (pathname === (this.config.namespace || '/')) {
-        this.wss?.handleUpgrade(req, socket, head, ws => {
-          this.wss?.emit('connection', ws, req);
-        });
-      } else {
+      if (pathname !== (this.config.namespace || '/')) {
         socket.destroy();
+        return;
       }
+
+      // Shared-secret auth: when this profile configures authToken, reject
+      // connections that don't present the matching token
+      const expected = (this.config as any).authToken;
+      if (expected && url.searchParams.get('token') !== expected) {
+        this.logger.warn('Rejected WebSocket connection: missing or invalid auth token');
+        socket.destroy();
+        return;
+      }
+
+      this.wss?.handleUpgrade(req, socket, head, ws => {
+        this.wss?.emit('connection', ws, req);
+      });
     });
 
     // Handle WebSocket connections (both signaling and direct WebSocket)
@@ -233,6 +247,15 @@ export class FoundryConnector {
   }
 
   private async handleMessage(message: any): Promise<void> {
+    if (message.type === 'bridge-event' && message.event) {
+      try {
+        this.onBridgeEvent?.(message.event);
+      } catch (error) {
+        this.logger.warn('Bridge event handler failed', error);
+      }
+      return;
+    }
+
     if (message.type === 'mcp-response' && message.id) {
       const pending = this.pendingQueries.get(message.id);
       if (pending) {
@@ -341,7 +364,16 @@ export class FoundryConnector {
         req.on('error', reject);
       });
 
-      const { offer } = JSON.parse(body);
+      const { offer, token } = JSON.parse(body);
+
+      // Shared-secret auth for the signaling path
+      const expected = (this.config as any).authToken;
+      if (expected && token !== expected) {
+        this.logger.warn('Rejected WebRTC offer: missing or invalid auth token');
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
 
       if (!offer) {
         res.writeHead(400, { 'Content-Type': 'application/json' });

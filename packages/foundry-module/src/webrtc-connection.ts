@@ -7,6 +7,8 @@ export interface WebRTCConfig {
   stunServers: string[];
   connectionTimeout: number;
   debugLogging: boolean;
+  /** Optional shared secret; must match the MCP server profile's authToken. */
+  authToken?: string;
 }
 
 /**
@@ -155,7 +157,10 @@ export class WebRTCConnection {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ offer }),
+        body: JSON.stringify({
+          offer,
+          ...(this.config.authToken ? { token: this.config.authToken } : {}),
+        }),
         signal: AbortSignal.timeout(this.config.connectionTimeout * 1000),
       });
 

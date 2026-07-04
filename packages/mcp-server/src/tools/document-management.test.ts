@@ -17,13 +17,15 @@ function createTools() {
 describe('DocumentManagementTools', () => {
   it('exposes generic and workflow document tools', () => {
     const { tools } = createTools();
-    const names = tools.getToolDefinitions().map((tool) => tool.name);
+    const names = tools.getToolDefinitions().map(tool => tool.name);
 
     expect(names).toContain('list-document-types');
     expect(names).toContain('create-document');
-    expect(names).toContain('list-world-items');
     expect(names).toContain('roll-roll-table');
-    expect(names).toContain('create-scene-embedded-document');
+    expect(names).toContain('undo-last-mcp-operation');
+    // context budget: per-type CRUD wrappers are dispatch-only, not advertised
+    expect(names).not.toContain('list-world-items');
+    expect(names).not.toContain('create-scene-embedded-document');
   });
 
   it('validates and forwards generic list-documents calls', async () => {
@@ -31,12 +33,15 @@ describe('DocumentManagementTools', () => {
 
     await tools.handleToolCall('list-documents', { documentType: 'Macro', limit: 5 });
 
-    expect(query).toHaveBeenCalledWith('foundry-mcp-bridge.listDocuments', expect.objectContaining({
-      documentType: 'Macro',
-      limit: 5,
-      includeSystem: true,
-      includeFlags: false,
-    }));
+    expect(query).toHaveBeenCalledWith(
+      'foundry-mcp-bridge.listDocuments',
+      expect.objectContaining({
+        documentType: 'Macro',
+        limit: 5,
+        includeSystem: true,
+        includeFlags: false,
+      })
+    );
   });
 
   it('routes workflow creation through generic document creation', async () => {

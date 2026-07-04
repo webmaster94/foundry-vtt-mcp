@@ -40,14 +40,24 @@ Key dnd5e rules the sheet derives FOR you (do not fight them):
   'document-api': `# Generic document API patterns
 
 - Discover types: list-document-types. Discover field paths: get-document-schema (use its dotted paths in updates).
+- Everything is create/update/delete-document + documentType: folders, roll tables, playlists, chat messages, combats, card stacks (the old per-type wrappers still dispatch but are not advertised).
 - Update with dotted keys: { "ref": {...}, "updates": { "system.attributes.hp.value": 40 } }.
 - Preview first on risky edits: pass dryRun=true to update-document / delete-document to get a before/after diff without applying.
-- Made a mistake? undo-last-mcp-operation { confirmUndo: true } reverts the last write (see get-mcp-audit-log for what that is).
-- Many embedded docs at once: create-embedded-documents (array) instead of N single calls.
-- Ordered multi-step work: batch-document-operations with [{ action: "create", ... }, { action: "updateEmbedded", ... }].
+- Undo: undo-last-mcp-operation { confirmUndo: true } for the last write; add auditId for a specific entry, or groupId to revert a whole batch/builder run (batches and build-actors-from-spec return their groupId).
+- Many embedded docs at once: create-embedded-documents (array). Ordered multi-step work: batch-document-operations.
 - refs accept { uuid } (best), { documentType, id }, or { documentType, name } (must be unambiguous).
-- Big compendium entries: get-compendium-entry-full with fields: ["name","system.abilities","items"] to avoid huge payloads.
-- Precise compendium queries: search-compendium-contents with filters like { path: "system.level", op: "lte", value: 3 } and documentType "Item".`,
+- Big compendium entries: get-compendium-entry-full with fields projection. Precise queries: search-compendium-contents with { path: "system.level", op: "lte", value: 3 }.`,
+
+  'combat-loop': `# Running combat with the bridge
+
+1. Build/verify combatants (build-actor-from-spec addToScene:true, or build-scene-from-spec with tokens).
+2. create-document { documentType: "Combat" } + create-embedded-documents Combatant entries ({ actorId, tokenId }).
+3. roll-initiative { mode: "all" | "npc" }.
+4. Loop: note latestSeq from get-recent-events, then wait-for-event { types: ["combat-turn","roll-completed"], sinceSeq } — act on each turn.
+5. Resolve NPC attacks: use-item to fire the actor's attack, or roll manually and apply-damage { target, amount } (temp HP absorbs first; undoable). apply-healing for cures.
+6. Player rolls: request-player-rolls, then wait-for-event { types: ["roll-completed"] } or get-roll-results to see outcomes.
+7. Buffs/debuffs: add-active-effect with changes [{ key: "system.attributes.ac.bonus", mode: 2, value: 2 }] and duration { rounds: 10 }.
+8. advance-combat to move turns; combat-ended event fires when the combat is deleted.`,
 
   'multi-server': `# Working with multiple Foundry servers
 

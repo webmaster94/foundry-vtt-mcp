@@ -30,6 +30,7 @@ vi.mock('../foundry-client.js', () => {
       async query(method: string) {
         return { method, port: this.foundryConfig.port };
       }
+      setEventHandler() {}
       async getCapabilities() {
         return this.connected
           ? {

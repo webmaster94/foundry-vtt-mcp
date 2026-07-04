@@ -54,40 +54,27 @@ export class CompendiumTools {
       {
         name: 'search-compendium',
         description:
-          'Search through compendium packs by name. IMPORTANT LIMITATIONS: (1) Text search only matches entity NAMES - descriptions and traits are NOT searchable. (2) Filters use name heuristics only (not actual system data) and only work on Actor packs - challengeRating and creatureType filters search for keywords like "ancient", "legendary", "humanoid", etc. in entity names. For accurate filtering by level/CR, traits, or rarity, use list-creatures-by-criteria instead. For best results, use broad name-based searches (e.g., "dragon", "knight") and inspect individual items with get-compendium-item.',
+          'Search compendium packs by entry NAME only (descriptions are not searched; the filters are name-keyword heuristics). For real system-data filters (spell level, item type, CR) use search-compendium-contents; for indexed creature filtering use list-creatures-by-criteria.',
         inputSchema: {
           type: 'object',
           properties: {
-            query: {
-              type: 'string',
-              description:
-                'Search query to find items in compendiums by name only. Use broad, simple terms (e.g., "dragon", "sword", "feat"). Descriptions and traits are NOT searchable.',
-            },
-            packType: {
-              type: 'string',
-              description: 'Optional filter by pack type (e.g., "Item", "Actor", "JournalEntry")',
-            },
+            query: { type: 'string', description: 'Broad name terms, e.g. "dragon", "sword"' },
+            packType: { type: 'string', description: 'e.g. "Item", "Actor", "JournalEntry"' },
             filters: {
               type: 'object',
-              description:
-                'LIMITED FUNCTIONALITY: Only works on Actor packs using name-based heuristics. challengeRating searches for keywords like "ancient" (CR 15+), "adult" (CR 10+), "captain" (CR 5+). creatureType searches for type keywords in names. Does NOT check actual system data. For accurate filtering, use list-creatures-by-criteria instead.',
+              description: 'Actor packs only; name-keyword heuristics, not system data',
               properties: {
                 challengeRating: {
                   oneOf: [
-                    { type: 'number', description: 'Exact CR value (e.g., 12)' },
+                    { type: 'number' },
                     {
                       type: 'object',
-                      properties: {
-                        min: { type: 'number', description: 'Minimum CR' },
-                        max: { type: 'number', description: 'Maximum CR' },
-                      },
+                      properties: { min: { type: 'number' }, max: { type: 'number' } },
                     },
                   ],
                 },
                 creatureType: {
                   type: 'string',
-                  description:
-                    'Creature type (e.g., "humanoid", "dragon", "beast", "undead", "fey", "fiend", "celestial", "construct", "elemental", "giant", "monstrosity", "ooze", "plant")',
                   enum: [
                     'humanoid',
                     'dragon',
@@ -107,59 +94,31 @@ export class CompendiumTools {
                 },
                 size: {
                   type: 'string',
-                  description: 'Creature size (e.g., "medium", "large", "huge")',
                   enum: ['tiny', 'small', 'medium', 'large', 'huge', 'gargantuan'],
                 },
-                alignment: {
-                  type: 'string',
-                  description:
-                    'Creature alignment (e.g., "lawful good", "chaotic evil", "neutral")',
-                },
-                hasLegendaryActions: {
-                  type: 'boolean',
-                  description: 'Filter for creatures with legendary actions',
-                },
-                spellcaster: {
-                  type: 'boolean',
-                  description: 'Filter for creatures that can cast spells (D&D 5e)',
-                },
-                // Pathfinder 2e specific filters
+                alignment: { type: 'string' },
+                hasLegendaryActions: { type: 'boolean' },
+                spellcaster: { type: 'boolean' },
                 level: {
+                  description: 'PF2e level',
                   oneOf: [
-                    { type: 'number', description: 'Exact level value (e.g., 12)' },
+                    { type: 'number' },
                     {
                       type: 'object',
-                      properties: {
-                        min: { type: 'number', description: 'Minimum level' },
-                        max: { type: 'number', description: 'Maximum level' },
-                      },
+                      properties: { min: { type: 'number' }, max: { type: 'number' } },
                     },
                   ],
-                  description: 'Creature level (Pathfinder 2e, -1 to 25+)',
                 },
-                traits: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'Creature traits to filter by (Pathfinder 2e)',
-                },
+                traits: { type: 'array', items: { type: 'string' }, description: 'PF2e' },
                 rarity: {
                   type: 'string',
                   enum: ['common', 'uncommon', 'rare', 'unique'],
-                  description: 'Creature rarity (Pathfinder 2e)',
+                  description: 'PF2e',
                 },
-                hasSpells: {
-                  type: 'boolean',
-                  description: 'Filter for spellcasting creatures (Pathfinder 2e)',
-                },
+                hasSpells: { type: 'boolean', description: 'PF2e' },
               },
             },
-            limit: {
-              type: 'number',
-              description:
-                'Maximum number of results to return (default: 50 for discovery searches, max: 50)',
-              minimum: 1,
-              maximum: 50,
-            },
+            limit: { type: 'number', minimum: 1, maximum: 50 },
           },
           required: ['query'],
         },
@@ -192,29 +151,23 @@ export class CompendiumTools {
       {
         name: 'list-creatures-by-criteria',
         description:
-          'MULTI-SYSTEM CREATURE DISCOVERY: Get a comprehensive list of creatures matching specific criteria. Supports D&D 5e (Challenge Rating), Pathfinder 2e (Level), and Cosmere RPG (Tier/Role/Investiture) with automatic system detection. Perfect for encounter building - returns minimal data so Claude can use built-in monster knowledge to identify suitable creatures by name, then pull full details only for final selections. Features intelligent pack prioritization and high result limits for complete surveys.',
+          'Indexed creature discovery for encounter building. Filters by real stats with automatic system detection: D&D 5e CR, PF2e level/traits/rarity, Cosmere tier/role/investiture. Returns minimal rows; pull details for finalists with get-compendium-item.',
         inputSchema: {
           type: 'object',
           properties: {
             challengeRating: {
+              description: 'D&D 5e: number, string, or {min,max}',
               oneOf: [
-                { type: 'number', description: 'Exact CR value (e.g., 12)' },
-                { type: 'string', description: 'Exact CR value as string (e.g., "12")' },
+                { type: 'number' },
+                { type: 'string' },
                 {
                   type: 'object',
-                  properties: {
-                    min: { type: 'number', description: 'Minimum CR (default: 0)' },
-                    max: { type: 'number', description: 'Maximum CR (default: 30)' },
-                  },
-                  description: 'CR range object (e.g., {"min": 10, "max": 15})',
+                  properties: { min: { type: 'number' }, max: { type: 'number' } },
                 },
               ],
-              description:
-                'Filter by Challenge Rating - accepts number, string, or range object. Use ranges for broader discovery (e.g., {"min": 10, "max": 15}) or exact values (12 or "12")',
             },
             creatureType: {
               type: 'string',
-              description: 'Filter by creature type',
               enum: [
                 'humanoid',
                 'dragon',
@@ -234,105 +187,60 @@ export class CompendiumTools {
             },
             size: {
               type: 'string',
-              description: 'Filter by creature size',
               enum: ['tiny', 'small', 'medium', 'large', 'huge', 'gargantuan'],
             },
-            hasSpells: {
-              type: 'boolean',
-              description: 'Filter for spellcasting creatures',
-            },
-            hasLegendaryActions: {
-              type: 'boolean',
-              description: 'Filter for creatures with legendary actions (D&D 5e)',
-            },
-            // Pathfinder 2e specific filters
+            hasSpells: { type: 'boolean' },
+            hasLegendaryActions: { type: 'boolean' },
             level: {
+              description: 'PF2e: number, string, or {min,max}',
               oneOf: [
-                { type: 'number', description: 'Exact level value (e.g., 12)' },
-                { type: 'string', description: 'Exact level value as string (e.g., "12")' },
+                { type: 'number' },
+                { type: 'string' },
                 {
                   type: 'object',
-                  properties: {
-                    min: { type: 'number', description: 'Minimum level (default: -1)' },
-                    max: { type: 'number', description: 'Maximum level (default: 25)' },
-                  },
-                  description: 'Level range object (e.g., {"min": 10, "max": 15})',
+                  properties: { min: { type: 'number' }, max: { type: 'number' } },
                 },
               ],
-              description: 'Filter by creature level (Pathfinder 2e, -1 to 25+)',
             },
-            traits: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'Filter by creature traits (Pathfinder 2e)',
-            },
+            traits: { type: 'array', items: { type: 'string' }, description: 'PF2e' },
             rarity: {
               type: 'string',
               enum: ['common', 'uncommon', 'rare', 'unique'],
-              description: 'Filter by rarity (Pathfinder 2e)',
+              description: 'PF2e',
             },
-            // Cosmere RPG specific filters
             tier: {
+              description: 'Cosmere: 1-4 or {min,max}',
               oneOf: [
-                { type: 'number', description: 'Exact tier value (1-4)' },
+                { type: 'number' },
                 {
                   type: 'object',
-                  properties: {
-                    min: { type: 'number', description: 'Minimum tier (1-4)' },
-                    max: { type: 'number', description: 'Maximum tier (1-4)' },
-                  },
-                  description: 'Tier range object (e.g., {"min": 2, "max": 3})',
+                  properties: { min: { type: 'number' }, max: { type: 'number' } },
                 },
               ],
-              description:
-                "Filter by adversary Tier (Cosmere RPG, 1-4). Cosmere's primary encounter-design dial.",
             },
-            role: {
-              type: 'string',
-              description:
-                'Filter by adversary role (Cosmere RPG). Common values: "minion", "rival", "boss". Case-insensitive.',
-            },
-            hasInvestiture: {
-              type: 'boolean',
-              description: 'Filter for Surge/Investiture-using adversaries (Cosmere RPG)',
-            },
+            role: { type: 'string', description: 'Cosmere: minion/rival/boss' },
+            hasInvestiture: { type: 'boolean', description: 'Cosmere' },
             hitPoints: {
               oneOf: [
-                { type: 'number', description: 'Exact health/HP value' },
+                { type: 'number' },
                 {
                   type: 'object',
-                  properties: {
-                    min: { type: 'number' },
-                    max: { type: 'number' },
-                  },
-                  description: 'Health/HP range object (e.g., {"min": 30, "max": 80})',
+                  properties: { min: { type: 'number' }, max: { type: 'number' } },
                 },
               ],
-              description: 'Filter by max health/HP (Cosmere RPG; cross-system field)',
             },
             defensesMin: {
               type: 'object',
               properties: {
-                phy: { type: 'number', description: 'Minimum Physical defense' },
-                cog: { type: 'number', description: 'Minimum Cognitive defense' },
-                spi: { type: 'number', description: 'Minimum Spiritual defense' },
+                phy: { type: 'number' },
+                cog: { type: 'number' },
+                spi: { type: 'number' },
               },
               additionalProperties: false,
-              description:
-                'Minimum defense thresholds (Cosmere RPG). Pass any subset of phy/cog/spi.',
+              description: 'Cosmere minimum defenses',
             },
-            deflectMin: {
-              type: 'number',
-              description: 'Minimum Deflect rating (Cosmere RPG)',
-            },
-            limit: {
-              type: 'number',
-              description:
-                'Maximum results to return (default: 500 for comprehensive surveys, max: 1000)',
-              minimum: 1,
-              maximum: 1000,
-              default: 500,
-            },
+            deflectMin: { type: 'number', description: 'Cosmere' },
+            limit: { type: 'number', minimum: 1, maximum: 1000, default: 500 },
           },
           required: [],
         },

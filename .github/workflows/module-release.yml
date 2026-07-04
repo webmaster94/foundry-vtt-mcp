@@ -67,6 +67,25 @@ jobs:
             templates \
             scripts
 
+      - name: Create standalone MCP server bundle
+        run: |
+          npm run bundle:server
+          mkdir -p /tmp/server-bundle
+          cp packages/mcp-server/dist/index.bundle.cjs /tmp/server-bundle/index.js 2>/dev/null \
+            || cp packages/mcp-server/dist/backend.bundle.cjs /tmp/server-bundle/backend.js
+          cp -r packages/mcp-server/dist /tmp/server-bundle/dist
+          cp foundry-servers.example.json /tmp/server-bundle/
+          cat > /tmp/server-bundle/README.txt <<'EOF'
+          Foundry MCP Server (standalone, no build needed)
+          Requires Node.js 18+.
+          Run:  node dist/index.js
+          Point your MCP client at that command (see the repo README for
+          Claude Desktop / Claude Code / Codex config), or clone the repo
+          and use `npm run setup` for automatic client registration.
+          EOF
+          cd /tmp/server-bundle && zip -r /tmp/foundry-mcp-server.zip .
+          mv /tmp/foundry-mcp-server.zip "$GITHUB_WORKSPACE/"
+
       - name: Attach files to release
         uses: softprops/action-gh-release@v2
         with:
@@ -74,3 +93,4 @@ jobs:
           files: |
             ${{ env.module_dir }}/module.json
             ${{ env.module_dir }}/module.zip
+            foundry-mcp-server.zip
