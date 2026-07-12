@@ -22,7 +22,10 @@ export class WebRTCConnection {
   private connectionState: string = CONNECTION_STATES.DISCONNECTED;
   private messageHandler: ((message: any) => Promise<void>) | null = null;
 
-  constructor(private config: WebRTCConfig) {}
+  constructor(
+    private config: WebRTCConfig,
+    private onConnectionStateChange?: (connected: boolean) => void
+  ) {}
 
   async connect(onMessage: (message: any) => Promise<void>): Promise<void> {
     if (
@@ -32,7 +35,7 @@ export class WebRTCConnection {
       return;
     }
 
-    this.connectionState = CONNECTION_STATES.CONNECTING;
+    this.setConnectionState(CONNECTION_STATES.CONNECTING);
     this.messageHandler = onMessage;
     this.log('Starting WebRTC connection...');
 
@@ -64,7 +67,7 @@ export class WebRTCConnection {
       this.log('WebRTC connection initiated');
     } catch (error) {
       this.log(`WebRTC connection failed: ${error}`);
-      this.connectionState = CONNECTION_STATES.DISCONNECTED;
+      this.setConnectionState(CONNECTION_STATES.DISCONNECTED);
       throw error;
     }
   }
@@ -74,12 +77,12 @@ export class WebRTCConnection {
 
     this.dataChannel.onopen = () => {
       this.log('WebRTC data channel opened');
-      this.connectionState = CONNECTION_STATES.CONNECTED;
+      this.setConnectionState(CONNECTION_STATES.CONNECTED);
     };
 
     this.dataChannel.onclose = () => {
       this.log('WebRTC data channel closed');
-      this.connectionState = CONNECTION_STATES.DISCONNECTED;
+      this.setConnectionState(CONNECTION_STATES.DISCONNECTED);
     };
 
     this.dataChannel.onerror = error => {
@@ -106,7 +109,7 @@ export class WebRTCConnection {
       this.log(`ICE connection state: ${state}`);
 
       if (state === 'failed' || state === 'disconnected' || state === 'closed') {
-        this.connectionState = CONNECTION_STATES.DISCONNECTED;
+        this.setConnectionState(CONNECTION_STATES.DISCONNECTED);
       }
     };
 
@@ -195,7 +198,7 @@ export class WebRTCConnection {
       this.peerConnection = null;
     }
 
-    this.connectionState = CONNECTION_STATES.DISCONNECTED;
+    this.setConnectionState(CONNECTION_STATES.DISCONNECTED);
     this.log('WebRTC connection closed');
   }
 
@@ -270,6 +273,43 @@ export class WebRTCConnection {
 
   getConnectionState(): string {
     return this.connectionState;
+  }
+
+  async waitUntilConnected(): Promise<void> {
+    if (this.isConnected()) return;
+
+    await new Promise<void>((resolve, reject) => {
+      const startedAt = Date.now();
+      const interval = setInterval(() => {
+        if (this.isConnected()) {
+          clearInterval(interval);
+          resolve();
+          return;
+        }
+
+        if (
+          this.connectionState === CONNECTION_STATES.DISCONNECTED ||
+          Date.now() - startedAt >= this.config.connectionTimeout * 1000
+        ) {
+          clearInterval(interval);
+          reject(new Error('WebRTC data channel connection timeout'));
+        }
+      }, 25);
+    });
+  }
+
+  private setConnectionState(state: string): void {
+    const wasConnected = this.connectionState === CONNECTION_STATES.CONNECTED;
+    this.connectionState = state;
+    const isConnected = state === CONNECTION_STATES.CONNECTED;
+
+    if (wasConnected !== isConnected) {
+      try {
+        this.onConnectionStateChange?.(isConnected);
+      } catch (error) {
+        this.log(`Connection state callback failed: ${error}`);
+      }
+    }
   }
 
   private log(message: string): void {

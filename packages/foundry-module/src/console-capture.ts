@@ -64,6 +64,14 @@ interface CaptureOptions {
   includeTrace: boolean;
 }
 
+interface SerializationBudget {
+  remainingNodes: number;
+  remainingProperties: number;
+  remainingArrayItems: number;
+  remainingStringCharacters: number;
+  truncated: boolean;
+}
+
 type ConsoleMethod = (...args: unknown[]) => void;
 type NotificationMethod = (...args: unknown[]) => unknown;
 
@@ -74,6 +82,21 @@ const DEFAULT_OPTIONS: CaptureOptions = {
   includeDebug: true,
   includeTrace: true,
 };
+
+const SERIALIZATION_LIMITS = {
+  maxArguments: 50,
+  maxNodes: 512,
+  maxProperties: 512,
+  maxArrayItems: 256,
+  maxPropertiesPerObject: 50,
+  maxItemsPerArray: 50,
+  maxPropertyKeyCharacters: 128,
+  maxDepth: 4,
+} as const;
+
+const SERIALIZATION_BUDGET_EXCEEDED = '[Capture serialization budget exceeded]';
+const SERIALIZATION_TRUNCATION_KEY = '__mcpCaptureTruncated';
+const UTF8_ENCODER = new TextEncoder();
 
 const CONSOLE_METHODS: BrowserConsoleLevel[] = [
   'log',
@@ -103,13 +126,12 @@ export class BrowserConsoleCapture {
   private entries: BrowserConsoleEntry[] = [];
   private options: CaptureOptions = { ...DEFAULT_OPTIONS };
   private originalConsoleMethods = new Map<BrowserConsoleLevel, ConsoleMethod>();
+  private installedConsoleMethods = new Map<BrowserConsoleLevel, ConsoleMethod>();
   private originalNotificationMethods = new Map<'info' | 'warn' | 'error', NotificationMethod>();
+  private installedNotificationMethods = new Map<'info' | 'warn' | 'error', NotificationMethod>();
   private currentScriptExecutionId: string | undefined;
   private resourceErrorHandler: ((event: ErrorEvent) => void) | undefined;
   private unhandledRejectionHandler: ((event: PromiseRejectionEvent) => void) | undefined;
-  private windowErrorHandler: OnErrorEventHandler | undefined;
-  private installedWindowErrorHandler: OnErrorEventHandler | undefined;
-  private previousWindowErrorHandler: OnErrorEventHandler | null = null;
 
   configureFromSettings(): void {
     this.options = {
@@ -183,10 +205,15 @@ export class BrowserConsoleCapture {
     const sinceTime = query.sinceTimestamp ? Date.parse(query.sinceTimestamp) : undefined;
     const search = query.search?.toLocaleLowerCase();
 
-    let filtered = this.entries.filter((entry) => {
+    let filtered = this.entries.filter(entry => {
       if (levelSet && !levelSet.has(entry.level)) return false;
       if (query.sinceId !== undefined && entry.id <= query.sinceId) return false;
-      if (sinceTime !== undefined && Number.isFinite(sinceTime) && Date.parse(entry.timestamp) < sinceTime) return false;
+      if (
+        sinceTime !== undefined &&
+        Number.isFinite(sinceTime) &&
+        Date.parse(entry.timestamp) < sinceTime
+      )
+        return false;
       if (search && !entry.text.toLocaleLowerCase().includes(search)) return false;
       return true;
     });
@@ -195,7 +222,7 @@ export class BrowserConsoleCapture {
     filtered = filtered.slice(-limit);
 
     return {
-      entries: filtered.map((entry) => this.projectEntry(entry, query)),
+      entries: filtered.map(entry => this.projectEntry(entry, query)),
       totalStored: this.entries.length,
       nextId: this.nextId,
       truncated,
@@ -249,27 +276,39 @@ export class BrowserConsoleCapture {
   private patchConsole(): void {
     for (const method of CONSOLE_METHODS) {
       const original = (console as unknown as Record<string, ConsoleMethod>)[method];
-      if (typeof original !== 'function' || this.originalConsoleMethods.has(method)) {
-        continue;
+      if (typeof original !== 'function') continue;
+
+      if (this.originalConsoleMethods.has(method)) {
+        // If a later wrapper still owns the method, it normally chains through
+        // our installed wrapper. Reuse that wrapper instead of adding a layer on
+        // every idle wake. If another module restored the true original, rebuild.
+        if (original !== this.originalConsoleMethods.get(method)) continue;
+        this.originalConsoleMethods.delete(method);
+        this.installedConsoleMethods.delete(method);
       }
 
-      this.originalConsoleMethods.set(method, original.bind(console));
-
-      (console as unknown as Record<string, ConsoleMethod>)[method] = (...args: unknown[]) => {
+      this.originalConsoleMethods.set(method, original);
+      const wrapper: ConsoleMethod = (...args: unknown[]) => {
         try {
           original.apply(console, args);
         } finally {
           this.captureConsoleCall(method, args);
         }
       };
+      this.installedConsoleMethods.set(method, wrapper);
+      (console as unknown as Record<string, ConsoleMethod>)[method] = wrapper;
     }
   }
 
   private restoreConsole(): void {
     for (const [method, original] of this.originalConsoleMethods.entries()) {
-      (console as unknown as Record<string, ConsoleMethod>)[method] = original;
+      const methods = console as unknown as Record<string, ConsoleMethod>;
+      if (methods[method] === this.installedConsoleMethods.get(method)) {
+        methods[method] = original;
+        this.originalConsoleMethods.delete(method);
+        this.installedConsoleMethods.delete(method);
+      }
     }
-    this.originalConsoleMethods.clear();
   }
 
   private patchNotifications(): void {
@@ -280,18 +319,24 @@ export class BrowserConsoleCapture {
 
     for (const level of ['info', 'warn', 'error'] as const) {
       const original = notifications[level];
-      if (typeof original !== 'function' || this.originalNotificationMethods.has(level)) {
-        continue;
+      if (typeof original !== 'function') continue;
+
+      if (this.originalNotificationMethods.has(level)) {
+        if (original !== this.originalNotificationMethods.get(level)) continue;
+        this.originalNotificationMethods.delete(level);
+        this.installedNotificationMethods.delete(level);
       }
 
-      this.originalNotificationMethods.set(level, original.bind(notifications));
-      notifications[level] = (...args: unknown[]) => {
+      this.originalNotificationMethods.set(level, original);
+      const wrapper: NotificationMethod = (...args: unknown[]) => {
         try {
           return original.apply(notifications, args);
         } finally {
           this.capture(level, args, 'notification');
         }
       };
+      this.installedNotificationMethods.set(level, wrapper);
+      notifications[level] = wrapper;
     }
   }
 
@@ -299,35 +344,37 @@ export class BrowserConsoleCapture {
     const notifications = (globalThis as any).ui?.notifications;
     if (!notifications) {
       this.originalNotificationMethods.clear();
+      this.installedNotificationMethods.clear();
       return;
     }
 
     for (const [level, original] of this.originalNotificationMethods.entries()) {
-      notifications[level] = original;
+      if (notifications[level] === this.installedNotificationMethods.get(level)) {
+        notifications[level] = original;
+        this.originalNotificationMethods.delete(level);
+        this.installedNotificationMethods.delete(level);
+      }
     }
-    this.originalNotificationMethods.clear();
   }
 
   private installWindowHandlers(): void {
-    this.windowErrorHandler = (message, source, lineno, colno, error) => {
-      const metadata: Partial<Pick<BrowserConsoleEntry, 'url' | 'line' | 'column' | 'stack'>> = {};
-      if (typeof source === 'string') metadata.url = source;
-      if (typeof lineno === 'number') metadata.line = lineno;
-      if (typeof colno === 'number') metadata.column = colno;
-      if (error instanceof Error && error.stack) metadata.stack = error.stack;
-
-      this.capture('error', [error ?? message], 'window-error', metadata);
-      return false;
-    };
-
     this.resourceErrorHandler = (event: ErrorEvent) => {
       if (event.error || event.message) {
+        const metadata: Partial<Pick<BrowserConsoleEntry, 'url' | 'line' | 'column' | 'stack'>> =
+          {};
+        if (event.filename) metadata.url = event.filename;
+        if (typeof event.lineno === 'number') metadata.line = event.lineno;
+        if (typeof event.colno === 'number') metadata.column = event.colno;
+        if (event.error instanceof Error && event.error.stack) metadata.stack = event.error.stack;
+        this.capture('error', [event.error ?? event.message], 'window-error', metadata);
         return;
       }
 
       const target = event.target as HTMLElement | undefined;
       const url = this.getResourceUrl(target);
-      const label = target?.tagName ? `${target.tagName} failed to load` : 'Resource failed to load';
+      const label = target?.tagName
+        ? `${target.tagName} failed to load`
+        : 'Resource failed to load';
       const metadata: Partial<Pick<BrowserConsoleEntry, 'url'>> = {};
       if (url) metadata.url = url;
 
@@ -338,23 +385,16 @@ export class BrowserConsoleCapture {
       const metadata: Partial<Pick<BrowserConsoleEntry, 'stack'>> = {};
       if (event.reason instanceof Error && event.reason.stack) metadata.stack = event.reason.stack;
 
-      this.capture('error', [event.reason ?? 'Unhandled promise rejection'], 'unhandled-rejection', metadata);
+      this.capture(
+        'error',
+        [event.reason ?? 'Unhandled promise rejection'],
+        'unhandled-rejection',
+        metadata
+      );
     };
 
     window.addEventListener('error', this.resourceErrorHandler, true);
     window.addEventListener('unhandledrejection', this.unhandledRejectionHandler);
-
-    this.previousWindowErrorHandler = window.onerror;
-    this.installedWindowErrorHandler = (...args) => {
-      this.windowErrorHandler?.(...args);
-
-      if (typeof this.previousWindowErrorHandler === 'function') {
-        return this.previousWindowErrorHandler.apply(window, args);
-      }
-
-      return false;
-    };
-    window.onerror = this.installedWindowErrorHandler;
   }
 
   private removeWindowHandlers(): void {
@@ -367,14 +407,6 @@ export class BrowserConsoleCapture {
       window.removeEventListener('unhandledrejection', this.unhandledRejectionHandler);
       this.unhandledRejectionHandler = undefined;
     }
-
-    if (this.installedWindowErrorHandler && window.onerror === this.installedWindowErrorHandler) {
-      window.onerror = this.previousWindowErrorHandler;
-    }
-
-    this.windowErrorHandler = undefined;
-    this.installedWindowErrorHandler = undefined;
-    this.previousWindowErrorHandler = null;
   }
 
   private captureConsoleCall(level: BrowserConsoleLevel, args: unknown[]): void {
@@ -405,9 +437,31 @@ export class BrowserConsoleCapture {
     }
 
     try {
-      const serializedArgs = args.map((arg) => this.serializeValue(arg, new WeakSet<object>()));
-      let text = serializedArgs.map((arg) => this.formatText(arg)).join(' ');
-      let truncated = false;
+      const serializationBudget = this.createSerializationBudget();
+      const serializedArgs: unknown[] = [];
+      const argumentLimit = Math.min(args.length, SERIALIZATION_LIMITS.maxArguments);
+
+      for (let index = 0; index < argumentLimit; index++) {
+        if (serializationBudget.remainingNodes <= 0) {
+          serializationBudget.truncated = true;
+          serializedArgs.push(SERIALIZATION_BUDGET_EXCEEDED);
+          break;
+        }
+
+        serializedArgs.push(
+          this.serializeValue(args[index], new WeakSet<object>(), serializationBudget)
+        );
+      }
+
+      if (args.length > argumentLimit) {
+        serializationBudget.truncated = true;
+        serializedArgs.push(
+          `[${args.length - argumentLimit} additional console arguments omitted]`
+        );
+      }
+
+      let text = serializedArgs.map(arg => this.formatText(arg)).join(' ');
+      let truncated = serializationBudget.truncated;
       let stack = metadata.stack;
 
       if (!stack && (level === 'error' || level === 'warn' || level === 'trace')) {
@@ -447,31 +501,108 @@ export class BrowserConsoleCapture {
     }
   }
 
-  private enforceEntryLimit(entry: BrowserConsoleEntry): { entry: BrowserConsoleEntry; truncated: boolean } {
-    let serialized = JSON.stringify(entry);
-    if (serialized.length <= this.options.maxEntryBytes) {
+  private enforceEntryLimit(entry: BrowserConsoleEntry): {
+    entry: BrowserConsoleEntry;
+    truncated: boolean;
+  } {
+    const maxBytes = this.options.maxEntryBytes;
+    if (this.getSerializedByteLength(entry) <= maxBytes) {
       return { entry, truncated: entry.truncated };
     }
 
-    const budget = Math.max(128, this.options.maxEntryBytes - 512);
-    entry.text = this.truncateString(entry.text, budget);
-    entry.args = [{ summary: 'Arguments omitted because the console entry exceeded the configured size limit.' }];
-    if (entry.stack) {
-      entry.stack = this.truncateString(entry.stack, 2048);
-    } else {
-      delete entry.stack;
-    }
     entry.truncated = true;
+    entry.args = [
+      {
+        summary: 'Arguments omitted because the console entry exceeded the configured size limit.',
+      },
+    ];
+    if (entry.stack) {
+      entry.stack = this.truncateUtf8(entry.stack, Math.min(2048, Math.floor(maxBytes / 3)));
+    }
+    entry.text = this.truncateUtf8(entry.text, Math.max(32, Math.floor(maxBytes / 2)));
 
-    serialized = JSON.stringify(entry);
-    if (serialized.length > this.options.maxEntryBytes) {
-      entry.text = this.truncateString(entry.text, Math.max(64, budget - (serialized.length - this.options.maxEntryBytes)));
+    if (this.getSerializedByteLength(entry) <= maxBytes) return { entry, truncated: true };
+    delete entry.args;
+    if (this.getSerializedByteLength(entry) <= maxBytes) return { entry, truncated: true };
+    delete entry.stack;
+    if (this.getSerializedByteLength(entry) <= maxBytes) return { entry, truncated: true };
+
+    // Optional diagnostic metadata is less important than a readable message.
+    delete entry.url;
+    delete entry.line;
+    delete entry.column;
+    delete entry.scriptExecutionId;
+    entry.userId = this.truncateUtf8(entry.userId, 64);
+    entry.userName = this.truncateUtf8(entry.userName, 64);
+    entry.worldId = this.truncateUtf8(entry.worldId, 64);
+    this.fitEntryTextToByteLimit(entry, maxBytes);
+
+    if (this.getSerializedByteLength(entry) > maxBytes) {
+      const minimalEntry: BrowserConsoleEntry = {
+        id: entry.id,
+        timestamp: entry.timestamp,
+        level: entry.level,
+        text: '[Console entry omitted: size limit]',
+        source: entry.source,
+        userId: '',
+        userName: '',
+        worldId: '',
+        truncated: true,
+      };
+      this.fitEntryTextToByteLimit(minimalEntry, maxBytes);
+      entry = minimalEntry;
     }
 
     return { entry, truncated: true };
   }
 
-  private projectEntry(entry: BrowserConsoleEntry, query: BrowserConsoleQuery): BrowserConsoleEntry {
+  private getSerializedByteLength(value: unknown): number {
+    return UTF8_ENCODER.encode(JSON.stringify(value)).byteLength;
+  }
+
+  private truncateUtf8(value: string, maxBytes: number): string {
+    if (UTF8_ENCODER.encode(value).byteLength <= maxBytes) return value;
+
+    let low = 0;
+    let high = value.length;
+    let best = '';
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const candidate = value.slice(0, middle);
+      if (UTF8_ENCODER.encode(candidate).byteLength <= maxBytes) {
+        best = candidate;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return best;
+  }
+
+  private fitEntryTextToByteLimit(entry: BrowserConsoleEntry, maxBytes: number): void {
+    const originalText = entry.text;
+    let low = 0;
+    let high = originalText.length;
+    let best = '';
+
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      entry.text = originalText.slice(0, middle);
+      if (this.getSerializedByteLength(entry) <= maxBytes) {
+        best = entry.text;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+
+    entry.text = best;
+  }
+
+  private projectEntry(
+    entry: BrowserConsoleEntry,
+    query: BrowserConsoleQuery
+  ): BrowserConsoleEntry {
     const projected: BrowserConsoleEntry = { ...entry };
 
     if (!query.includeRawArgs) {
@@ -485,26 +616,53 @@ export class BrowserConsoleCapture {
     return projected;
   }
 
-  private serializeValue(value: unknown, seen: WeakSet<object>, depth = 0): unknown {
+  private createSerializationBudget(): SerializationBudget {
+    return {
+      remainingNodes: SERIALIZATION_LIMITS.maxNodes,
+      remainingProperties: SERIALIZATION_LIMITS.maxProperties,
+      remainingArrayItems: SERIALIZATION_LIMITS.maxArrayItems,
+      remainingStringCharacters: this.options.maxEntryBytes,
+      truncated: false,
+    };
+  }
+
+  private serializeValue(
+    value: unknown,
+    seen: WeakSet<object>,
+    budget: SerializationBudget,
+    depth = 0
+  ): unknown {
+    if (depth > SERIALIZATION_LIMITS.maxDepth) {
+      budget.truncated = true;
+      return '[MaxDepth]';
+    }
+
+    if (budget.remainingNodes <= 0) {
+      budget.truncated = true;
+      return SERIALIZATION_BUDGET_EXCEEDED;
+    }
+    budget.remainingNodes--;
+
     if (value === null || value === undefined) {
       return value;
     }
 
     const valueType = typeof value;
-    if (valueType === 'string') return this.truncateString(value as string, this.options.maxEntryBytes);
-    if (valueType === 'number' || valueType === 'boolean' || valueType === 'bigint') return String(value);
-    if (valueType === 'symbol') return String(value);
-    if (valueType === 'function') return `[Function ${(value as Function).name || 'anonymous'}]`;
-
-    if (depth > 4) {
-      return '[MaxDepth]';
+    if (valueType === 'string') return this.serializeString(value as string, budget);
+    if (valueType === 'number' || valueType === 'boolean' || valueType === 'bigint') {
+      return this.serializeString(String(value), budget);
+    }
+    if (valueType === 'symbol') return this.serializeString(String(value), budget);
+    if (valueType === 'function') {
+      const functionName = (value as { name?: string }).name ?? 'anonymous';
+      return this.serializeString(`[Function ${functionName}]`, budget);
     }
 
     if (value instanceof Error) {
       return {
-        name: value.name,
-        message: value.message,
-        stack: value.stack,
+        name: this.serializeString(value.name, budget),
+        message: this.serializeString(value.message, budget),
+        stack: value.stack ? this.serializeString(value.stack, budget) : undefined,
       };
     }
 
@@ -514,13 +672,13 @@ export class BrowserConsoleCapture {
 
     if (value instanceof Event) {
       return {
-        eventType: value.type,
-        target: this.serializeDomNode(value.target),
+        eventType: this.serializeString(value.type, budget),
+        target: this.serializeDomNode(value.target, budget),
       };
     }
 
     if (value instanceof Node) {
-      return this.serializeDomNode(value);
+      return this.serializeDomNode(value, budget);
     }
 
     if (valueType === 'object') {
@@ -531,44 +689,112 @@ export class BrowserConsoleCapture {
       }
       seen.add(objectValue);
 
-      const documentSummary = this.serializeFoundryDocument(objectValue);
+      const documentSummary = this.serializeFoundryDocument(objectValue, budget);
       if (documentSummary) {
         return documentSummary;
       }
 
       if (Array.isArray(value)) {
-        return value.slice(0, 50).map((item) => this.serializeValue(item, seen, depth + 1));
+        const output: unknown[] = [];
+        const itemLimit = Math.min(value.length, SERIALIZATION_LIMITS.maxItemsPerArray);
+        let serializedItems = 0;
+
+        for (let index = 0; index < itemLimit; index++) {
+          if (budget.remainingArrayItems <= 0 || budget.remainingNodes <= 0) {
+            break;
+          }
+
+          budget.remainingArrayItems--;
+          serializedItems++;
+
+          try {
+            output.push(this.serializeValue(value[index], seen, budget, depth + 1));
+          } catch {
+            budget.truncated = true;
+            output.push('[Array item could not be read]');
+          }
+        }
+
+        if (serializedItems < value.length) {
+          budget.truncated = true;
+          output.push(`[${value.length - serializedItems} array items omitted]`);
+        }
+
+        return output;
       }
 
       const output: Record<string, unknown> = {};
-      for (const key of Object.keys(objectValue).slice(0, 50)) {
-        output[key] = this.serializeValue(objectValue[key], seen, depth + 1);
+      let serializedProperties = 0;
+      let omittedProperties = false;
+
+      for (const key in objectValue) {
+        if (!Object.prototype.hasOwnProperty.call(objectValue, key)) {
+          continue;
+        }
+
+        if (
+          serializedProperties >= SERIALIZATION_LIMITS.maxPropertiesPerObject ||
+          budget.remainingProperties <= 0 ||
+          budget.remainingNodes <= 0
+        ) {
+          omittedProperties = true;
+          break;
+        }
+
+        budget.remainingProperties--;
+        serializedProperties++;
+
+        const outputKey = this.serializePropertyKey(key, budget);
+        try {
+          output[outputKey] = this.serializeValue(objectValue[key], seen, budget, depth + 1);
+        } catch {
+          budget.truncated = true;
+          output[outputKey] = '[Property could not be read]';
+        }
       }
+
+      if (omittedProperties) {
+        budget.truncated = true;
+        output[SERIALIZATION_TRUNCATION_KEY] = SERIALIZATION_BUDGET_EXCEEDED;
+      }
+
       return output;
     }
 
-    return String(value);
+    return this.serializeString(String(value), budget);
   }
 
-  private serializeFoundryDocument(value: Record<string, unknown>): Record<string, unknown> | null {
-    const documentName = typeof value.documentName === 'string' ? value.documentName : undefined;
-    const id = typeof value.id === 'string' ? value.id : undefined;
-    const uuid = typeof value.uuid === 'string' ? value.uuid : undefined;
-    const name = typeof value.name === 'string' ? value.name : undefined;
+  private serializeFoundryDocument(
+    value: Record<string, unknown>,
+    budget: SerializationBudget
+  ): Record<string, unknown> | null {
+    let documentName: string | undefined;
+    let id: string | undefined;
+    let uuid: string | undefined;
+    let name: string | undefined;
+
+    try {
+      documentName = typeof value.documentName === 'string' ? value.documentName : undefined;
+      id = typeof value.id === 'string' ? value.id : undefined;
+      uuid = typeof value.uuid === 'string' ? value.uuid : undefined;
+      name = typeof value.name === 'string' ? value.name : undefined;
+    } catch {
+      return null;
+    }
 
     if (!documentName && !uuid) {
       return null;
     }
 
     return {
-      documentName,
-      id,
-      uuid,
-      name,
+      documentName: documentName ? this.serializeString(documentName, budget) : undefined,
+      id: id ? this.serializeString(id, budget) : undefined,
+      uuid: uuid ? this.serializeString(uuid, budget) : undefined,
+      name: name ? this.serializeString(name, budget) : undefined,
     };
   }
 
-  private serializeDomNode(value: EventTarget | Node | null): unknown {
+  private serializeDomNode(value: EventTarget | Node | null, budget: SerializationBudget): unknown {
     if (!value || !(value instanceof Node)) {
       return null;
     }
@@ -576,15 +802,49 @@ export class BrowserConsoleCapture {
     if (value instanceof Element) {
       return {
         nodeType: 'Element',
-        tagName: value.tagName,
-        id: value.id || undefined,
-        className: typeof value.className === 'string' ? value.className : undefined,
+        tagName: this.serializeString(value.tagName, budget),
+        id: value.id ? this.serializeString(value.id, budget) : undefined,
+        className:
+          typeof value.className === 'string'
+            ? this.serializeString(value.className, budget)
+            : undefined,
       };
     }
 
     return {
-      nodeType: value.nodeName,
+      nodeType: this.serializeString(value.nodeName, budget),
     };
+  }
+
+  private serializeString(value: string, budget: SerializationBudget): string {
+    const available = Math.max(0, budget.remainingStringCharacters);
+    if (available === 0) {
+      budget.truncated = true;
+      return '';
+    }
+
+    if (value.length <= available) {
+      budget.remainingStringCharacters -= value.length;
+      return value;
+    }
+
+    budget.truncated = true;
+    const suffix = '... [truncated]';
+    const serialized =
+      available <= suffix.length
+        ? value.slice(0, available)
+        : `${value.slice(0, available - suffix.length)}${suffix}`;
+    budget.remainingStringCharacters -= serialized.length;
+    return serialized;
+  }
+
+  private serializePropertyKey(key: string, budget: SerializationBudget): string {
+    if (key.length <= SERIALIZATION_LIMITS.maxPropertyKeyCharacters) {
+      return key;
+    }
+
+    budget.truncated = true;
+    return this.truncateString(key, SERIALIZATION_LIMITS.maxPropertyKeyCharacters);
   }
 
   private formatText(value: unknown): string {

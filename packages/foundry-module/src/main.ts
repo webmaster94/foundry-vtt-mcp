@@ -1,10 +1,14 @@
-import { MODULE_ID } from './constants.js';
+import { CONNECTION_STATES, MODULE_ID } from './constants.js';
 import { SocketBridge } from './socket-bridge.js';
 import { QueryHandlers } from './queries.js';
 import { ModuleSettings } from './settings.js';
 import { CampaignHooks } from './campaign-hooks.js';
 import { ComfyUIManager } from './comfyui-manager.js';
 import { browserConsoleCapture, type BrowserConsoleCapture } from './console-capture.js';
+import {
+  ConsoleCaptureLifecycle,
+  type ConsoleCaptureActivityToken,
+} from './console-capture-lifecycle.js';
 import { eventService } from './event-service.js';
 // Connection control now handled through settings menu
 
@@ -16,18 +20,25 @@ class FoundryMCPBridge {
   private queryHandlers: QueryHandlers;
   private campaignHooks: CampaignHooks;
   public consoleCapture: BrowserConsoleCapture;
+  private captureLifecycle: ConsoleCaptureLifecycle;
   public comfyuiManager: ComfyUIManager;
   private socketBridge: SocketBridge | null = null;
   private isInitialized = false;
   private heartbeatInterval: number | null = null;
   private lastActivity: Date = new Date();
   private isConnecting = false;
+  private connectionGeneration = 0;
 
   constructor() {
     this.settings = new ModuleSettings();
     this.queryHandlers = new QueryHandlers();
     this.campaignHooks = new CampaignHooks(this);
     this.consoleCapture = browserConsoleCapture;
+    this.captureLifecycle = new ConsoleCaptureLifecycle(this.consoleCapture, {
+      enabled: false,
+      suspendWhileIdle: true,
+      idleTimeoutMs: 120_000,
+    });
     this.comfyuiManager = new ComfyUIManager();
   }
 
@@ -82,9 +93,7 @@ class FoundryMCPBridge {
 
       console.log(`[${MODULE_ID}] Foundry ready, checking bridge status...`);
 
-      if (this.settings.getSetting('enableConsoleCapture')) {
-        this.consoleCapture.start();
-      }
+      this.refreshCapturePolicy();
 
       // Connection control now handled through settings menu
 
@@ -102,13 +111,8 @@ class FoundryMCPBridge {
 
       if (enabled) {
         await this.start();
-      }
-
-      // Auto-build enhanced creature index if enabled and not exists
-      await this.checkAndBuildEnhancedIndex();
-
-      // Start ComfyUI startup monitoring if module is enabled
-      if (enabled) {
+        // These startup services are part of the bridge master switch.
+        await this.checkAndBuildEnhancedIndex();
         await this.startComfyUIMonitoring();
       }
 
@@ -176,12 +180,27 @@ class FoundryMCPBridge {
       return;
     }
 
-    if (this.socketBridge?.isConnected() || this.isConnecting) {
-      console.log(`[${MODULE_ID}] Bridge already running or connecting`);
+    if (this.isConnecting) {
+      console.log(`[${MODULE_ID}] Bridge already connecting`);
       return;
     }
 
+    if (this.socketBridge) {
+      const state = this.socketBridge.getConnectionState();
+      if (state !== CONNECTION_STATES.DISCONNECTED) {
+        console.log(`[${MODULE_ID}] Bridge already running or reconnecting (${state})`);
+        return;
+      }
+
+      // A fully disconnected transport cannot self-heal. Release it before
+      // creating a replacement so only one reconnect owner can exist.
+      this.socketBridge.disconnect();
+      this.socketBridge = null;
+    }
+
+    const connectionGeneration = ++this.connectionGeneration;
     this.isConnecting = true;
+    let socketBridge: SocketBridge | null = null;
 
     try {
       console.log(`[${MODULE_ID}] Starting MCP bridge...`);
@@ -194,29 +213,49 @@ class FoundryMCPBridge {
         throw new Error(`Invalid configuration: ${validation.errors.join(', ')}`);
       }
 
-      // Create and connect socket bridge
-      this.socketBridge = new SocketBridge(config);
-      await this.socketBridge.connect();
+      this.refreshCapturePolicy();
 
-      // Game-event push channel (combat turns, chat, dice results)
-      eventService.registerHooks();
-      eventService.setSender(event => this.socketBridge?.sendEvent(event));
+      // Create and connect one owned socket bridge. Lifecycle callbacks also
+      // run after automatic reconnects, so capture/event state stays accurate.
+      socketBridge = new SocketBridge(config, {
+        onQueryStart: () => {
+          if (!socketBridge || this.socketBridge !== socketBridge) return;
+          const activityToken = this.captureLifecycle.beginTrackedActivity();
+          this.updateLastActivity();
+          return activityToken;
+        },
+        onQueryEnd: activityToken => {
+          if (!socketBridge || this.socketBridge !== socketBridge) return;
+          this.captureLifecycle.endTrackedActivity(
+            activityToken as ConsoleCaptureActivityToken | null
+          );
+        },
+        onConnected: () => {
+          if (!socketBridge || this.socketBridge !== socketBridge) return;
+          this.handleTransportConnected(socketBridge);
+        },
+        onDisconnected: () => {
+          if (!socketBridge || this.socketBridge !== socketBridge) return;
+          this.handleTransportDisconnected();
+        },
+      });
+      this.socketBridge = socketBridge;
+      await socketBridge.connect();
+
+      if (
+        this.connectionGeneration !== connectionGeneration ||
+        this.socketBridge !== socketBridge ||
+        this.settings.getSetting('enabled') !== true
+      ) {
+        socketBridge.disconnect();
+        return;
+      }
 
       // Log connection details for debugging
-      const connectionInfo = this.socketBridge.getConnectionInfo();
+      const connectionInfo = socketBridge.getConnectionInfo();
       console.log(
         `[${MODULE_ID}] Bridge started successfully - Type: ${connectionInfo.type}, State: ${connectionInfo.state}`
       );
-
-      await this.settings.setSetting('lastConnectionState', 'connected');
-      await this.settings.setSetting('lastActivity', new Date().toISOString());
-      this.updateLastActivity();
-
-      // Update settings display with connection status
-      this.settings.updateConnectionStatusDisplay(true, 0);
-
-      // Start heartbeat monitoring if enabled
-      this.startHeartbeat();
 
       // Show connection notification based on user preference
       if (this.settings.getSetting('enableNotifications')) {
@@ -226,6 +265,13 @@ class FoundryMCPBridge {
         `[${MODULE_ID}] GM connection established - Bridge active for user: ${game.user?.name}`
       );
     } catch (error) {
+      if (
+        this.connectionGeneration !== connectionGeneration ||
+        (socketBridge !== null && this.socketBridge !== socketBridge)
+      ) {
+        return;
+      }
+
       // Log as warning instead of error for initial connection failures
       console.warn(`[${MODULE_ID}] Failed to start bridge:`, error);
 
@@ -261,7 +307,9 @@ class FoundryMCPBridge {
       await this.settings.setSetting('lastConnectionState', 'error');
       throw error;
     } finally {
-      this.isConnecting = false;
+      if (this.connectionGeneration === connectionGeneration) {
+        this.isConnecting = false;
+      }
     }
   }
 
@@ -269,24 +317,23 @@ class FoundryMCPBridge {
    * Stop the MCP bridge connection
    */
   async stop(): Promise<void> {
-    if (!this.socketBridge) {
-      console.log(`[${MODULE_ID}] Bridge not running`);
-      return;
-    }
-
+    this.connectionGeneration += 1;
+    this.isConnecting = false;
+    const socketBridge = this.socketBridge;
+    const wasRunning = socketBridge !== null || this.captureLifecycle.getStatus().bridgeRunning;
     try {
+      this.socketBridge = null;
+      this.handleTransportDisconnected();
+      socketBridge?.disconnect();
+
+      if (!wasRunning) {
+        console.log(`[${MODULE_ID}] Bridge already stopped`);
+        return;
+      }
+
       console.log(`[${MODULE_ID}] Stopping MCP bridge...`);
 
-      // Stop heartbeat monitoring
-      this.stopHeartbeat();
-
-      this.socketBridge.disconnect();
-      this.socketBridge = null;
-
       await this.settings.setSetting('lastConnectionState', 'disconnected');
-
-      // Update settings display with disconnected status
-      this.settings.updateConnectionStatusDisplay(false, 0);
 
       console.log(`[${MODULE_ID}] Bridge stopped`);
 
@@ -315,6 +362,50 @@ class FoundryMCPBridge {
     }
   }
 
+  /** Re-read capture settings and apply them without restarting the bridge. */
+  refreshCapturePolicy(): void {
+    try {
+      this.consoleCapture.configureFromSettings();
+      const timeoutSeconds = Number(this.settings.getSetting('consoleCaptureIdleTimeout'));
+      const idleTimeoutMs = Number.isFinite(timeoutSeconds)
+        ? Math.min(Math.max(timeoutSeconds * 1000, 30_000), 900_000)
+        : 120_000;
+      this.captureLifecycle.refreshPolicy({
+        enabled: this.settings.getSetting('enableConsoleCapture') === true,
+        suspendWhileIdle: this.settings.getSetting('suspendConsoleCaptureWhileIdle') === true,
+        idleTimeoutMs,
+      });
+    } catch (error) {
+      // Settings may still be registering during Foundry's init phase.
+      console.warn(`[${MODULE_ID}] Could not refresh console capture policy:`, error);
+    }
+  }
+
+  getConsoleCaptureStatus(): any {
+    return {
+      ...this.consoleCapture.getStatus(),
+      lifecycle: this.captureLifecycle.getStatus(),
+    };
+  }
+
+  private handleTransportConnected(socketBridge: SocketBridge): void {
+    this.captureLifecycle.start();
+    eventService.registerHooks();
+    eventService.setSender(event => socketBridge.sendEvent(event));
+    this.startHeartbeat();
+    this.settings.updateConnectionStatusDisplay(true, 0);
+    void this.settings.setSetting('lastConnectionState', 'connected');
+    this.updateLastActivity(true);
+  }
+
+  private handleTransportDisconnected(): void {
+    this.captureLifecycle.stop();
+    eventService.setSender(null);
+    eventService.unregisterHooks();
+    this.stopHeartbeat();
+    this.settings.updateConnectionStatusDisplay(false, 0);
+  }
+
   /**
    * Get current bridge status
    */
@@ -328,6 +419,7 @@ class FoundryMCPBridge {
       settings: this.settings.getAllSettings(),
       registeredMethods: this.queryHandlers.getRegisteredMethods(),
       consoleCapture: this.consoleCapture.getStatus(),
+      consoleCaptureLifecycle: this.captureLifecycle.getStatus(),
       lastConnectionState: this.settings.getSetting('lastConnectionState'),
       lastActivity: this.lastActivity.toISOString(),
       heartbeatActive: this.heartbeatInterval !== null,
@@ -404,9 +496,11 @@ class FoundryMCPBridge {
   /**
    * Update last activity timestamp
    */
-  updateLastActivity(): void {
+  updateLastActivity(persist = false): void {
     this.lastActivity = new Date();
-    this.settings.setSetting('lastActivity', this.lastActivity.toISOString());
+    if (persist) {
+      void this.settings.setSetting('lastActivity', this.lastActivity.toISOString());
+    }
   }
 
   /**
@@ -504,7 +598,7 @@ class FoundryMCPBridge {
     console.log(`[${MODULE_ID}] Cleaning up...`);
 
     await this.stop();
-    this.consoleCapture.stop();
+    this.captureLifecycle.shutdown();
     this.queryHandlers.unregisterHandlers();
     this.campaignHooks.unregister();
 

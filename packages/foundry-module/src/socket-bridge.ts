@@ -13,6 +13,19 @@ export interface BridgeConfig {
   connectionType?: 'auto' | 'webrtc' | 'websocket'; // Connection type: auto (HTTPS→WebRTC, HTTP→WebSocket), webrtc, websocket
   /** Optional shared secret; must match the MCP server profile's authToken. */
   authToken?: string;
+  /** Whether a live bridge should reconnect after transport loss. */
+  autoReconnect?: boolean;
+}
+
+export interface SocketBridgeActivityCallbacks {
+  /** Called immediately before an inbound MCP query begins executing. */
+  onQueryStart?: () => unknown;
+  /** Called after the query response has been sent, including failure responses. */
+  onQueryEnd?: (activityToken: unknown) => void;
+  /** Called whenever the transport becomes usable, including after a reconnect. */
+  onConnected?: () => void;
+  /** Called whenever the transport stops being usable. */
+  onDisconnected?: () => void;
 }
 
 /**
@@ -26,12 +39,20 @@ export class SocketBridge {
   private maxReconnectAttempts = 5;
   private reconnectTimer: any = null;
   private activeConnectionType: 'websocket' | 'webrtc' | null = null;
+  private disposed = false;
+  private pendingConnectReject: ((error: Error) => void) | null = null;
 
-  constructor(private config: BridgeConfig) {
+  constructor(
+    private config: BridgeConfig,
+    private activityCallbacks: SocketBridgeActivityCallbacks = {}
+  ) {
     this.maxReconnectAttempts = config.reconnectAttempts;
   }
 
   async connect(): Promise<void> {
+    if (this.disposed) {
+      throw new Error('Socket bridge has been disposed');
+    }
     if (
       this.connectionState === CONNECTION_STATES.CONNECTED ||
       this.connectionState === CONNECTION_STATES.CONNECTING
@@ -82,17 +103,42 @@ export class SocketBridge {
       ...(this.config.authToken ? { authToken: this.config.authToken } : {}),
     };
 
-    this.webrtc = new WebRTCConnection(webrtcConfig);
+    const connection = new WebRTCConnection(webrtcConfig, connected => {
+      if (this.disposed || this.activeConnectionType !== 'webrtc' || this.webrtc !== connection)
+        return;
+
+      const wasConnected = this.connectionState === CONNECTION_STATES.CONNECTED;
+      this.connectionState = connected
+        ? CONNECTION_STATES.CONNECTED
+        : CONNECTION_STATES.DISCONNECTED;
+
+      if (connected) {
+        this.reconnectAttempts = 0;
+        if (!wasConnected) this.notifyConnectionState(true);
+      } else {
+        if (wasConnected) this.notifyConnectionState(false);
+        this.webrtc = null;
+        connection.disconnect();
+        this.scheduleReconnect();
+      }
+    });
+    this.webrtc = connection;
 
     try {
-      await this.webrtc.connect(this.handleMessage.bind(this));
-      this.connectionState = CONNECTION_STATES.CONNECTED;
-      this.reconnectAttempts = 0;
+      await connection.connect(this.handleMessage.bind(this));
+      await connection.waitUntilConnected();
+      if (this.webrtc !== connection) throw new Error('WebRTC connection was superseded');
+      if (this.disposed) throw new Error('Socket bridge has been disposed');
       this.log('Connected via WebRTC');
     } catch (error) {
       this.log(`WebRTC connection failed: ${error}`);
-      this.connectionState = CONNECTION_STATES.DISCONNECTED;
-      this.scheduleReconnect();
+      if (this.webrtc === connection) {
+        this.webrtc = null;
+        connection.disconnect();
+        this.connectionState = CONNECTION_STATES.DISCONNECTED;
+        this.notifyConnectionState(false);
+        if (!this.disposed) this.scheduleReconnect();
+      }
       throw error;
     }
   }
@@ -110,58 +156,120 @@ export class SocketBridge {
     }`;
 
     return new Promise((resolve, reject) => {
+      let socket: WebSocket | null = null;
+      let settled = false;
+      const resolveConnect = (): void => {
+        if (settled) return;
+        settled = true;
+        if (this.pendingConnectReject === rejectConnect) this.pendingConnectReject = null;
+        resolve();
+      };
+      const rejectConnect = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        if (this.pendingConnectReject === rejectConnect) this.pendingConnectReject = null;
+        reject(error);
+      };
+      this.pendingConnectReject = rejectConnect;
+
       const connectTimeout = setTimeout(() => {
+        if (this.disposed) {
+          rejectConnect(new Error('Socket bridge has been disposed'));
+          return;
+        }
+        if (socket && this.ws !== socket) {
+          rejectConnect(new Error('WebSocket connection was superseded'));
+          return;
+        }
         this.log('Connection timeout');
+        if (socket) {
+          socket.onopen = null;
+          socket.onerror = null;
+          socket.onclose = null;
+          socket.onmessage = null;
+          socket.close();
+          if (this.ws === socket) this.ws = null;
+        }
         this.connectionState = CONNECTION_STATES.DISCONNECTED;
-        reject(new Error('Connection timeout'));
+        this.notifyConnectionState(false);
+        this.scheduleReconnect();
+        rejectConnect(new Error('Connection timeout'));
       }, this.config.connectionTimeout * 1000);
 
       try {
-        this.ws = new WebSocket(wsUrl);
+        socket = new WebSocket(wsUrl);
+        this.ws = socket;
 
-        this.ws.onopen = () => {
+        socket.onopen = () => {
           clearTimeout(connectTimeout);
+          if (this.disposed || this.ws !== socket) {
+            socket?.close();
+            rejectConnect(new Error('Socket bridge has been disposed'));
+            return;
+          }
           this.connectionState = CONNECTION_STATES.CONNECTED;
           this.reconnectAttempts = 0;
+          this.notifyConnectionState(true);
           this.log('Connected to MCP server via WebSocket');
           this.setupEventHandlers();
-          resolve();
+          resolveConnect();
         };
 
-        this.ws.onerror = error => {
+        socket.onerror = error => {
           clearTimeout(connectTimeout);
+          if (this.ws !== socket) return;
+          if (this.disposed) {
+            rejectConnect(new Error('Socket bridge has been disposed'));
+            return;
+          }
           // Use more informative message for connection failures
           const isFirstAttempt = this.reconnectAttempts === 0;
           const errorMsg = isFirstAttempt
             ? "MCP server not available (this is normal if server isn't running)"
             : `Connection error after ${this.reconnectAttempts} attempts: ${error}`;
           this.log(errorMsg);
+          this.ws = null;
+          socket!.onopen = null;
+          socket!.onerror = null;
+          socket!.onclose = null;
+          socket!.onmessage = null;
+          socket!.close();
           this.connectionState = CONNECTION_STATES.DISCONNECTED;
+          this.notifyConnectionState(false);
           this.scheduleReconnect();
-          reject(new Error('WebSocket connection failed'));
+          rejectConnect(new Error('WebSocket connection failed'));
         };
 
-        this.ws.onclose = event => {
+        socket.onclose = event => {
+          clearTimeout(connectTimeout);
+          if (this.ws !== socket) return;
+          this.ws = null;
+          if (this.disposed) return;
           this.log(`Disconnected: ${event.reason || 'Connection closed'}`);
           this.connectionState = CONNECTION_STATES.DISCONNECTED;
+          this.notifyConnectionState(false);
+          rejectConnect(new Error('WebSocket closed'));
 
-          if (event.wasClean) {
-            // Clean disconnect, don't reconnect
-            return;
-          }
-
+          // Remote clean closes (for example, a graceful backend restart) still
+          // need to self-heal. Manual closes mark the bridge disposed above.
           this.scheduleReconnect();
         };
       } catch (error) {
         clearTimeout(connectTimeout);
         this.log(`Failed to create WebSocket: ${error}`);
         this.connectionState = CONNECTION_STATES.DISCONNECTED;
-        reject(error);
+        this.notifyConnectionState(false);
+        rejectConnect(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
 
   disconnect(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.pendingConnectReject?.(new Error('Socket bridge has been disposed'));
+    this.pendingConnectReject = null;
+
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -173,12 +281,18 @@ export class SocketBridge {
     }
 
     if (this.ws) {
-      this.ws.close(1000, 'Manual disconnect');
+      const ws = this.ws;
       this.ws = null;
+      ws.onopen = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.onmessage = null;
+      ws.close(1000, 'Manual disconnect');
     }
 
     this.activeConnectionType = null;
     this.connectionState = CONNECTION_STATES.DISCONNECTED;
+    this.notifyConnectionState(false);
     this.log('Disconnected from MCP server');
   }
 
@@ -198,13 +312,22 @@ export class SocketBridge {
   private async handleMessage(message: any): Promise<void> {
     try {
       if (message.type === 'mcp-query') {
-        await this.handleMCPQuery(message.data, response => {
-          this.sendMessage({
-            type: 'mcp-response',
-            id: message.id,
-            data: response,
+        const tracksActivity = ![
+          `${MODULE_ID}.getBrowserConsoleStatus`,
+          `${MODULE_ID}.ping`,
+        ].includes(message.data?.method);
+        const activityToken = tracksActivity ? this.notifyActivityStart() : undefined;
+        try {
+          await this.handleMCPQuery(message.data, response => {
+            this.sendMessage({
+              type: 'mcp-response',
+              id: message.id,
+              data: response,
+            });
           });
-        });
+        } finally {
+          if (tracksActivity) this.notifyActivityEnd(activityToken);
+        }
       } else if (message.type === 'ping') {
         this.sendMessage({
           type: 'pong',
@@ -212,13 +335,53 @@ export class SocketBridge {
           data: { timestamp: Date.now(), status: 'ok' },
         });
       } else if (message.type === 'job-completed') {
-        await this.handleJobCompleted(message.data);
+        const activityToken = this.notifyActivityStart();
+        try {
+          await this.handleJobCompleted(message.data);
+        } finally {
+          this.notifyActivityEnd(activityToken);
+        }
       } else if (message.type === 'map-generation-progress') {
-        this.handleProgressUpdate(message.data);
+        const activityToken = this.notifyActivityStart();
+        try {
+          this.handleProgressUpdate(message.data);
+        } finally {
+          this.notifyActivityEnd(activityToken);
+        }
       }
     } catch (error) {
       console.error(`[foundry-mcp-bridge] ERROR in handleMessage:`, error);
       this.log(`Error handling message: ${error}`);
+    }
+  }
+
+  private notifyActivityStart(): unknown {
+    try {
+      return this.activityCallbacks.onQueryStart?.();
+    } catch (error) {
+      // Performance diagnostics must never interfere with MCP query handling.
+      this.log(`Query activity callback failed: ${error}`);
+      return undefined;
+    }
+  }
+
+  private notifyActivityEnd(activityToken: unknown): void {
+    try {
+      this.activityCallbacks.onQueryEnd?.(activityToken);
+    } catch (error) {
+      this.log(`Query activity callback failed: ${error}`);
+    }
+  }
+
+  private notifyConnectionState(connected: boolean): void {
+    try {
+      if (connected) {
+        this.activityCallbacks.onConnected?.();
+      } else {
+        this.activityCallbacks.onDisconnected?.();
+      }
+    } catch (error) {
+      this.log(`Connection state callback failed: ${error}`);
     }
   }
 
@@ -455,6 +618,7 @@ export class SocketBridge {
   }
 
   private scheduleReconnect(): void {
+    if (this.disposed || this.config.autoReconnect === false) return;
     // Never give up: after the configured fast attempts are exhausted, keep
     // retrying at a slow 30s cadence so MCP server restarts heal on their own.
     if (this.reconnectTimer) {
@@ -476,6 +640,7 @@ export class SocketBridge {
     this.connectionState = CONNECTION_STATES.RECONNECTING;
 
     this.reconnectTimer = setTimeout(async () => {
+      if (this.disposed) return;
       try {
         await this.connect();
       } catch (error) {
@@ -490,7 +655,7 @@ export class SocketBridge {
   }
 
   private sendMessage(message: any): void {
-    if (this.connectionState !== CONNECTION_STATES.CONNECTED) {
+    if (this.disposed || this.connectionState !== CONNECTION_STATES.CONNECTED) {
       this.log(`Cannot send message - not connected`);
       return;
     }
@@ -530,6 +695,7 @@ export class SocketBridge {
     return {
       type: this.activeConnectionType,
       state: this.connectionState,
+      disposed: this.disposed,
       reconnectAttempts: this.reconnectAttempts,
       maxReconnectAttempts: this.maxReconnectAttempts,
       config: {

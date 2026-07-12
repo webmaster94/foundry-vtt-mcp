@@ -57,7 +57,8 @@ export class BrowserConsoleTools {
     return [
       {
         name: 'get-browser-console',
-        description: 'Read recent GM browser console output captured by the Foundry MCP Bridge. Captures console logs, info, warnings, errors, debug/trace/table output, window errors, unhandled promise rejections, resource load errors, and Foundry notification messages since the module loaded.',
+        description:
+          'Read recent GM browser console output captured by the Foundry MCP Bridge. Captures console logs, info, warnings, errors, debug/trace/table output, window errors, unhandled promise rejections, resource load errors, and Foundry notification messages while capture is active. With idle suspension enabled, capture wakes for MCP queries and intentionally has gaps while idle.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -88,12 +89,14 @@ export class BrowserConsoleTools {
             },
             includeStack: {
               type: 'boolean',
-              description: 'Whether to include captured stack traces when available (default true).',
+              description:
+                'Whether to include captured stack traces when available (default true).',
               default: true,
             },
             includeRawArgs: {
               type: 'boolean',
-              description: 'Whether to include safely serialized console arguments (default false).',
+              description:
+                'Whether to include safely serialized console arguments (default false).',
               default: false,
             },
           },
@@ -101,7 +104,8 @@ export class BrowserConsoleTools {
       },
       {
         name: 'clear-browser-console',
-        description: 'Clear the MCP browser console capture buffer. Requires confirmClear=true. This does not clear the browser devtools console.',
+        description:
+          'Clear the MCP browser console capture buffer. Requires confirmClear=true. This does not clear the browser devtools console.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -115,7 +119,8 @@ export class BrowserConsoleTools {
       },
       {
         name: 'get-browser-console-status',
-        description: 'Get browser console capture status, buffer size, and capture limits for the connected GM browser tab.',
+        description:
+          'Get browser console capture status, idle-suspension lifecycle state, buffer size, and capture limits for the connected GM browser tab without waking capture.',
         inputSchema: {
           type: 'object',
           properties: {},

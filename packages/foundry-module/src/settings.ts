@@ -269,11 +269,36 @@ export class ModuleSettings {
 
     game.settings.register(this.moduleId, 'enableConsoleCapture', {
       name: 'Capture Browser Console',
-      hint: 'Capture recent GM browser console output so MCP clients can inspect logs, warnings, errors, and information messages.',
+      hint: 'Allow MCP clients to capture recent GM browser console output. With idle suspension enabled, capture wakes automatically for MCP queries and otherwise has no console-hook overhead.',
       scope: 'world',
       config: true,
       type: Boolean,
       default: true,
+      onChange: this.onConsoleCaptureChange.bind(this),
+    });
+
+    game.settings.register(this.moduleId, 'suspendConsoleCaptureWhileIdle', {
+      name: 'Pause Console Capture While Idle',
+      hint: 'Recommended. Keep the lightweight bridge connection ready, but remove console hooks until an MCP query arrives. Capture pauses again after the idle timeout.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: true,
+      onChange: this.onConsoleCaptureChange.bind(this),
+    });
+
+    game.settings.register(this.moduleId, 'consoleCaptureIdleTimeout', {
+      name: 'Console Capture Idle Timeout',
+      hint: 'Seconds to keep browser console capture active after the last MCP query finishes.',
+      scope: 'world',
+      config: true,
+      type: Number,
+      default: 120,
+      range: {
+        min: 30,
+        max: 900,
+        step: 30,
+      },
       onChange: this.onConsoleCaptureChange.bind(this),
     });
 
@@ -511,6 +536,7 @@ export class ModuleSettings {
       config: true,
       type: Boolean,
       default: true,
+      onChange: this.onConnectionChange.bind(this),
     });
 
     game.settings.register(this.moduleId, 'heartbeatInterval', {
@@ -611,6 +637,7 @@ export class ModuleSettings {
       debugLogging: false, // Always false - use browser console for debugging
       connectionType: connectionType as 'auto' | 'webrtc' | 'websocket',
       authToken: String(this.getSetting('authToken') || ''),
+      autoReconnect: this.getSetting('autoReconnectEnabled') === true,
     };
   }
 
@@ -644,6 +671,8 @@ export class ModuleSettings {
       'maxActorsPerRequest',
       // Console Capture
       'enableConsoleCapture',
+      'suspendConsoleCaptureWhileIdle',
+      'consoleCaptureIdleTimeout',
       'consoleCaptureMaxEntries',
       'consoleCaptureMaxEntryBytes',
       'consoleCaptureIncludeDebug',
@@ -707,6 +736,16 @@ export class ModuleSettings {
       consoleMaxEntries > 10000
     ) {
       errors.push('Console capture max entries must be between 1 and 10000');
+    }
+
+    const consoleIdleTimeout = this.getSetting('consoleCaptureIdleTimeout');
+    if (
+      !consoleIdleTimeout ||
+      typeof consoleIdleTimeout !== 'number' ||
+      consoleIdleTimeout < 30 ||
+      consoleIdleTimeout > 900
+    ) {
+      errors.push('Console capture idle timeout must be between 30 and 900 seconds');
     }
 
     const consoleMaxEntryBytes = this.getSetting('consoleCaptureMaxEntryBytes');
@@ -780,16 +819,20 @@ export class ModuleSettings {
   }
 
   private onConsoleCaptureChange(): void {
-    const capture = (globalThis as any).foundryMCPBridge?.consoleCapture;
-    if (!capture) {
+    const bridge = (globalThis as any).foundryMCPBridge;
+    if (!bridge) {
       return;
     }
 
-    if (this.getSetting('enableConsoleCapture')) {
-      capture.restart?.();
-    } else {
-      capture.stop?.();
+    if (typeof bridge.refreshCapturePolicy === 'function') {
+      bridge.refreshCapturePolicy();
+      return;
     }
+
+    // Compatibility fallback for startup or older bridge instances.
+    const capture = bridge.consoleCapture;
+    if (this.getSetting('enableConsoleCapture')) capture?.restart?.();
+    else capture?.stop?.();
   }
 
   /**
@@ -837,6 +880,8 @@ export class ModuleSettings {
       'maxActorsPerRequest',
       // Console Capture
       'enableConsoleCapture',
+      'suspendConsoleCaptureWhileIdle',
+      'consoleCaptureIdleTimeout',
       'consoleCaptureMaxEntries',
       'consoleCaptureMaxEntryBytes',
       'consoleCaptureIncludeDebug',

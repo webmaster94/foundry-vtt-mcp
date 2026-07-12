@@ -18,7 +18,7 @@ type EventSender = (event: BridgeEvent) => void;
 
 export class EventService {
   private sender: EventSender | null = null;
-  private hooksRegistered = false;
+  private hookIds: Array<{ hook: string; id: number }> = [];
 
   setSender(sender: EventSender | null): void {
     this.sender = sender;
@@ -26,31 +26,40 @@ export class EventService {
 
   /** Register Foundry hooks once (GM client only). */
   registerHooks(): void {
-    if (this.hooksRegistered) return;
-    this.hooksRegistered = true;
+    if (this.hookIds.length > 0) return;
 
-    Hooks.on('combatStart', (combat: any) => {
+    const combatStartId = Hooks.on('combatStart', (combat: any) => {
+      if (!this.sender) return;
       this.emit('combat-started', {
         combatId: combat?.id,
         round: combat?.round,
         combatants: this.combatantSummaries(combat),
       });
-    });
+    }) as unknown as number;
+    this.hookIds.push({ hook: 'combatStart', id: combatStartId });
 
-    Hooks.on('combatTurnChange', (combat: any, _prior: any, current: any) => {
-      this.emit('combat-turn', {
-        combatId: combat?.id,
-        round: current?.round ?? combat?.round,
-        turn: current?.turn ?? combat?.turn,
-        combatant: this.combatantSummary(combat?.combatant),
-      });
-    });
+    const combatTurnChangeId = Hooks.on(
+      'combatTurnChange',
+      (combat: any, _prior: any, current: any) => {
+        if (!this.sender) return;
+        this.emit('combat-turn', {
+          combatId: combat?.id,
+          round: current?.round ?? combat?.round,
+          turn: current?.turn ?? combat?.turn,
+          combatant: this.combatantSummary(combat?.combatant),
+        });
+      }
+    ) as unknown as number;
+    this.hookIds.push({ hook: 'combatTurnChange', id: combatTurnChangeId });
 
-    Hooks.on('deleteCombat', (combat: any) => {
+    const deleteCombatId = Hooks.on('deleteCombat', (combat: any) => {
+      if (!this.sender) return;
       this.emit('combat-ended', { combatId: combat?.id, round: combat?.round });
-    });
+    }) as unknown as number;
+    this.hookIds.push({ hook: 'deleteCombat', id: deleteCombatId });
 
-    Hooks.on('createChatMessage', (message: any) => {
+    const createChatMessageId = Hooks.on('createChatMessage', (message: any) => {
+      if (!this.sender) return;
       const rolls = Array.isArray(message?.rolls) ? message.rolls : [];
       if (rolls.length) {
         this.emit('roll-completed', {
@@ -76,7 +85,18 @@ export class EventService {
             .slice(0, 400),
         });
       }
-    });
+    }) as unknown as number;
+    this.hookIds.push({ hook: 'createChatMessage', id: createChatMessageId });
+  }
+
+  /** Remove every Foundry hook and stop delivering events. */
+  unregisterHooks(): void {
+    this.setSender(null);
+
+    for (const { hook, id } of this.hookIds) {
+      (Hooks as any).off(hook, id);
+    }
+    this.hookIds = [];
   }
 
   private emit(type: BridgeEvent['type'], data: Record<string, unknown>): void {

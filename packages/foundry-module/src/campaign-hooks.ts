@@ -3,6 +3,8 @@
 
 export class CampaignHooks {
   private isRegistered: boolean = false;
+  private hookIds: Array<{ hook: string; id: number }> = [];
+  private pendingRenders = new WeakMap<object, ReturnType<typeof setTimeout>>();
 
   constructor(_bridge: any) {
     // Bridge not needed for direct Foundry flag approach
@@ -21,12 +23,17 @@ export class CampaignHooks {
       'renderJournalSheet',
       'renderJournalEntryPageSheet',
       'renderApplication',
+      'renderApplicationV2',
     ];
 
     hookNames.forEach(hookName => {
-      Hooks.on(hookName, (app: any, html: any, data: any) => {
+      const hookId = Hooks.on(hookName, (app: any, html: any, data: any) => {
+        // renderApplication fires for every Foundry application. The specific
+        // journal hooks cover normal cases; this is only a compatibility fallback.
+        if (hookName.startsWith('renderApplication') && !this.isJournalApplication(app)) return;
         this.onRenderJournalSheet(app, html, data);
-      });
+      }) as unknown as number;
+      this.hookIds.push({ hook: hookName, id: hookId });
     });
 
     this.isRegistered = true;
@@ -38,10 +45,18 @@ export class CampaignHooks {
   unregister(): void {
     if (!this.isRegistered) return;
 
-    // Note: Foundry VTT doesn't have Hooks.off, so we just mark as unregistered
-    // The hooks will be cleaned up when the module is disabled
+    for (const { hook, id } of this.hookIds) {
+      (Hooks as any).off(hook, id);
+    }
+    this.hookIds = [];
 
     this.isRegistered = false;
+  }
+
+  private isJournalApplication(app: any): boolean {
+    const document = app?.document ?? app?.object;
+    const documentName = document?.documentName ?? document?.parent?.documentName;
+    return documentName === 'JournalEntry' || documentName === 'JournalEntryPage';
   }
 
   /**
@@ -55,13 +70,18 @@ export class CampaignHooks {
       }
 
       // Small delay to avoid race condition with Foundry's internal DOM manipulation
-      setTimeout(() => {
+      const existingTimer = this.pendingRenders.get(app);
+      if (existingTimer !== undefined) clearTimeout(existingTimer);
+
+      const timer = setTimeout(() => {
+        this.pendingRenders.delete(app);
         // Double-check the app is still valid after delay
         if (!app || app._state === -1 || app.closing) {
           return;
         }
         this.processJournalRender(app, html, _data);
       }, 50);
+      this.pendingRenders.set(app, timer);
     } catch (error) {
       console.error('Error in journal sheet render handler:', error);
     }
@@ -151,9 +171,11 @@ export class CampaignHooks {
       });
 
       // Attach click handlers to each toggle
-      statusToggles.on('click', (event: JQuery.ClickEvent) => {
-        this.onStatusToggleClick(event, entry, statusFlags);
-      });
+      statusToggles
+        .off('click.foundryMCPBridge')
+        .on('click.foundryMCPBridge', (event: JQuery.ClickEvent) => {
+          this.onStatusToggleClick(event, entry, statusFlags);
+        });
     } catch (error) {
       console.error('Error setting up campaign dashboard interactivity:', error);
     }

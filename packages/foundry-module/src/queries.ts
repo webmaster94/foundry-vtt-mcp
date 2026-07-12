@@ -497,9 +497,10 @@ export class QueryHandlers {
         return { error: 'Access denied', success: false };
       }
 
+      const bridge = (globalThis as any).foundryMCPBridge;
       return {
         success: true,
-        ...browserConsoleCapture.getStatus(),
+        ...(bridge?.getConsoleCaptureStatus?.() ?? browserConsoleCapture.getStatus()),
       };
     } catch (error) {
       throw new Error(
