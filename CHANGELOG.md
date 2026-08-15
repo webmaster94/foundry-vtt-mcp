@@ -1,3 +1,31 @@
+## v0.12.0 (2026-08-15)
+
+### Stability and connection recovery
+
+- Added Node-owned WebSocket protocol and application heartbeats, suspension-tolerant WebRTC liveness, transient ICE recovery grace, browser resume/network recovery, and deterministic duplicate-tab ownership.
+- Serialized connector/profile lifecycle changes and made server-profile reloads rollback to the known-good listener when a replacement cannot start.
+- Added symmetric UTF-8 WebRTC framing with backpressure and bounded reassembly for large results.
+- Increased query timeouts for slow Foundry work and classify timed-out or response-lost writes as `UNKNOWN_OUTCOME` so callers inspect state instead of duplicating a write.
+
+### Features and safety
+
+- Split module settings into Connection, Permissions & Safety, Console & Diagnostics, and Advanced API windows with validation, reset actions, rollback-safe saves, and hidden auth-token reporting.
+- Added Mongoose Traveller 2e character extraction, bounded compendium summaries, schema guidance, and normalized actor payloads through the fork's existing permission/audit/dry-run/undo paths.
+- Made scene switching permission-gated, dry-runnable, audited, and undoable while preserving both `scene_identifier` and `sceneId` inputs.
+- Preserved the fork's document API, builders, multi-server routing, auth, events, assets, combat, macros, scripts, and system adapters under an automated baseline capability contract.
+
+### Removed
+
+- Removed AI map generation, ComfyUI/Python/model installer payloads, and their runtime/settings surfaces.
+- Removed the persistent Enhanced Creature Index and system-specific index builders. Generic bounded compendium search remains available; installers delete only the exact retired per-world cache filename and preserve generated maps and other user content.
+
+### Installer and release integrity
+
+- Preserved nonstandard Foundry data paths and all unrelated Claude Desktop/MSIX configuration during upgrade/uninstall.
+- Added clean-build, removed-feature, fork-preservation, version/runtime identity, and release-tag equality gates.
+
+---
+
 ## v0.8.2 (2026-06-07)
 
 ### New Features

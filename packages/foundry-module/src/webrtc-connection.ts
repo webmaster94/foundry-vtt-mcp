@@ -1,5 +1,26 @@
 import { MODULE_ID, CONNECTION_STATES } from './constants.js';
 
+const MAX_DATA_CHANNEL_MESSAGE_BYTES = 64 * 1024;
+const SINGLE_MESSAGE_BYTES = 48 * 1024;
+const CHUNK_PAYLOAD_BYTES = 36 * 1024;
+const MAX_REASSEMBLED_MESSAGE_BYTES = 16 * 1024 * 1024;
+const MAX_CHUNKS_PER_MESSAGE = Math.ceil(MAX_REASSEMBLED_MESSAGE_BYTES / CHUNK_PAYLOAD_BYTES);
+const MAX_PENDING_CHUNKED_MESSAGES = 16;
+const MAX_TOTAL_PENDING_CHUNK_BYTES = 32 * 1024 * 1024;
+const CHUNK_TIMEOUT_MS = 30_000;
+const CHUNK_CLEANUP_INTERVAL_MS = 5_000;
+const BUFFERED_AMOUNT_HIGH_WATER = 512 * 1024;
+const BUFFERED_AMOUNT_LOW_WATER = 128 * 1024;
+
+interface PendingChunkedMessage {
+  chunks: Map<number, Uint8Array>;
+  totalChunks: number;
+  totalBytes: number;
+  originalType: string;
+  originalId?: string;
+  timestamp: number;
+}
+
 export interface WebRTCConfig {
   serverHost: string;
   serverPort: number;
@@ -21,6 +42,10 @@ export class WebRTCConnection {
   private dataChannel: RTCDataChannel | null = null;
   private connectionState: string = CONNECTION_STATES.DISCONNECTED;
   private messageHandler: ((message: any) => Promise<void>) | null = null;
+  private disconnectGraceTimer: number | null = null;
+  private pendingChunks = new Map<string, PendingChunkedMessage>();
+  private chunkCleanupInterval: number | null = null;
+  private sendChain: Promise<void> = Promise.resolve();
 
   constructor(
     private config: WebRTCConfig,
@@ -48,7 +73,6 @@ export class WebRTCConnection {
       // Step 2: Create data channel
       this.dataChannel = this.peerConnection.createDataChannel('foundry-mcp', {
         ordered: true,
-        maxRetransmits: 10,
       });
 
       this.setupDataChannelHandlers();
@@ -92,6 +116,10 @@ export class WebRTCConnection {
     this.dataChannel.onmessage = async event => {
       try {
         const message = JSON.parse(event.data);
+        if (message.type === 'chunked-message') {
+          await this.handleChunkedMessage(message);
+          return;
+        }
         if (this.messageHandler) {
           await this.messageHandler(message);
         }
@@ -108,14 +136,27 @@ export class WebRTCConnection {
       const state = this.peerConnection?.iceConnectionState;
       this.log(`ICE connection state: ${state}`);
 
-      if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+      if (state === 'failed' || state === 'closed') {
+        this.clearDisconnectGraceTimer();
         this.setConnectionState(CONNECTION_STATES.DISCONNECTED);
+      } else if (state === 'disconnected') {
+        this.scheduleDisconnectGrace();
+      } else if (state === 'connected' || state === 'completed') {
+        this.clearDisconnectGraceIfRecovered();
       }
     };
 
     this.peerConnection.onconnectionstatechange = () => {
       const state = this.peerConnection?.connectionState;
       this.log(`Peer connection state: ${state}`);
+      if (state === 'failed' || state === 'closed') {
+        this.clearDisconnectGraceTimer();
+        this.setConnectionState(CONNECTION_STATES.DISCONNECTED);
+      } else if (state === 'disconnected') {
+        this.scheduleDisconnectGrace();
+      } else if (state === 'connected') {
+        this.clearDisconnectGraceIfRecovered();
+      }
     };
   }
 
@@ -141,12 +182,12 @@ export class WebRTCConnection {
   }
 
   private async sendSignalingOffer(offer: RTCSessionDescriptionInit): Promise<void> {
-    // Use HTTP POST for signaling to dedicated WebRTC signaling port (31416)
-    // For HTTPS pages, browsers allow HTTP POST to localhost (security exception)
-    // The MCP server must be running on the same machine as the browser
+    // Use HTTP POST for signaling to the dedicated port. Loopback HTTP is a
+    // trustworthy target from an HTTPS world; a deliberately configured LAN
+    // host is also preserved and may require Local Network Access permission.
     const isHttps = window.location.protocol === 'https:';
-    const signalingHost = isHttps ? 'localhost' : this.config.serverHost;
-    const protocol = 'http'; // Always http:// - localhost exception allows this from HTTPS
+    const signalingHost = this.config.serverHost;
+    const protocol = 'http';
     // Signaling port is main server port + 1 (31415 -> 31416), matching the
     // MCP server's per-profile signaling listener
     const WEBRTC_SIGNALING_PORT = (this.config.serverPort ?? 31415) + 1;
@@ -155,7 +196,7 @@ export class WebRTCConnection {
     this.log(`Sending WebRTC offer via HTTP POST: ${httpUrl} (HTTPS page: ${isHttps})`);
 
     try {
-      const response = await fetch(httpUrl, {
+      const requestInit: RequestInit & { targetAddressSpace?: 'loopback' | 'local' } = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -165,7 +206,15 @@ export class WebRTCConnection {
           ...(this.config.authToken ? { token: this.config.authToken } : {}),
         }),
         signal: AbortSignal.timeout(this.config.connectionTimeout * 1000),
-      });
+      };
+      if (isHttps) {
+        requestInit.targetAddressSpace = /^(localhost|127(?:\.\d{1,3}){3}|\[?::1\]?)$/i.test(
+          signalingHost
+        )
+          ? 'loopback'
+          : 'local';
+      }
+      const response = await fetch(httpUrl, requestInit);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -188,6 +237,9 @@ export class WebRTCConnection {
   }
 
   disconnect(): void {
+    this.clearDisconnectGraceTimer();
+    this.stopChunkCleanup();
+    this.pendingChunks.clear();
     if (this.dataChannel) {
       this.dataChannel.close();
       this.dataChannel = null;
@@ -202,69 +254,256 @@ export class WebRTCConnection {
     this.log('WebRTC connection closed');
   }
 
-  sendMessage(message: any): void {
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      this.log('Cannot send message - data channel not open');
+  sendMessage(message: any): Promise<void> {
+    const operation = this.sendChain.then(() => this.sendMessageNow(message));
+    this.sendChain = operation.catch(() => {});
+    return operation;
+  }
+
+  private async sendMessageNow(message: any): Promise<void> {
+    const dataChannel = this.dataChannel;
+    if (!dataChannel || dataChannel.readyState !== 'open') {
+      throw new Error('Cannot send WebRTC message: data channel is not open');
+    }
+
+    const json = JSON.stringify(message);
+    const encoded = new TextEncoder().encode(json);
+    if (encoded.byteLength > MAX_REASSEMBLED_MESSAGE_BYTES) {
+      throw new Error(
+        `WebRTC message is ${encoded.byteLength} bytes; maximum is ${MAX_REASSEMBLED_MESSAGE_BYTES}`
+      );
+    }
+
+    if (encoded.byteLength <= SINGLE_MESSAGE_BYTES) {
+      await this.waitForBufferCapacity(dataChannel);
+      dataChannel.send(json);
       return;
     }
 
-    try {
-      const json = JSON.stringify(message);
-      const size = json.length;
-
-      // WebRTC SCTP constants (keep in sync with server config.ts WEBRTC_CONSTANTS)
-      const MAX_MESSAGE_SIZE = 65536; // 64KB - SCTP hard limit
-      const CHUNK_SIZE = 50 * 1024; // 50KB - safe threshold for chunking
-
-      if (size > CHUNK_SIZE) {
-        // Split large message into chunks
-        const totalChunks = Math.ceil(json.length / CHUNK_SIZE);
-        const chunkId = `chunk-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-        this.log(
-          `Chunking large message: ${size} bytes → ${totalChunks} chunks (type: ${message.type})`
-        );
-
-        for (let i = 0; i < totalChunks; i++) {
-          const start = i * CHUNK_SIZE;
-          const end = Math.min(start + CHUNK_SIZE, json.length);
-          const chunk = json.substring(start, end);
-
-          const chunkMessage = {
-            type: 'chunked-message',
-            chunkId: chunkId,
-            chunkIndex: i,
-            totalChunks: totalChunks,
-            chunk: chunk,
-            originalType: message.type,
-            originalId: message.id,
-          };
-
-          const chunkJson = JSON.stringify(chunkMessage);
-
-          // Verify chunk doesn't exceed SCTP maxMessageSize (safety check)
-          if (chunkJson.length > MAX_MESSAGE_SIZE) {
-            throw new Error(
-              `Chunk ${i + 1}/${totalChunks} size ${chunkJson.length} exceeds ` +
-                `SCTP maxMessageSize of ${MAX_MESSAGE_SIZE} bytes. ` +
-                `Original message may be too large to chunk safely.`
-            );
-          }
-
-          this.dataChannel.send(chunkJson);
-          this.log(`Sent chunk ${i + 1}/${totalChunks} (${chunkJson.length} bytes)`);
-        }
-
-        this.log(`Successfully sent all ${totalChunks} chunks for ${message.type}`);
-      } else {
-        // Send as single message
-        this.dataChannel.send(json);
-        this.log(`Sent WebRTC message: ${message.type} (${size} bytes)`);
+    const totalChunks = Math.ceil(encoded.byteLength / CHUNK_PAYLOAD_BYTES);
+    const chunkId = `chunk-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const start = chunkIndex * CHUNK_PAYLOAD_BYTES;
+      const chunkBytes = encoded.subarray(
+        start,
+        Math.min(start + CHUNK_PAYLOAD_BYTES, encoded.byteLength)
+      );
+      const chunkJson = JSON.stringify({
+        type: 'chunked-message',
+        chunkId,
+        chunkIndex,
+        totalChunks,
+        chunk: this.bytesToBase64(chunkBytes),
+        encoding: 'base64',
+        byteLength: chunkBytes.byteLength,
+        totalBytes: encoded.byteLength,
+        originalType: String(message?.type || ''),
+        ...(typeof message?.id === 'string' ? { originalId: message.id } : {}),
+      });
+      const envelopeBytes = new TextEncoder().encode(chunkJson).byteLength;
+      if (envelopeBytes > MAX_DATA_CHANNEL_MESSAGE_BYTES) {
+        throw new Error(`WebRTC chunk envelope is ${envelopeBytes} bytes; maximum is 65536`);
       }
-    } catch (error) {
-      this.log(`Failed to send WebRTC message: ${error}`);
-      throw error; // Re-throw so caller knows send failed
+      await this.waitForBufferCapacity(dataChannel);
+      dataChannel.send(chunkJson);
     }
+  }
+
+  private async waitForBufferCapacity(dataChannel: RTCDataChannel): Promise<void> {
+    if (dataChannel.bufferedAmount <= BUFFERED_AMOUNT_HIGH_WATER) return;
+    dataChannel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_WATER;
+
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + Math.max(this.config.connectionTimeout * 1000, 5_000);
+      const interval = window.setInterval(() => {
+        if (this.dataChannel !== dataChannel || dataChannel.readyState !== 'open') {
+          clearInterval(interval);
+          reject(new Error('WebRTC data channel closed while waiting for send buffer'));
+        } else if (dataChannel.bufferedAmount <= BUFFERED_AMOUNT_LOW_WATER) {
+          clearInterval(interval);
+          resolve();
+        } else if (Date.now() >= deadline) {
+          clearInterval(interval);
+          reject(new Error('WebRTC send buffer did not drain before timeout'));
+        }
+      }, 10);
+    });
+  }
+
+  private async handleChunkedMessage(message: any): Promise<void> {
+    const { chunkId, chunkIndex, totalChunks, chunk, encoding, byteLength, totalBytes } = message;
+    if (
+      typeof chunkId !== 'string' ||
+      chunkId.length === 0 ||
+      chunkId.length > 128 ||
+      !Number.isInteger(chunkIndex) ||
+      !Number.isInteger(totalChunks) ||
+      chunkIndex < 0 ||
+      totalChunks < 1 ||
+      chunkIndex >= totalChunks ||
+      totalChunks > MAX_CHUNKS_PER_MESSAGE ||
+      typeof chunk !== 'string'
+    ) {
+      throw new Error('Rejected malformed WebRTC chunk metadata');
+    }
+
+    if (
+      encoding !== 'base64' ||
+      !Number.isInteger(byteLength) ||
+      byteLength < 0 ||
+      byteLength > CHUNK_PAYLOAD_BYTES ||
+      !Number.isInteger(totalBytes) ||
+      totalBytes < 1 ||
+      totalBytes > MAX_REASSEMBLED_MESSAGE_BYTES ||
+      totalChunks !== Math.ceil(totalBytes / CHUNK_PAYLOAD_BYTES)
+    ) {
+      this.pendingChunks.delete(chunkId);
+      throw new Error('Rejected malformed or oversized WebRTC chunk payload');
+    }
+
+    this.startChunkCleanup();
+    this.cleanupExpiredChunks();
+    let pending = this.pendingChunks.get(chunkId);
+    if (!pending) {
+      if (this.pendingChunks.size >= MAX_PENDING_CHUNKED_MESSAGES) {
+        throw new Error('Too many pending WebRTC chunked messages');
+      }
+      pending = {
+        chunks: new Map(),
+        totalChunks,
+        totalBytes,
+        originalType: String(message.originalType || ''),
+        timestamp: Date.now(),
+      };
+      if (typeof message.originalId === 'string') pending.originalId = message.originalId;
+      this.pendingChunks.set(chunkId, pending);
+    }
+
+    if (
+      pending.totalChunks !== totalChunks ||
+      pending.totalBytes !== totalBytes ||
+      pending.originalType !== String(message.originalType || '') ||
+      pending.originalId !==
+        (typeof message.originalId === 'string' ? message.originalId : undefined)
+    ) {
+      this.pendingChunks.delete(chunkId);
+      throw new Error('Rejected inconsistent WebRTC chunk metadata');
+    }
+
+    let decoded: Uint8Array;
+    try {
+      decoded = this.base64ToBytes(chunk);
+    } catch (error) {
+      this.pendingChunks.delete(chunkId);
+      throw error;
+    }
+    if (decoded.byteLength !== byteLength) {
+      this.pendingChunks.delete(chunkId);
+      throw new Error('Rejected WebRTC chunk with an invalid byte length');
+    }
+    const existing = pending.chunks.get(chunkIndex);
+    if (existing) {
+      if (!this.equalBytes(existing, decoded)) {
+        this.pendingChunks.delete(chunkId);
+        throw new Error('Rejected conflicting duplicate WebRTC chunk');
+      }
+      return;
+    }
+    const aggregatePendingBytes = [...this.pendingChunks.values()].reduce(
+      (sum, value) =>
+        sum +
+        [...value.chunks.values()].reduce((chunkSum, bytes) => chunkSum + bytes.byteLength, 0),
+      0
+    );
+    if (aggregatePendingBytes + decoded.byteLength > MAX_TOTAL_PENDING_CHUNK_BYTES) {
+      this.pendingChunks.delete(chunkId);
+      throw new Error('Rejected WebRTC chunks exceeding aggregate reassembly memory limit');
+    }
+    pending.chunks.set(chunkIndex, decoded);
+    pending.timestamp = Date.now();
+
+    const receivedBytes = [...pending.chunks.values()].reduce(
+      (sum, value) => sum + value.byteLength,
+      0
+    );
+    if (receivedBytes > pending.totalBytes) {
+      this.pendingChunks.delete(chunkId);
+      throw new Error('Rejected oversized WebRTC chunk sequence');
+    }
+    if (pending.chunks.size !== pending.totalChunks) return;
+
+    this.pendingChunks.delete(chunkId);
+    if (receivedBytes !== pending.totalBytes) {
+      throw new Error('Rejected incomplete WebRTC chunk byte sequence');
+    }
+    const reassembled = new Uint8Array(pending.totalBytes);
+    let offset = 0;
+    for (let index = 0; index < pending.totalChunks; index++) {
+      const value = pending.chunks.get(index);
+      if (!value) throw new Error('Rejected incomplete WebRTC chunk sequence');
+      reassembled.set(value, offset);
+      offset += value.byteLength;
+    }
+
+    const json = new TextDecoder('utf-8', { fatal: true }).decode(reassembled);
+    const completeMessage = JSON.parse(json);
+    if (
+      String(completeMessage?.type || '') !== pending.originalType ||
+      (pending.originalId !== undefined && completeMessage?.id !== pending.originalId)
+    ) {
+      throw new Error('Rejected WebRTC chunks whose envelope metadata did not match the message');
+    }
+    if (this.messageHandler) await this.messageHandler(completeMessage);
+  }
+
+  private bytesToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    for (let index = 0; index < bytes.byteLength; index++) {
+      binary += String.fromCharCode(bytes[index]!);
+    }
+    return btoa(binary);
+  }
+
+  private base64ToBytes(value: string): Uint8Array {
+    if (value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+      throw new Error('Rejected invalid base64 WebRTC chunk');
+    }
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+
+  private equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+    if (left.byteLength !== right.byteLength) return false;
+    for (let index = 0; index < left.byteLength; index++) {
+      if (left[index] !== right[index]) return false;
+    }
+    return true;
+  }
+
+  private startChunkCleanup(): void {
+    if (this.chunkCleanupInterval !== null) return;
+    this.chunkCleanupInterval = window.setInterval(
+      () => this.cleanupExpiredChunks(),
+      CHUNK_CLEANUP_INTERVAL_MS
+    );
+  }
+
+  private stopChunkCleanup(): void {
+    if (this.chunkCleanupInterval === null) return;
+    clearInterval(this.chunkCleanupInterval);
+    this.chunkCleanupInterval = null;
+  }
+
+  private cleanupExpiredChunks(): void {
+    const cutoff = Date.now() - CHUNK_TIMEOUT_MS;
+    for (const [chunkId, pending] of this.pendingChunks) {
+      if (pending.timestamp <= cutoff) this.pendingChunks.delete(chunkId);
+    }
+    if (this.pendingChunks.size === 0) this.stopChunkCleanup();
   }
 
   isConnected(): boolean {
@@ -309,6 +548,37 @@ export class WebRTCConnection {
       } catch (error) {
         this.log(`Connection state callback failed: ${error}`);
       }
+    }
+  }
+
+  private clearDisconnectGraceTimer(): void {
+    if (this.disconnectGraceTimer === null) return;
+    clearTimeout(this.disconnectGraceTimer);
+    this.disconnectGraceTimer = null;
+  }
+
+  private scheduleDisconnectGrace(): void {
+    this.clearDisconnectGraceTimer();
+    this.disconnectGraceTimer = window.setTimeout(
+      () => {
+        this.disconnectGraceTimer = null;
+        if (
+          this.peerConnection?.iceConnectionState === 'disconnected' ||
+          this.peerConnection?.connectionState === 'disconnected'
+        ) {
+          this.setConnectionState(CONNECTION_STATES.DISCONNECTED);
+        }
+      },
+      Math.max(this.config.connectionTimeout * 1000, 5_000)
+    );
+  }
+
+  private clearDisconnectGraceIfRecovered(): void {
+    if (
+      this.peerConnection?.iceConnectionState !== 'disconnected' &&
+      this.peerConnection?.connectionState !== 'disconnected'
+    ) {
+      this.clearDisconnectGraceTimer();
     }
   }
 

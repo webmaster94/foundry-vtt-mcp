@@ -18,7 +18,7 @@ describe('MacroManagementTools', () => {
   it('exposes macro management tools', () => {
     const { tools } = createTools();
 
-    expect(tools.getToolDefinitions().map((tool) => tool.name)).toEqual([
+    expect(tools.getToolDefinitions().map(tool => tool.name)).toEqual([
       'list-macros',
       'get-macro',
       'create-macro',
@@ -31,7 +31,11 @@ describe('MacroManagementTools', () => {
   it('creates macros through generic document creation', async () => {
     const { tools, query } = createTools();
 
-    await tools.handleToolCall('create-macro', { name: 'Test Macro', type: 'script', command: 'return 1;' });
+    await tools.handleToolCall('create-macro', {
+      name: 'Test Macro',
+      type: 'script',
+      command: 'return 1;',
+    });
 
     expect(query).toHaveBeenCalledWith('foundry-mcp-bridge.createDocument', {
       documentType: 'Macro',

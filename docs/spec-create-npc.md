@@ -2,8 +2,7 @@
 
 ## Contesto
 
-Repository: `adambdooley/foundry-vtt-mcp` (fork locale in
-`C:\Users\lucam\Documents\Progetti\foundry-vtt-mcp`)
+Repository: `webmaster94/foundry-vtt-mcp`
 
 Stack:
 

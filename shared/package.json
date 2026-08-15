@@ -1,11 +1,12 @@
 {
   "name": "@foundry-mcp/shared",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Shared TypeScript types and constants for Foundry MCP Integration",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
+    "prebuild": "node ../scripts/clean-build.mjs shared",
     "build": "tsc",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit"

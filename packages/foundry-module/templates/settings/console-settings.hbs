@@ -1,0 +1,69 @@
+<div class="mcp-settings-window">
+  <header class="mcp-settings-window__header">
+    <h2><i class="fa-solid fa-terminal"></i> Console &amp; Diagnostics</h2>
+    <p>Control bounded browser-console capture without keeping hooks active while idle.</p>
+  </header>
+
+  <section class="mcp-settings-section">
+    <div class="form-group">
+      <label for="mcp-console-enabled">Capture Browser Console</label>
+      <div class="form-fields">
+        <input id="mcp-console-enabled" type="checkbox" name="enableConsoleCapture" {{checked settings.enableConsoleCapture}}>
+      </div>
+      <p class="hint">Allows MCP clients to inspect recent GM-browser console output.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-console-suspend">Pause Capture While Idle</label>
+      <div class="form-fields">
+        <input id="mcp-console-suspend" type="checkbox" name="suspendConsoleCaptureWhileIdle" {{checked settings.suspendConsoleCaptureWhileIdle}}>
+      </div>
+      <p class="hint">Recommended. Console hooks wake for real MCP activity and detach again after the idle timeout.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-console-idle">Idle Timeout</label>
+      <div class="form-fields">
+        <input id="mcp-console-idle" type="number" name="consoleCaptureIdleTimeout" value="{{settings.consoleCaptureIdleTimeout}}" min="30" max="900" step="30">
+        <span class="units">seconds</span>
+      </div>
+      <p class="hint">Time to keep console capture active after the last tracked query ends.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-console-entries">Maximum Entries</label>
+      <div class="form-fields">
+        <input id="mcp-console-entries" type="number" name="consoleCaptureMaxEntries" value="{{settings.consoleCaptureMaxEntries}}" min="100" max="10000" step="100">
+      </div>
+      <p class="hint">Bounds the in-memory ring buffer; refreshing the browser clears it.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-console-bytes">Maximum Entry Size</label>
+      <div class="form-fields">
+        <input id="mcp-console-bytes" type="number" name="consoleCaptureMaxEntryBytes" value="{{settings.consoleCaptureMaxEntryBytes}}" min="512" max="65536" step="512">
+        <span class="units">bytes</span>
+      </div>
+      <p class="hint">Oversized individual console entries are truncated before storage.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-console-debug">Include Debug Messages</label>
+      <div class="form-fields">
+        <input id="mcp-console-debug" type="checkbox" name="consoleCaptureIncludeDebug" {{checked settings.consoleCaptureIncludeDebug}}>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-console-trace">Include Trace Messages</label>
+      <div class="form-fields">
+        <input id="mcp-console-trace" type="checkbox" name="consoleCaptureIncludeTrace" {{checked settings.consoleCaptureIncludeTrace}}>
+      </div>
+    </div>
+  </section>
+
+  <footer class="mcp-settings-window__footer">
+    <button type="submit"><i class="fa-solid fa-floppy-disk"></i> Save Console Settings</button>
+    <button class="mcp-settings-reset" type="submit" name="_action" value="reset"><i class="fa-solid fa-rotate-left"></i> Reset Console</button>
+  </footer>
+</div>

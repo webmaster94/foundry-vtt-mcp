@@ -19,16 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-## Third-Party Components
-
-This software includes the D&D Battlemaps SDXL model when the ComfyUI component is installed:
-
-- **Source**: https://huggingface.co/AdamDooley/dnd-battlemaps-sdxl-1.0-mirror
-- **License**: Custom license with usage restrictions
-- **Full License**: https://huggingface.co/AdamDooley/dnd-battlemaps-sdxl-1.0-mirror/blob/main/license.txt
-
-The D&D Battlemaps SDXL model is subject to its own license terms separate from this MIT license. Users must comply with the model's specific license requirements when using the ComfyUI map generation features.
-
-7-Zip (7zr.exe) — GNU LGPL v2.1 or later (with some BSD parts, unRAR restriction).
-- **License**: https://www.7-zip.org/license.txt

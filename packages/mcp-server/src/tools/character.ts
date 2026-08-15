@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { FoundryClient } from '../foundry-client.js';
 import { Logger } from '../logger.js';
 import { SystemRegistry } from '../systems/system-registry.js';
-import { detectGameSystem, getCachedSystemId, type GameSystem } from '../utils/system-detection.js';
+import { detectGameSystemInfo } from '../utils/system-detection.js';
 import type { SystemAdapter } from '../systems/types.js';
 
 export interface CharacterToolsOptions {
@@ -15,7 +15,6 @@ export class CharacterTools {
   private foundryClient: FoundryClient;
   private logger: Logger;
   private systemRegistry: SystemRegistry | null;
-  private cachedGameSystem: GameSystem | null = null;
 
   constructor({ foundryClient, logger, systemRegistry }: CharacterToolsOptions) {
     this.foundryClient = foundryClient;
@@ -24,32 +23,17 @@ export class CharacterTools {
   }
 
   /**
-   * Get or detect the game system (cached)
-   */
-  private async getGameSystem(): Promise<GameSystem> {
-    if (!this.cachedGameSystem) {
-      this.cachedGameSystem = await detectGameSystem(this.foundryClient, this.logger);
-    }
-    return this.cachedGameSystem;
-  }
-
-  /**
-   * Resolve the active SystemAdapter, if any. Looks up by the raw
-   * Foundry system id first (so adapters whose id isn't part of the
-   * narrow `GameSystem` enum — e.g. 'dsa5', 'cosmere-rpg' — still
-   * resolve), then falls back to the normalised GameSystem.
+   * Resolve the active routed world's adapter without retaining process- or
+   * tool-instance state that could leak across named server profiles.
    */
   private async getAdapter(): Promise<SystemAdapter | null> {
     if (!this.systemRegistry) return null;
-    // Ensure detection has populated the cached id (it's set as a side
-    // effect of detectGameSystem, which getGameSystem wraps).
-    await this.getGameSystem();
-    const rawId = getCachedSystemId();
-    if (rawId) {
-      const byRaw = this.systemRegistry.getAdapter(rawId);
+    const detected = await detectGameSystemInfo(this.foundryClient, this.logger);
+    if (detected.systemId) {
+      const byRaw = this.systemRegistry.getAdapter(detected.systemId);
       if (byRaw) return byRaw;
     }
-    return this.systemRegistry.getAdapter(this.cachedGameSystem ?? 'other');
+    return this.systemRegistry.getAdapter(detected.system);
   }
 
   /**

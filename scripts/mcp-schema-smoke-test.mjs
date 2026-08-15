@@ -6,24 +6,41 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const distDir = path.join(repoRoot, 'packages', 'mcp-server', 'dist');
 
-const fail = (message) => {
+const fail = message => {
   console.error(`\n[MCP Schema Smoke Test] ${message}`);
   process.exit(1);
 };
 
 if (!fs.existsSync(distDir)) {
   fail(
-    `Build output not found at ${distDir}. Run "npm -w @foundry-mcp/server run build" and re-run this test.`,
+    `Build output not found at ${distDir}. Run "npm -w @foundry-mcp/server run build" and re-run this test.`
   );
 }
 
-const importDist = async (relativePath) =>
+const importDist = async relativePath =>
   import(pathToFileURL(path.join(distDir, relativePath)).href);
 
-const [{ config }, { Logger }, { FoundryClient }, { CharacterTools }, { CompendiumTools }, { SceneTools },
-  { ActorCreationTools }, { QuestCreationTools }, { DiceRollTools }, { CampaignManagementTools },
-  { OwnershipTools }, { TokenManipulationTools }, { MapGenerationTools }, { getSystemRegistry },
-  { DnD5eAdapter }, { PF2eAdapter }, { DSA5Adapter }, { CosmereRpgAdapter }] = await Promise.all([
+const [
+  { config },
+  { Logger },
+  { FoundryClient },
+  { CharacterTools },
+  { CompendiumTools },
+  { SceneTools },
+  { ActorCreationTools },
+  { QuestCreationTools },
+  { DiceRollTools },
+  { CampaignManagementTools },
+  { OwnershipTools },
+  { TokenManipulationTools },
+  { getSystemRegistry },
+  { DnD5eAdapter },
+  { PF2eAdapter },
+  { DSA5Adapter },
+  { CosmereRpgAdapter },
+  { WFRP4eAdapter },
+  { MGT2eAdapter },
+] = await Promise.all([
   importDist('config.js'),
   importDist('logger.js'),
   importDist('foundry-client.js'),
@@ -36,12 +53,13 @@ const [{ config }, { Logger }, { FoundryClient }, { CharacterTools }, { Compendi
   importDist('tools/campaign-management.js'),
   importDist('tools/ownership.js'),
   importDist('tools/token-manipulation.js'),
-  importDist('tools/map-generation.js'),
   importDist('systems/index.js'),
   importDist('systems/dnd5e/adapter.js'),
   importDist('systems/pf2e/adapter.js'),
   importDist('systems/dsa5/adapter.js'),
   importDist('systems/cosmere-rpg/adapter.js'),
+  importDist('systems/wfrp4e/adapter.js'),
+  importDist('systems/mgt2e/adapter.js'),
 ]);
 
 const logger = new Logger({ level: 'error', enableConsole: false, enableFile: false });
@@ -52,6 +70,8 @@ systemRegistry.register(new DnD5eAdapter());
 systemRegistry.register(new PF2eAdapter());
 systemRegistry.register(new DSA5Adapter());
 systemRegistry.register(new CosmereRpgAdapter());
+systemRegistry.register(new WFRP4eAdapter());
+systemRegistry.register(new MGT2eAdapter());
 
 const tools = [
   ...new CharacterTools({ foundryClient, logger, systemRegistry }).getToolDefinitions(),
@@ -63,7 +83,6 @@ const tools = [
   ...new CampaignManagementTools(foundryClient, logger).getToolDefinitions(),
   ...new OwnershipTools({ foundryClient, logger }).getToolDefinitions(),
   ...new TokenManipulationTools({ foundryClient, logger }).getToolDefinitions(),
-  ...new MapGenerationTools({ foundryClient, logger, backendComfyUIHandlers: {} }).getToolDefinitions(),
 ];
 
 if (!tools.length) {
@@ -79,24 +98,43 @@ for (const tool of tools) {
 }
 
 const additionalPropertiesFalseCount = objectSchemas.filter(
-  ({ schema }) => schema.additionalProperties === false,
+  ({ schema }) => schema.additionalProperties === false
 ).length;
 
 if (additionalPropertiesFalseCount === objectSchemas.length) {
   fail(
-    'Every tool schema has additionalProperties=false. This indicates schema normalization is forcing strictness globally.',
+    'Every tool schema has additionalProperties=false. This indicates schema normalization is forcing strictness globally.'
   );
 }
 
-const switchSceneSchema = tools.find((tool) => tool.name === 'switch-scene')?.inputSchema;
+const switchSceneSchema = tools.find(tool => tool.name === 'switch-scene')?.inputSchema;
 if (!switchSceneSchema) {
   fail('Expected tool "switch-scene" to be present but it was not found.');
 }
 
 if (switchSceneSchema.additionalProperties === false) {
   fail(
-    'Tool "switch-scene" schema sets additionalProperties=false. This can reject alias parameters like "sceneId" and breaks client compatibility.',
+    'Tool "switch-scene" schema sets additionalProperties=false. This can reject alias parameters like "sceneId" and breaks client compatibility.'
   );
 }
 
-console.log('[MCP Schema Smoke Test] PASS: tool schemas load, use object input, and do not enforce global additionalProperties=false.');
+if (!tools.some(tool => tool.name === 'list-scenes')) {
+  fail('Expected tool "list-scenes" to be present but it was not found.');
+}
+
+const removedToolNames = [
+  'generate-map',
+  'check-map-status',
+  'cancel-map-job',
+  'list-creatures-by-criteria',
+];
+const retainedRemovedTools = removedToolNames.filter(name =>
+  tools.some(tool => tool.name === name)
+);
+if (retainedRemovedTools.length > 0) {
+  fail(`Removed tools are still advertised: ${retainedRemovedTools.join(', ')}`);
+}
+
+console.log(
+  '[MCP Schema Smoke Test] PASS: tool schemas load, use object input, and do not enforce global additionalProperties=false.'
+);

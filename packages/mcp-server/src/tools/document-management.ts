@@ -19,10 +19,14 @@ import {
 } from '@foundry-mcp/shared';
 import { FoundryClient } from '../foundry-client.js';
 import { Logger } from '../logger.js';
+import { SystemRegistry } from '../systems/system-registry.js';
+import type { SystemAdapter } from '../systems/types.js';
+import { detectGameSystemInfo } from '../utils/system-detection.js';
 
 export interface DocumentManagementToolsOptions {
   foundryClient: FoundryClient;
   logger: Logger;
+  systemRegistry?: SystemRegistry;
 }
 
 const RefSchema = z.object({
@@ -76,10 +80,12 @@ const workflowDeleteTypes: Record<string, string> = {
 export class DocumentManagementTools {
   private foundryClient: FoundryClient;
   private logger: Logger;
+  private systemRegistry: SystemRegistry | null;
 
-  constructor({ foundryClient, logger }: DocumentManagementToolsOptions) {
+  constructor({ foundryClient, logger, systemRegistry }: DocumentManagementToolsOptions) {
     this.foundryClient = foundryClient;
     this.logger = logger.child({ component: 'DocumentManagementTools' });
+    this.systemRegistry = systemRegistry ?? null;
   }
 
   getToolDefinitions(): Tool[] {
@@ -298,9 +304,9 @@ export class DocumentManagementTools {
       case 'get-document':
         return this.query('getDocument', GetDocumentRequestSchema.parse(args || {}));
       case 'create-document':
-        return this.query('createDocument', CreateDocumentRequestSchema.parse(args || {}));
+        return this.createDocument(args);
       case 'update-document':
-        return this.query('updateDocument', UpdateDocumentRequestSchema.parse(args || {}));
+        return this.updateDocument(args);
       case 'delete-document':
         return this.query('deleteDocument', DeleteDocumentRequestSchema.parse(args || {}));
       case 'list-embedded-documents':
@@ -324,12 +330,9 @@ export class DocumentManagementTools {
           CreateEmbeddedDocumentsRequestSchema.parse(args || {})
         );
       case 'batch-document-operations':
-        return this.query(
-          'batchDocumentOperations',
-          BatchDocumentOperationsRequestSchema.parse(args || {})
-        );
+        return this.batchDocumentOperations(args);
       case 'build-actor-from-spec':
-        return this.query('buildActorFromSpec', { spec: ActorSpecSchema.parse(args?.spec || {}) });
+        return this.buildActorFromSpec(args);
       case 'search-compendium-contents':
         return this.query(
           'searchCompendiumContents',
@@ -352,7 +355,7 @@ export class DocumentManagementTools {
           DeleteEmbeddedDocumentRequestSchema.parse(args || {})
         );
       case 'get-document-schema':
-        return this.query('getDocumentSchema', DocumentSchemaRequestSchema.parse(args || {}));
+        return this.getDocumentSchema(args);
       case 'roll-roll-table':
         return this.query('rollRollTable', { ref: this.refWithType(args, 'RollTable') });
       case 'move-document-to-folder':
@@ -422,6 +425,173 @@ export class DocumentManagementTools {
 
   private async query(method: string, params: any): Promise<any> {
     return this.foundryClient.query(`foundry-mcp-bridge.${method}`, params);
+  }
+
+  /** Resolve an adapter for the active AsyncLocal-routed world on every call. */
+  private async getAdapter(): Promise<SystemAdapter | null> {
+    if (!this.systemRegistry) return null;
+    const detected = await detectGameSystemInfo(this.foundryClient, this.logger);
+    if (detected.systemId) {
+      const byRawId = this.systemRegistry.getAdapter(detected.systemId);
+      if (byRawId) return byRawId;
+    }
+    return this.systemRegistry.getAdapter(detected.system);
+  }
+
+  private async createDocument(args: any): Promise<any> {
+    const request = CreateDocumentRequestSchema.parse(args || {});
+    if (!this.isActorDocumentType(request.documentType)) {
+      return this.query('createDocument', request);
+    }
+
+    const adapter = await this.getAdapter();
+    return this.query('createDocument', {
+      ...request,
+      data: this.normalizeActorData(request.data, adapter),
+    });
+  }
+
+  private async updateDocument(args: any): Promise<any> {
+    const request = UpdateDocumentRequestSchema.parse(args || {});
+    if (!this.isActorReference(request.ref)) {
+      return this.query('updateDocument', request);
+    }
+
+    const adapter = await this.getAdapter();
+    return this.query('updateDocument', {
+      ...request,
+      updates: this.normalizeActorUpdates(request.updates, adapter),
+    });
+  }
+
+  private async batchDocumentOperations(args: any): Promise<any> {
+    const request = BatchDocumentOperationsRequestSchema.parse(args || {});
+    const hasActorWrite = request.operations.some(operation => {
+      if (operation.action === 'create') {
+        return this.isActorDocumentType(
+          typeof operation.documentType === 'string' ? operation.documentType : undefined
+        );
+      }
+      return operation.action === 'update' && this.isActorReference(operation.ref);
+    });
+    if (!hasActorWrite) return this.query('batchDocumentOperations', request);
+
+    const adapter = await this.getAdapter();
+    const operations = request.operations.map(operation => {
+      if (
+        operation.action === 'create' &&
+        this.isActorDocumentType(
+          typeof operation.documentType === 'string' ? operation.documentType : undefined
+        ) &&
+        this.isRecord(operation.data)
+      ) {
+        return { ...operation, data: this.normalizeActorData(operation.data, adapter) };
+      }
+      if (
+        operation.action === 'update' &&
+        this.isActorReference(operation.ref) &&
+        this.isRecord(operation.updates)
+      ) {
+        return { ...operation, updates: this.normalizeActorUpdates(operation.updates, adapter) };
+      }
+      return operation;
+    });
+
+    return this.query('batchDocumentOperations', { ...request, operations });
+  }
+
+  private async buildActorFromSpec(args: any): Promise<any> {
+    const spec = ActorSpecSchema.parse(args?.spec || {});
+    const adapter = await this.getAdapter();
+    return this.query('buildActorFromSpec', {
+      spec: this.normalizeActorSpec(spec, adapter),
+    });
+  }
+
+  private async getDocumentSchema(args: any): Promise<any> {
+    const request = DocumentSchemaRequestSchema.parse(args || {});
+    const result = await this.query('getDocumentSchema', request);
+    if (!this.isActorDocumentType(request.documentType)) return result;
+
+    const adapter = await this.getAdapter();
+    const guidance = adapter?.describeActorSchema?.();
+    if (!adapter || !guidance || !this.isRecord(result) || !this.isRecord(result.schema)) {
+      return result;
+    }
+
+    return {
+      ...result,
+      schema: {
+        ...result.schema,
+        systemGuidance: {
+          systemId: adapter.getMetadata().id,
+          text: guidance,
+        },
+      },
+    };
+  }
+
+  private normalizeActorSpec<T extends Record<string, unknown>>(
+    spec: T,
+    adapter: SystemAdapter | null
+  ): T {
+    if (!this.isRecord(spec.system) || !adapter?.normalizePayload) return spec;
+    return {
+      ...spec,
+      system: adapter.normalizePayload({ ...spec.system }),
+    };
+  }
+
+  private normalizeActorData(
+    data: Record<string, unknown>,
+    adapter: SystemAdapter | null
+  ): Record<string, unknown> {
+    if (!this.isRecord(data.system) || !adapter?.normalizePayload) return data;
+    return {
+      ...data,
+      system: adapter.normalizePayload({ ...data.system }),
+    };
+  }
+
+  private normalizeActorUpdates(
+    updates: Record<string, unknown>,
+    adapter: SystemAdapter | null
+  ): Record<string, unknown> {
+    if (!adapter?.normalizePayload) return updates;
+
+    const normalized: Record<string, unknown> = { ...updates };
+    if (this.isRecord(updates.system)) {
+      normalized.system = adapter.normalizePayload({ ...updates.system });
+    }
+
+    const flatSystem: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(updates)) {
+      if (!key.startsWith('system.')) continue;
+      delete normalized[key];
+      flatSystem[key.slice('system.'.length)] = value;
+    }
+    if (Object.keys(flatSystem).length > 0) {
+      for (const [key, value] of Object.entries(adapter.normalizePayload(flatSystem))) {
+        normalized[`system.${key}`] = value;
+      }
+    }
+
+    return normalized;
+  }
+
+  private isActorDocumentType(documentType: unknown): boolean {
+    return typeof documentType === 'string' && documentType.toLowerCase() === 'actor';
+  }
+
+  private isActorReference(ref: unknown): boolean {
+    if (!this.isRecord(ref)) return false;
+    if (this.isActorDocumentType(ref.documentType)) return true;
+    if (typeof ref.uuid !== 'string') return false;
+    return /^Actor\./i.test(ref.uuid) || /^Compendium\.[^.]+\.[^.]+\.Actor\./i.test(ref.uuid);
+  }
+
+  private isRecord(value: unknown): value is Record<string, any> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
   }
 
   private listWorkflowDocuments(name: string, args: any): Promise<any> {
@@ -568,7 +738,7 @@ export class DocumentManagementTools {
   private tool(
     name: string,
     description: string,
-    properties: Record<string, unknown>,
+    properties: Record<string, object>,
     required: string[] = []
   ): Tool {
     return {
@@ -578,7 +748,7 @@ export class DocumentManagementTools {
     };
   }
 
-  private listProps(): Record<string, unknown> {
+  private listProps(): Record<string, object> {
     return {
       search: { type: 'string' },
       limit: { type: 'number', default: 50 },
@@ -586,7 +756,7 @@ export class DocumentManagementTools {
     };
   }
 
-  private createProps(): Record<string, unknown> {
+  private createProps(): Record<string, object> {
     return {
       data: { type: 'object' },
       name: { type: 'string' },
@@ -597,15 +767,15 @@ export class DocumentManagementTools {
     };
   }
 
-  private updateProps(): Record<string, unknown> {
+  private updateProps(): Record<string, object> {
     return { ref: { type: 'object' }, updates: { type: 'object' } };
   }
 
-  private deleteProps(): Record<string, unknown> {
+  private deleteProps(): Record<string, object> {
     return { ref: { type: 'object' }, confirmDeletion: { type: 'boolean' } };
   }
 
-  private embeddedListProps(): Record<string, unknown> {
+  private embeddedListProps(): Record<string, object> {
     return {
       parentUuid: { type: 'string' },
       embeddedType: { type: 'string' },
@@ -614,7 +784,7 @@ export class DocumentManagementTools {
     };
   }
 
-  private embeddedCreateProps(): Record<string, unknown> {
+  private embeddedCreateProps(): Record<string, object> {
     return {
       parentUuid: { type: 'string' },
       embeddedType: { type: 'string' },

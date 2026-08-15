@@ -1,0 +1,55 @@
+name: Quality Gates
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20.12.2'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --workspaces --include-workspace-root
+
+      - name: Check manifest versions
+        run: npm run version:check
+
+      - name: Clean build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test -- --run
+
+      - name: MCP schema and catalog checks
+        run: npm run test:mcp:schema
+
+      - name: Fork feature preservation contract
+        run: npm run test:fork-contract
+
+      - name: Removed-feature regression check
+        run: npm run test:removed-features
+
+      - name: Installer path safety regression check
+        run: npm run test:installer-safety
+
+      - name: Build server bundles
+        run: npm run bundle:server
+
+      - name: Stage Windows installer payload
+        run: npm run installer:stage
+
+      - name: Check patch whitespace
+        run: git diff --check

@@ -28,8 +28,21 @@ export class ScriptExecutor {
       throw new Error(`Script length ${request.code.length} exceeds maximum ${maxLength}`);
     }
 
-    const timeoutMs = Math.min(Math.max(request.timeoutMs ?? Number(game.settings.get(MODULE_ID, 'scriptTimeoutMs') || 5000), 100), 30_000);
-    const resultLimitBytes = Math.min(Math.max(request.resultLimitBytes ?? Number(game.settings.get(MODULE_ID, 'scriptResultMaxBytes') || 256_000), 1000), 2_000_000);
+    const timeoutMs = Math.min(
+      Math.max(
+        request.timeoutMs ?? Number(game.settings.get(MODULE_ID, 'scriptTimeoutMs') || 5000),
+        100
+      ),
+      30_000
+    );
+    const resultLimitBytes = Math.min(
+      Math.max(
+        request.resultLimitBytes ??
+          Number(game.settings.get(MODULE_ID, 'scriptResultMaxBytes') || 256_000),
+        1000
+      ),
+      2_000_000
+    );
     const executionId = `script-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const mode = request.mode || 'script';
     const logs: unknown[] = [];
@@ -37,7 +50,7 @@ export class ScriptExecutor {
     const consoleSinceIdBefore = browserConsoleCapture.getStatus().nextId - 1;
 
     const log = (...args: unknown[]) => {
-      logs.push(args.map((arg) => documentSerializer.serialize(arg, { maxBytes: 16_000 }).data));
+      logs.push(args.map(arg => documentSerializer.serialize(arg, { maxBytes: 16_000 }).data));
       console.log(`[${MODULE_ID} ${executionId}]`, ...args);
     };
 
@@ -45,7 +58,11 @@ export class ScriptExecutor {
 
     try {
       const result = await this.withTimeout(this.runCode(request.code, mode, log), timeoutMs);
-      const serialized = documentSerializer.serialize(result, { maxBytes: resultLimitBytes, includeSystem: true, includeFlags: true });
+      const serialized = documentSerializer.serialize(result, {
+        maxBytes: resultLimitBytes,
+        includeSystem: true,
+        includeFlags: true,
+      });
       const response = {
         executionId,
         success: true,
@@ -99,7 +116,11 @@ export class ScriptExecutor {
     }
   }
 
-  private async runCode(code: string, mode: 'script' | 'expression', log: (...args: unknown[]) => void): Promise<unknown> {
+  private async runCode(
+    code: string,
+    mode: 'script' | 'expression',
+    log: (...args: unknown[]) => void
+  ): Promise<unknown> {
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const context = this.createContext(log);
     const names = Object.keys(context);
@@ -132,7 +153,10 @@ export class ScriptExecutor {
   private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     let timeoutId: number | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timeoutId = window.setTimeout(() => reject(new Error(`Script execution timed out after ${timeoutMs}ms`)), timeoutMs);
+      timeoutId = window.setTimeout(
+        () => reject(new Error(`Script execution timed out after ${timeoutMs}ms`)),
+        timeoutMs
+      );
     });
 
     try {

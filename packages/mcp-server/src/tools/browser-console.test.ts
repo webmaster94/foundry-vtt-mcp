@@ -21,7 +21,7 @@ describe('BrowserConsoleTools', () => {
     const { tools } = createTools();
     const definitions = tools.getToolDefinitions();
 
-    expect(definitions.map((tool) => tool.name)).toEqual([
+    expect(definitions.map(tool => tool.name)).toEqual([
       'get-browser-console',
       'clear-browser-console',
       'get-browser-console-status',
@@ -56,6 +56,8 @@ describe('BrowserConsoleTools', () => {
 
     await tools.handleClearBrowserConsole({ confirmClear: true });
 
-    expect(query).toHaveBeenCalledWith('foundry-mcp-bridge.clearBrowserConsole', { confirmClear: true });
+    expect(query).toHaveBeenCalledWith('foundry-mcp-bridge.clearBrowserConsole', {
+      confirmClear: true,
+    });
   });
 });

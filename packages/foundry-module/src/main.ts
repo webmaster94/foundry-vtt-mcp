@@ -3,13 +3,13 @@ import { SocketBridge } from './socket-bridge.js';
 import { QueryHandlers } from './queries.js';
 import { ModuleSettings } from './settings.js';
 import { CampaignHooks } from './campaign-hooks.js';
-import { ComfyUIManager } from './comfyui-manager.js';
 import { browserConsoleCapture, type BrowserConsoleCapture } from './console-capture.js';
 import {
   ConsoleCaptureLifecycle,
   type ConsoleCaptureActivityToken,
 } from './console-capture-lifecycle.js';
 import { eventService } from './event-service.js';
+import { ConnectionRecoveryController } from './connection-recovery.js';
 // Connection control now handled through settings menu
 
 /**
@@ -21,13 +21,13 @@ class FoundryMCPBridge {
   private campaignHooks: CampaignHooks;
   public consoleCapture: BrowserConsoleCapture;
   private captureLifecycle: ConsoleCaptureLifecycle;
-  public comfyuiManager: ComfyUIManager;
   private socketBridge: SocketBridge | null = null;
   private isInitialized = false;
   private heartbeatInterval: number | null = null;
   private lastActivity: Date = new Date();
   private isConnecting = false;
   private connectionGeneration = 0;
+  private connectionRecovery: ConnectionRecoveryController;
 
   constructor() {
     this.settings = new ModuleSettings();
@@ -39,7 +39,7 @@ class FoundryMCPBridge {
       suspendWhileIdle: true,
       idleTimeoutMs: 120_000,
     });
-    this.comfyuiManager = new ComfyUIManager();
+    this.connectionRecovery = new ConnectionRecoveryController(() => this.recoverConnection());
   }
 
   /**
@@ -93,6 +93,21 @@ class FoundryMCPBridge {
 
       console.log(`[${MODULE_ID}] Foundry ready, checking bridge status...`);
 
+      try {
+        const removedSettings = await this.settings.migrateRemovedFeatureState();
+        if (removedSettings.length > 0) {
+          console.log(
+            `[${MODULE_ID}] Removed retired feature settings: ${removedSettings.join(', ')}`
+          );
+        }
+      } catch (error) {
+        // Cleanup must never prevent the bridge from connecting. An unfinished
+        // migration remains at its prior version and is retried on the next load.
+        console.warn(`[${MODULE_ID}] Retired feature settings cleanup will be retried:`, error);
+      }
+
+      this.connectionRecovery.start();
+
       this.refreshCapturePolicy();
 
       // Connection control now handled through settings menu
@@ -111,58 +126,11 @@ class FoundryMCPBridge {
 
       if (enabled) {
         await this.start();
-        // These startup services are part of the bridge master switch.
-        await this.checkAndBuildEnhancedIndex();
-        await this.startComfyUIMonitoring();
       }
 
       console.log(`[${MODULE_ID}] Module ready`);
     } catch (error) {
       console.error(`[${MODULE_ID}] Failed during ready:`, error);
-    }
-  }
-
-  /**
-   * Check if enhanced creature index exists and build if needed (better UX)
-   */
-  private async checkAndBuildEnhancedIndex(): Promise<void> {
-    try {
-      // Only for GM users
-      if (!this.isGMUser()) return;
-
-      // Check if enhanced index is enabled
-      const enhancedIndexEnabled = this.settings.getSetting('enableEnhancedCreatureIndex');
-      if (!enhancedIndexEnabled) return;
-
-      // Check if index file exists
-      const indexFilename = 'enhanced-creature-index.json';
-      try {
-        const browseResult = await (
-          foundry as any
-        ).applications.apps.FilePicker.implementation.browse('data', `worlds/${game.world.id}`);
-        const indexExists = browseResult.files.some((f: any) => f.endsWith(indexFilename));
-
-        if (!indexExists) {
-          console.log(
-            `[${MODULE_ID}] Enhanced creature index not found, building automatically for better UX...`
-          );
-          ui.notifications?.info('Building enhanced creature index for faster searches...');
-
-          // Trigger index build through data access
-          if (this.queryHandlers?.dataAccess?.rebuildEnhancedCreatureIndex) {
-            await this.queryHandlers.dataAccess.rebuildEnhancedCreatureIndex();
-          }
-        } else {
-          console.log(`[${MODULE_ID}] Enhanced creature index exists, ready for instant searches`);
-        }
-      } catch (error) {
-        // World directory might not exist yet, that's okay
-        console.log(
-          `[${MODULE_ID}] Could not check for enhanced index file (world directory may not exist yet)`
-        );
-      }
-    } catch (error) {
-      console.warn(`[${MODULE_ID}] Failed to auto-build enhanced index:`, error);
     }
   }
 
@@ -240,6 +208,7 @@ class FoundryMCPBridge {
         },
       });
       this.socketBridge = socketBridge;
+      this.startHeartbeat();
       await socketBridge.connect();
 
       if (
@@ -291,7 +260,7 @@ class FoundryMCPBridge {
 
           if (!lastShown || new Date(lastShown).getTime() < thirtySecondsAgo) {
             ui.notifications?.warn(
-              'MCP Server not found. Install it from https://github.com/adambdooley/foundry-vtt-mcp'
+              'MCP Server not found. Install it from https://github.com/webmaster94/foundry-vtt-mcp'
             );
 
             // Remember when we showed this notification
@@ -324,6 +293,7 @@ class FoundryMCPBridge {
     try {
       this.socketBridge = null;
       this.handleTransportDisconnected();
+      this.stopHeartbeat();
       socketBridge?.disconnect();
 
       if (!wasRunning) {
@@ -362,6 +332,27 @@ class FoundryMCPBridge {
     }
   }
 
+  /** Keep a passive GM retry owner current without replacing its bridge. */
+  refreshStandbyConfiguration(): void {
+    if (!this.socketBridge?.getConnectionInfo().standbyBecauseOwnerActive) return;
+    this.socketBridge.updateConfig(this.settings.getBridgeConfig());
+    this.startHeartbeat();
+  }
+
+  /** Wake the current reconnect owner after a tab or network resumes. */
+  private async recoverConnection(): Promise<void> {
+    if (!this.isInitialized || !this.isGMUser() || this.settings.getSetting('enabled') !== true) {
+      return;
+    }
+
+    if (this.socketBridge) {
+      await this.socketBridge.reconnectNow();
+      return;
+    }
+
+    await this.start();
+  }
+
   /** Re-read capture settings and apply them without restarting the bridge. */
   refreshCapturePolicy(): void {
     try {
@@ -392,7 +383,6 @@ class FoundryMCPBridge {
     this.captureLifecycle.start();
     eventService.registerHooks();
     eventService.setSender(event => socketBridge.sendEvent(event));
-    this.startHeartbeat();
     this.settings.updateConnectionStatusDisplay(true, 0);
     void this.settings.setSetting('lastConnectionState', 'connected');
     this.updateLastActivity(true);
@@ -402,7 +392,6 @@ class FoundryMCPBridge {
     this.captureLifecycle.stop();
     eventService.setSender(null);
     eventService.unregisterHooks();
-    this.stopHeartbeat();
     this.settings.updateConnectionStatusDisplay(false, 0);
   }
 
@@ -457,39 +446,17 @@ class FoundryMCPBridge {
    */
   private async performHeartbeat(): Promise<void> {
     try {
-      // Lightweight connection check - just verify socket state
-      if (!this.socketBridge || !this.socketBridge.isConnected()) {
-        // Only log once per disconnection to avoid spam
-        if (this.lastActivity && new Date().getTime() - this.lastActivity.getTime() > 60000) {
-          console.warn(`[${MODULE_ID}] Heartbeat: Connection lost`);
-
-          // Attempt auto-reconnection if enabled (with backoff)
-          if (this.settings.getSetting('autoReconnectEnabled')) {
-            console.log(`[${MODULE_ID}] Attempting auto-reconnection...`);
-            await this.restart();
-          }
-        }
-        return;
+      // The persistent Node daemon owns authoritative network liveness. This
+      // browser timer is only a fallback wake-up for delayed/throttled retry
+      // timers and never replaces or disables the existing reconnect owner.
+      if (this.socketBridge && !this.socketBridge.isConnected()) {
+        await this.socketBridge.reconnectNow();
       }
-
-      // Just update activity timestamp - no actual network ping needed
-      // The socket bridge already handles connection state monitoring
-      this.updateLastActivity();
     } catch (error) {
-      // Only attempt reconnect once per failure cycle
-      if (this.settings.getSetting('autoReconnectEnabled')) {
-        console.log(`[${MODULE_ID}] Heartbeat failure - attempting single reconnection...`);
-        try {
-          await this.restart();
-        } catch (reconnectError) {
-          console.error(`[${MODULE_ID}] Auto-reconnection failed:`, reconnectError);
-          // Disable further attempts until manual intervention
-          await this.settings.setSetting('autoReconnectEnabled', false);
-          if (this.settings.getSetting('enableNotifications')) {
-            ui.notifications.warn('⚠️ Lost connection to AI model - Auto-reconnect disabled');
-          }
-        }
-      }
+      console.warn(
+        `[${MODULE_ID}] Fallback connection wake-up failed; retry loop remains active:`,
+        error
+      );
     }
   }
 
@@ -511,83 +478,6 @@ class FoundryMCPBridge {
   }
 
   /**
-   * Monitor ComfyUI startup and show status banners
-   */
-  async startComfyUIMonitoring(): Promise<void> {
-    try {
-      // Check if ComfyUI monitoring is needed
-      const autoStart = this.settings.getSetting('mapGenAutoStart') || false;
-      if (!autoStart) {
-        console.log(`[${MODULE_ID}] ComfyUI auto-start disabled, skipping monitoring`);
-        return;
-      }
-
-      console.log(`[${MODULE_ID}] Starting ComfyUI monitoring...`);
-
-      // Show initial loading banner
-      ui.notifications?.info(
-        `🔗 Starting AI Map Generation service... (Models loading, please wait)`
-      );
-
-      let attempts = 0;
-      const maxAttempts = 24; // 2 minutes with 5-second intervals
-      const checkInterval = 5000; // 5 seconds
-
-      const checkStatus = async (): Promise<void> => {
-        try {
-          attempts++;
-
-          const status = await this.comfyuiManager.checkStatus();
-          console.log(`[${MODULE_ID}] ComfyUI status check #${attempts}:`, status);
-
-          if (status.status === 'running') {
-            // Success! ComfyUI is ready
-            ui.notifications?.info(
-              `✅ AI Map Generation service ready! Models loaded successfully.`
-            );
-            console.log(
-              `[${MODULE_ID}] ComfyUI ready after ${attempts} attempts (${attempts * 5}s)`
-            );
-            return;
-          }
-
-          if (attempts >= maxAttempts) {
-            // Timeout - show failure banner
-            ui.notifications?.warn(
-              `⚠️ AI Map Generation service failed to start (timeout after 2 minutes). Check ComfyUI installation.`
-            );
-            console.warn(`[${MODULE_ID}] ComfyUI startup timeout after ${maxAttempts} attempts`);
-            return;
-          }
-
-          // Continue checking
-          setTimeout(checkStatus, checkInterval);
-        } catch (error) {
-          console.error(`[${MODULE_ID}] ComfyUI status check failed:`, error);
-
-          if (attempts >= maxAttempts) {
-            ui.notifications?.error(
-              `❌ AI Map Generation service failed to start. Error: ${error instanceof Error ? error.message : 'Unknown error'}`
-            );
-            return;
-          }
-
-          // Continue checking despite errors (ComfyUI might still be starting)
-          setTimeout(checkStatus, checkInterval);
-        }
-      };
-
-      // Start monitoring
-      setTimeout(checkStatus, 2000); // Initial 2-second delay to let backend start
-    } catch (error) {
-      console.error(`[${MODULE_ID}] Failed to start ComfyUI monitoring:`, error);
-      ui.notifications?.warn(
-        `⚠️ Failed to monitor AI Map Generation startup: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-    }
-  }
-
-  /**
    * Connection control is now handled through the settings menu
    */
 
@@ -597,6 +487,7 @@ class FoundryMCPBridge {
   async cleanup(): Promise<void> {
     console.log(`[${MODULE_ID}] Cleaning up...`);
 
+    this.connectionRecovery.stop();
     await this.stop();
     this.captureLifecycle.shutdown();
     this.queryHandlers.unregisterHandlers();

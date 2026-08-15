@@ -7,9 +7,17 @@ import { MODULE_ID } from './constants.js';
  *  - 'update': re-apply `updates` to ref (reverts an update)
  *  - 'create': recreate `data` as documentType (reverts a delete)
  *  - 'embedded-delete' / 'embedded-update' / 'embedded-create': same, under parentUuid
+ *  - 'activate-scene': reactivate the Scene referenced by ref
  */
 export interface InverseOperation {
-  kind: 'delete' | 'update' | 'create' | 'embedded-delete' | 'embedded-update' | 'embedded-create';
+  kind:
+    | 'delete'
+    | 'update'
+    | 'create'
+    | 'embedded-delete'
+    | 'embedded-update'
+    | 'embedded-create'
+    | 'activate-scene';
   documentType?: string;
   ref?: Record<string, unknown>;
   parentUuid?: string;

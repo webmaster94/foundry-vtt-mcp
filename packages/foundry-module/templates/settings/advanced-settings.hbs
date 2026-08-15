@@ -1,0 +1,55 @@
+<div class="mcp-settings-window">
+  <header class="mcp-settings-window__header">
+    <h2><i class="fa-solid fa-code"></i> Advanced API</h2>
+    <p>Configure powerful browser execution and bounded response limits.</p>
+  </header>
+
+  <section class="mcp-settings-section">
+    <div class="form-group mcp-settings-warning">
+      <label for="mcp-browser-code">Allow Browser Code Execution</label>
+      <div class="form-fields">
+        <input id="mcp-browser-code" type="checkbox" name="allowBrowserCodeExecution" {{checked settings.allowBrowserCodeExecution}}>
+      </div>
+      <p class="hint">Allows JavaScript execution in this GM browser. This is separate from normal write permission and should only be enabled for trusted MCP clients.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-script-timeout">Script Timeout</label>
+      <div class="form-fields">
+        <input id="mcp-script-timeout" type="number" name="scriptTimeoutMs" value="{{settings.scriptTimeoutMs}}" min="100" max="30000" step="100">
+        <span class="units">ms</span>
+      </div>
+      <p class="hint">Maximum wait for asynchronous script completion; CPU-blocking code can still freeze the tab.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-script-length">Maximum Script Length</label>
+      <div class="form-fields">
+        <input id="mcp-script-length" type="number" name="scriptMaxLength" value="{{settings.scriptMaxLength}}" min="1000" max="100000" step="1000">
+        <span class="units">characters</span>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-script-result">Maximum Script Result</label>
+      <div class="form-fields">
+        <input id="mcp-script-result" type="number" name="scriptResultMaxBytes" value="{{settings.scriptResultMaxBytes}}" min="1000" max="2000000" step="1000">
+        <span class="units">bytes</span>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-document-result">Maximum Document Result</label>
+      <div class="form-fields">
+        <input id="mcp-document-result" type="number" name="documentResultMaxBytes" value="{{settings.documentResultMaxBytes}}" min="1000" max="2000000" step="1000">
+        <span class="units">bytes</span>
+      </div>
+      <p class="hint">Bounds serialized document and query-explorer responses returned to MCP clients.</p>
+    </div>
+  </section>
+
+  <footer class="mcp-settings-window__footer">
+    <button type="submit"><i class="fa-solid fa-floppy-disk"></i> Save Advanced Settings</button>
+    <button class="mcp-settings-reset" type="submit" name="_action" value="reset"><i class="fa-solid fa-rotate-left"></i> Reset Advanced</button>
+  </footer>
+</div>

@@ -9,7 +9,7 @@
 #   - manifest (stable):   .../releases/latest/download/module.json
 #   - download (versioned): .../releases/download/<tag>/module.zip
 #
-# Usage: create a GitHub release with a tag like `v0.9.0`. That's it.
+# Usage: bump every manifest together, then publish a matching tag like `v0.9.0`.
 name: Release Foundry Module
 
 on:
@@ -35,11 +35,22 @@ jobs:
           node-version: '20'
           cache: npm
 
+      - name: Validate release tag matches manifests
+        run: node scripts/check-version-consistency.mjs --expected "$GITHUB_REF_NAME"
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build
         run: npm run build
+
+      - name: Validate release inputs
+        run: |
+          npm test -- --run
+          npm run test:mcp:schema
+          npm run test:fork-contract
+          npm run test:removed-features
+          npm run version:check
 
       - name: Stamp release values into module.json
         run: |
@@ -71,14 +82,25 @@ jobs:
         run: |
           npm run bundle:server
           mkdir -p /tmp/server-bundle
-          cp packages/mcp-server/dist/index.bundle.cjs /tmp/server-bundle/index.js 2>/dev/null \
-            || cp packages/mcp-server/dist/backend.bundle.cjs /tmp/server-bundle/backend.js
           cp -r packages/mcp-server/dist /tmp/server-bundle/dist
           cp foundry-servers.example.json /tmp/server-bundle/
+          node - <<'NODE'
+          const fs = require('fs');
+          const source = require('./packages/mcp-server/package.json');
+          const standalone = {
+            name: 'foundry-mcp-server-standalone',
+            version: source.version,
+            private: true,
+            scripts: { start: 'node dist/index.bundle.cjs' },
+            engines: { node: '>=18.0.0' }
+          };
+          fs.writeFileSync('/tmp/server-bundle/package.json', JSON.stringify(standalone, null, 2) + '\n');
+          NODE
           cat > /tmp/server-bundle/README.txt <<'EOF'
           Foundry MCP Server (standalone, no build needed)
           Requires Node.js 18+.
-          Run:  node dist/index.js
+          Run:  npm start
+          Or:   node dist/index.bundle.cjs
           Point your MCP client at that command (see the repo README for
           Claude Desktop / Claude Code / Codex config), or clone the repo
           and use `npm run setup` for automatic client registration.

@@ -16,8 +16,9 @@ Request path: MCP client → stdio wrapper → backend (tool dispatch) → `Foun
 
 ```bash
 npm run build            # all workspaces; tsc is strict (exactOptionalPropertyTypes)
-npm test                 # vitest unit tests (mcp-server workspace)
-npm run smoke            # LIVE 16-step integration suite over the control channel.
+npm test                 # vitest unit tests (server + Foundry module workspaces)
+npm run test:fork-contract # baseline tools/handlers retained except approved removals
+npm run smoke            # LIVE 27-step integration suite over the control channel.
                          # Requires the backend running AND a world connected.
                          # RUN THIS BEFORE EVERY RELEASE — unit tests use mocks
                          # and cannot catch Foundry-API misuse (see Gotchas).
@@ -54,9 +55,12 @@ then reload the Foundry world. `execute-foundry-script` with `window.location.re
 - Foundry's server caches module **metadata** from world launch: after deploying new module files, a browser reload runs the new code but `game.modules.get(...).version` may report the old version until the world is relaunched from setup.
 - The WebRTC signaling port is `port + 1` on BOTH sides (module `webrtc-connection.ts`, server `foundry-connector.ts`). Keep them in sync.
 - Only one Foundry connection per connector: two worlds pointed at the same profile port will fight. Distinct ports per profile; duplicate ports are rejected at registry load.
-- The module retries connection forever (30s cadence after fast retries): backend restarts self-heal in ≤30s. A stuck connection usually means the world tab needs a refresh or the ports mismatch.
+- The module retries forever (30s cadence after fast retries), and browser online/pageshow/visibility events wake a delayed retry immediately. Backend restarts, duplicate-tab ownership changes, and transient ICE loss self-heal without a refresh. A persistent failure usually means ports, auth tokens, Local Network Access permission, or the GM client are wrong.
 - The backend is a PERSISTENT DAEMON: wrappers spawn it orphaned (via `cmd start /b` on Windows) and never kill it, so the module's connection survives AI-client session ends and idle periods. It restarts itself when a wrapper detects a newer build on disk (entry-file signature in the control-channel ping), or via `npm run stop`. Queries during the first 90s of a listener's life wait up to 45s for the module to reconnect instead of failing (startup grace).
-- The module only exists while a (GM) browser tab has the world open — `users: 0` on Foundry's `/api/status` means nothing can reconnect, no matter how patient the server is.
+- The module only exists while a GM browser/desktop client has the world open — `users: 0` on Foundry's `/api/status` means nothing can reconnect, no matter how patient the server is. A normal inactive tab works; a browser-frozen/discarded tab cannot run queries until resume.
+- Node owns authoritative liveness: WebSocket protocol pings tolerate paused background JavaScript; WebRTC uses ICE/data-channel state plus a suspension-tolerant application heartbeat. Never add a competing browser reconnect owner.
+- A write whose response times out or is lost after transport send is `UNKNOWN_OUTCOME`. It may already have committed; inspect current state before retrying.
+- WebRTC framing is ordered, UTF-8 byte-aware, backpressured, and bounded to 16 MB per reassembled message. Keep browser and Node framing changes symmetric.
 - Events flow module → server as `bridge-event` socket messages (event-service.ts hooks → SocketBridge.sendEvent → connector.onBridgeEvent → registry ring buffer, 200 entries, one seq counter). `wait-for-event` long-polls that buffer — it never talks to Foundry directly.
 - Auth is a shared secret checked at the transport edge (WS upgrade query param + webrtc-offer body, foundry-connector.ts) against the profile's `authToken`. Empty token = open (loopback default). The module sends it from the `authToken` world setting.
 - CONTEXT BUDGET is a feature: tool definitions are the per-session tax every MCP client pays (~4 chars ≈ 1 token). The smoke test fails if the catalog exceeds 70KB. When adding tools: terse descriptions, no prose examples in schemas, share property constants, and prefer extending an existing tool over adding a new one. The per-type CRUD wrappers are deliberately dispatch-only (see document-management.ts workflowToolDefinitions) — do not re-advertise them.
@@ -66,7 +70,7 @@ then reload the Foundry world. `execute-foundry-script` with `window.location.re
 ## Release process
 
 1. `npm run build && npm test && npm run smoke` (smoke against a live world).
-2. Bump versions (root, both packages, shared, `module.json`) — keep them identical.
+2. Bump versions (root, both packages, shared, `module.json`) — keep all five identical. Release workflows reject a mismatched tag/manual version.
 3. Commit, push, then publish a GitHub release tagged `vX.Y.Z` (target branch can be the feature branch). CI (`.github/workflows/module-release.yml`, League-of-Foundry-Developers pattern) builds and attaches `module.json` + `module.zip`; the stable install URL is `releases/latest/download/module.json`.
 4. Users update the module in Foundry and reload their world; the MCP server side is picked up by restarting the backend process (or the MCP client connection).
 

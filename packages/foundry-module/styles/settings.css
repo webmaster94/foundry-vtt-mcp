@@ -1,0 +1,90 @@
+.mcp-settings-window {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0.75rem;
+}
+
+.mcp-settings-window__header h2,
+.mcp-settings-section h3 {
+  margin: 0;
+}
+
+.mcp-settings-window__header p,
+.mcp-settings-window .hint {
+  color: var(--color-text-subtle, var(--color-text-light-6));
+}
+
+.mcp-settings-connection-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: fit-content;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  text-transform: capitalize;
+}
+
+.mcp-settings-connection-state.connected {
+  color: var(--color-level-success, #2f8f46);
+}
+
+.mcp-settings-connection-state.disconnected {
+  color: var(--color-level-error, #b33a3a);
+}
+
+.mcp-settings-connection-state__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.mcp-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border: 1px solid var(--color-border-light-tertiary, var(--color-border-light-2));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-bg-option, transparent) 45%, transparent);
+}
+
+.mcp-settings-window .form-group {
+  margin: 0;
+}
+
+.mcp-settings-window .form-fields input[type="text"],
+.mcp-settings-window .form-fields input[type="password"],
+.mcp-settings-window .form-fields input[type="number"],
+.mcp-settings-window .form-fields select {
+  min-width: 12rem;
+}
+
+.mcp-settings-window .units {
+  flex: 0 0 auto;
+  opacity: 0.75;
+}
+
+.mcp-settings-warning {
+  padding: 0.65rem;
+  border-left: 3px solid var(--color-level-warning, #b18400);
+  background: color-mix(in srgb, var(--color-level-warning, #b18400) 10%, transparent);
+}
+
+.mcp-settings-window__footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-top: 0.25rem;
+}
+
+.mcp-settings-window__footer button {
+  flex: 0 1 18rem;
+}
+
+.mcp-settings-window__footer .mcp-settings-reset {
+  flex-basis: auto;
+  order: -1;
+}

@@ -1,43 +1,24 @@
-Foundry MCP Server v0.4.8
-===========================
+Foundry MCP Server for Windows
+==============================
 
-Thank you for installing Foundry MCP Server!
+This installer connects MCP clients with Foundry VTT.
 
-This software enables AI-powered campaign management for Foundry VTT 
-using Claude Desktop.
+Included components
+-------------------
 
-🚀 QUICK START:
-1. Restart Claude Desktop completely (close and reopen)
-2. Install the MCP Bridge module in Foundry VTT
-3. Enable the module in your world
-4. Start creating AI-powered campaigns!
+* Foundry MCP Server with a bundled Node.js runtime (required)
+* Foundry MCP Bridge module (optional, selected by default)
+* Claude Desktop configuration helper
 
-📋 FEATURES:
-• 22 MCP tools for comprehensive Foundry VTT integration
-• Actor creation with natural language processing  
-• Quest management with HTML generation and updates
-• Campaign system with multi-part structure and progress tracking
-• Dice roll coordination between Claude and Foundry players
-• Actor ownership management with bulk operations
-• Enhanced creature index for instant monster searches
+After installation
+------------------
 
-🔧 UTILITY SCRIPTS:
-• Start Menu → Foundry MCP Server → Foundry MCP Server (start server)
-• Start Menu → Foundry MCP Server → Test Connection (verify installation)
+1. Restart Claude Desktop.
+2. Launch Foundry VTT and enable Foundry MCP Bridge in the world.
+3. Open the module's Connection settings and confirm the host and port.
+4. Confirm the module diagnostics show a connected server.
 
-📚 DOCUMENTATION:
-Complete setup guide: https://github.com/adambdooley/foundry-vtt-mcp
+The installer preserves unrelated Claude Desktop MCP entries. The uninstaller can remove the bridge module and its own configuration entry without deleting worlds, generated maps, or other user-created Foundry data. Upgrades and uninstall remove only the retired per-world enhanced-creature-index.json cache.
 
-💡 TROUBLESHOOTING:
-If you encounter issues:
-1. Ensure Claude Desktop was restarted after installation
-2. Verify Foundry VTT has the MCP Bridge module installed and enabled
-3. Run "Test Connection" from the Start Menu
-4. Visit: https://github.com/adambdooley/foundry-vtt-mcp/issues
-
-🎯 SUPPORT:
-• Documentation: https://github.com/adambdooley/foundry-vtt-mcp
-• Issues: https://github.com/adambdooley/foundry-vtt-mcp/issues
-• Foundry VTT Community: https://foundryvtt.com/community
-
-Enjoy your AI-powered Foundry VTT campaigns! 🎲
+Documentation: https://github.com/webmaster94/foundry-vtt-mcp
+Issues: https://github.com/webmaster94/foundry-vtt-mcp/issues

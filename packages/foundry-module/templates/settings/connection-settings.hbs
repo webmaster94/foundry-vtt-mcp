@@ -1,0 +1,92 @@
+<div class="mcp-settings-window">
+  <header class="mcp-settings-window__header">
+    <h2><i class="fa-solid fa-plug-circle-bolt"></i> Connection</h2>
+    <p>Configure how this world connects to the persistent MCP backend.</p>
+    <div class="mcp-settings-connection-state {{#if connectionStatus.connected}}connected{{else}}disconnected{{/if}}">
+      <span class="mcp-settings-connection-state__dot"></span>
+      {{#if connectionStatus.connected}}
+        Connected{{#if connectionStatus.type}} via {{connectionStatus.type}}{{/if}}
+      {{else}}
+        {{connectionStatus.state}}
+      {{/if}}
+    </div>
+  </header>
+
+  <section class="mcp-settings-section">
+    <div class="form-group">
+      <label for="mcp-enabled">Enable MCP Bridge</label>
+      <div class="form-fields">
+        <input id="mcp-enabled" type="checkbox" name="enabled" {{checked settings.enabled}}>
+      </div>
+      <p class="hint">Keep the bridge available for MCP clients while a GM has this world open.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-connection-type">Connection Type</label>
+      <div class="form-fields">
+        <select id="mcp-connection-type" name="connectionType">
+          {{selectOptions connectionTypes selected=settings.connectionType}}
+        </select>
+      </div>
+      <p class="hint">Auto uses WebRTC for HTTPS-hosted worlds such as Forge and WebSocket for local HTTP worlds.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-server-host">Server Host</label>
+      <div class="form-fields">
+        <input id="mcp-server-host" type="text" name="serverHost" value="{{settings.serverHost}}" autocomplete="off">
+      </div>
+      <p class="hint">Usually localhost. This is used directly by local WebSocket connections.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-server-port">Server Port</label>
+      <div class="form-fields">
+        <input id="mcp-server-port" type="number" name="serverPort" value="{{settings.serverPort}}" min="1024" max="65535" step="1">
+      </div>
+      <p class="hint">Must match the selected server profile. Auto/WebRTC allow up to 65534 because signaling uses the next port; explicit WebSocket may use 65535.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-auth-token">Bridge Auth Token</label>
+      <div class="form-fields">
+        <input id="mcp-auth-token" type="password" name="authToken" value="{{settings.authToken}}" autocomplete="new-password">
+      </div>
+      <p class="hint">Stored only in this browser. It is optional for loopback-only use and strongly recommended whenever a listener is exposed beyond this computer.</p>
+    </div>
+  </section>
+
+  <section class="mcp-settings-section">
+    <h3>Recovery and Feedback</h3>
+
+    <div class="form-group">
+      <label for="mcp-auto-reconnect">Reconnect Automatically</label>
+      <div class="form-fields">
+        <input id="mcp-auto-reconnect" type="checkbox" name="autoReconnectEnabled" {{checked settings.autoReconnectEnabled}}>
+      </div>
+      <p class="hint">Retry indefinitely after server restarts or temporary network interruptions.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-heartbeat-interval">Health Check Interval</label>
+      <div class="form-fields">
+        <input id="mcp-heartbeat-interval" type="number" name="heartbeatInterval" value="{{settings.heartbeatInterval}}" min="10" max="120" step="5">
+        <span class="units">seconds</span>
+      </div>
+      <p class="hint">How often the bridge verifies transport responsiveness.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="mcp-notifications">Show Connection Messages</label>
+      <div class="form-fields">
+        <input id="mcp-notifications" type="checkbox" name="enableNotifications" {{checked settings.enableNotifications}}>
+      </div>
+      <p class="hint">Display concise notifications when the bridge connects or disconnects.</p>
+    </div>
+  </section>
+
+  <footer class="mcp-settings-window__footer">
+    <button type="submit"><i class="fa-solid fa-floppy-disk"></i> Save Connection Settings</button>
+    <button class="mcp-settings-reset" type="submit" name="_action" value="reset"><i class="fa-solid fa-rotate-left"></i> Reset Connection</button>
+  </footer>
+</div>
