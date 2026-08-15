@@ -93,7 +93,7 @@ describe('WFRP4eAdapter metadata', () => {
     const features = adapter.getMetadata().supportedFeatures;
     expect(features.characterStats).toBe(true);
     expect(features.spellcasting).toBe(true);
-    expect(features.creatureIndex).toBe(false);
+    expect(features).not.toHaveProperty('creatureIndex');
     expect(features.powerLevel).toBe(false);
   });
 });

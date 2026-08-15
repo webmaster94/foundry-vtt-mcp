@@ -1,18 +1,19 @@
 #!/bin/bash
-# Quick update script to deploy backend changes without full reinstall
+# Replace the installed macOS backend bundle with the repository build.
 
-echo "🔄 Updating backend with quality settings..."
+set -euo pipefail
 
-# Copy updated backend
-sudo cp packages/mcp-server/dist/backend.bundle.cjs /Applications/FoundryMCPServer.app/Contents/Resources/foundry-mcp-server/backend.bundle.cjs
+SOURCE="packages/mcp-server/dist/backend.bundle.cjs"
+DESTINATION="/Applications/FoundryMCPServer.app/Contents/Resources/foundry-mcp-server/backend.bundle.cjs"
 
-# Kill old backend
-echo "Stopping old backend..."
-pkill -9 -f "backend.bundle.cjs"
+if [ ! -f "$SOURCE" ]; then
+  echo "Missing $SOURCE. Run npm run build first."
+  exit 1
+fi
+if [ ! -d "/Applications/FoundryMCPServer.app/Contents/Resources/foundry-mcp-server" ]; then
+  echo "FoundryMCPServer.app is not installed in /Applications."
+  exit 1
+fi
 
-echo "✅ Backend updated! It will auto-restart when Claude Desktop reconnects."
-echo ""
-echo "Next steps:"
-echo "1. Restart Claude Desktop to pick up changes"
-echo "2. Change quality setting in Foundry"
-echo "3. Test map generation"
+sudo install -m 0644 "$SOURCE" "$DESTINATION"
+echo "Backend bundle updated. Restart the MCP backend or invoke a tool so the wrapper can reload it."

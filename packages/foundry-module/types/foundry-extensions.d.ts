@@ -11,6 +11,7 @@ declare global {
       get(module: string, key: string): any;
       set(module: string, key: string, value: any): Promise<any>;
       register(module: string, key: string, options: any): void;
+      registerMenu(module: string, key: string, options: any): void;
     };
     user: {
       id: string;

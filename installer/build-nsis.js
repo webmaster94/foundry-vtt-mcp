@@ -297,17 +297,10 @@ function copyFoundryModuleFiles() {
     console.log('   ✓ Template files copied');
   }
 
-  // Copy generated-maps directory (for map storage)
-  if (fs.existsSync(path.join(moduleSource, 'generated-maps'))) {
-    copyRecursive(
-      path.join(moduleSource, 'generated-maps'),
-      path.join(moduleDest, 'generated-maps')
-    );
-    console.log('   ✓ Generated maps directory copied');
-  } else {
-    // Create empty generated-maps directory if it doesn't exist
-    ensureDir(path.join(moduleDest, 'generated-maps'));
-    console.log('   ✓ Generated maps directory created');
+  // Copy browser helper scripts shipped by the module
+  if (fs.existsSync(path.join(moduleSource, 'scripts'))) {
+    copyRecursive(path.join(moduleSource, 'scripts'), path.join(moduleDest, 'scripts'));
+    console.log('   ✓ Module scripts copied');
   }
 
   // Copy module.json (required)
@@ -326,7 +319,7 @@ function copyFoundryModuleFiles() {
 function copyInstallerFiles() {
   console.log('📦 Copying installer files...');
 
-  // Copy license, readme, and third party notices
+  // Copy license and readme
   fs.copyFileSync(
     path.join(config.nsisDir, 'LICENSE.txt'),
     path.join(config.outputDir, 'LICENSE.txt')
@@ -334,10 +327,6 @@ function copyInstallerFiles() {
   fs.copyFileSync(
     path.join(config.nsisDir, 'README.txt'),
     path.join(config.outputDir, 'README.txt')
-  );
-  fs.copyFileSync(
-    path.join(config.nsisDir, 'THIRD_PARTY_NOTICES.txt'),
-    path.join(config.outputDir, 'THIRD_PARTY_NOTICES.txt')
   );
 
   // Copy icon file
@@ -371,38 +360,6 @@ function copyInstallerFiles() {
   } else {
     console.error('   ❌ Batch wrapper script not found:', batSource);
     throw new Error('Required configure-claude-wrapper.bat file missing from nsis directory');
-  }
-
-  // Copy NSIS plugin DLL files for ComfyUI functionality
-  const inetcSource = path.join(config.nsisDir, 'INetC.dll');
-  const inetcDest = path.join(config.outputDir, 'INetC.dll');
-  if (fs.existsSync(inetcSource)) {
-    fs.copyFileSync(inetcSource, inetcDest);
-    console.log('   ✓ INetC plugin copied');
-  } else {
-    console.error('   ❌ INetC plugin not found:', inetcSource);
-    throw new Error('Required INetC.dll plugin missing from nsis directory');
-  }
-
-  const nsis7zSource = path.join(config.nsisDir, 'nsis7z.dll');
-  const nsis7zDest = path.join(config.outputDir, 'nsis7z.dll');
-  if (fs.existsSync(nsis7zSource)) {
-    fs.copyFileSync(nsis7zSource, nsis7zDest);
-    console.log('   ✓ NSIS 7z plugin copied');
-  } else {
-    console.error('   ❌ NSIS 7z plugin not found:', nsis7zSource);
-    throw new Error('Required nsis7z.dll plugin missing from nsis directory');
-  }
-
-  // Copy 7zr.exe (command-line 7-Zip extractor)
-  const zipExtractorSource = path.join(config.nsisDir, '7zr.exe');
-  const zipExtractorDest = path.join(config.outputDir, '7zr.exe');
-  if (fs.existsSync(zipExtractorSource)) {
-    fs.copyFileSync(zipExtractorSource, zipExtractorDest);
-    console.log('   ✓ 7zr.exe extractor copied');
-  } else {
-    console.error('   ❌ 7zr.exe extractor not found:', zipExtractorSource);
-    throw new Error('Required 7zr.exe extractor missing from nsis directory');
   }
 
   console.log('   ✓ Installer files prepared');

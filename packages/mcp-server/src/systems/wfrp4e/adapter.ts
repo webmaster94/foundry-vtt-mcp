@@ -1,24 +1,12 @@
 /**
  * WFRP4e System Adapter
  *
- * Character-focused SystemAdapter for Warhammer Fantasy Roleplay 4e: extracts
- * player-character stats so the get-character / list-characters tools work
- * against WFRP4e worlds. Creature indexing is minimal (WFRP4e has no Challenge
- * Rating metric).
+ * Character-focused support for Warhammer Fantasy Roleplay 4e.
  */
 
-import type {
-  SystemAdapter,
-  SystemMetadata,
-  SystemCreatureIndex,
-  WFRP4eCreatureIndex,
-} from '../types.js';
-import { WFRP4eFiltersSchema, matchesWFRP4eFilters, describeWFRP4eFilters } from './filters.js';
-import { CHARACTERISTIC_NAMES, FIELD_PATHS, normalizeSize } from './constants.js';
+import type { SystemAdapter, SystemMetadata } from '../types.js';
+import { CHARACTERISTIC_NAMES, normalizeSize } from './constants.js';
 
-/**
- * WFRP4e system adapter.
- */
 export class WFRP4eAdapter implements SystemAdapter {
   getMetadata(): SystemMetadata {
     return {
@@ -27,138 +15,17 @@ export class WFRP4eAdapter implements SystemAdapter {
       displayName: 'Warhammer Fantasy Roleplay 4e',
       version: '1.0.0',
       description:
-        'Character-focused support for Warhammer Fantasy Roleplay 4th Edition: ' +
-        '10 characteristics, wounds, fate/fortune/resilience/resolve, career, ' +
-        'species, and arcane/divine spellcasting detection.',
+        'Character support for WFRP4e, including characteristics, resources, career, species, and spellcasting',
       supportedFeatures: {
-        creatureIndex: false,
         characterStats: true,
         spellcasting: true,
-        powerLevel: false, // WFRP4e has no Challenge Rating / level metric
+        powerLevel: false,
       },
     };
   }
 
   canHandle(systemId: string): boolean {
     return systemId.toLowerCase() === 'wfrp4e';
-  }
-
-  /**
-   * Creature extraction runs in the Foundry browser context via the
-   * IndexBuilder; the adapter only delegates (matches the dsa5 pattern).
-   */
-  extractCreatureData(
-    _doc: any,
-    _pack: any
-  ): { creature: SystemCreatureIndex; errors: number } | null {
-    throw new Error(
-      'extractCreatureData should be called from WFRP4eIndexBuilder, not the adapter'
-    );
-  }
-
-  getFilterSchema() {
-    return WFRP4eFiltersSchema;
-  }
-
-  matchesFilters(creature: SystemCreatureIndex, filters: Record<string, any>): boolean {
-    const validated = WFRP4eFiltersSchema.safeParse(filters);
-    if (!validated.success) {
-      return false;
-    }
-    return matchesWFRP4eFilters(creature, validated.data);
-  }
-
-  getDataPaths(): Record<string, string | null> {
-    return {
-      // WFRP4e-specific paths
-      characteristics: FIELD_PATHS.CHARACTERISTICS,
-      wounds: FIELD_PATHS.STATUS_WOUNDS,
-      advantage: FIELD_PATHS.STATUS_ADVANTAGE,
-      fate: FIELD_PATHS.STATUS_FATE,
-      fortune: FIELD_PATHS.STATUS_FORTUNE,
-      resilience: FIELD_PATHS.STATUS_RESILIENCE,
-      resolve: FIELD_PATHS.STATUS_RESOLVE,
-      corruption: FIELD_PATHS.STATUS_CORRUPTION,
-      armour: FIELD_PATHS.STATUS_ARMOUR,
-      species: FIELD_PATHS.DETAILS_SPECIES,
-      career: FIELD_PATHS.DETAILS_CAREER,
-      class: FIELD_PATHS.DETAILS_CLASS,
-      move: FIELD_PATHS.DETAILS_MOVE,
-      size: FIELD_PATHS.DETAILS_SIZE,
-
-      // D&D5e / PF2e paths that do not exist in WFRP4e
-      challengeRating: null,
-      creatureType: null,
-      alignment: null,
-      hitPoints: null,
-      armorClass: null,
-      legendaryActions: null,
-      legendaryResistances: null,
-      perception: null,
-      saves: null,
-      rarity: null,
-    };
-  }
-
-  formatCreatureForList(creature: SystemCreatureIndex): any {
-    const wfrpCreature = creature as WFRP4eCreatureIndex;
-    const formatted: any = {
-      id: creature.id,
-      name: creature.name,
-      type: creature.type,
-      pack: {
-        id: creature.packName,
-        label: creature.packLabel,
-      },
-    };
-
-    if (wfrpCreature.systemData) {
-      const stats: any = {};
-      if (wfrpCreature.systemData.species) stats.species = wfrpCreature.systemData.species;
-      if (wfrpCreature.systemData.size) stats.size = wfrpCreature.systemData.size;
-      if (wfrpCreature.systemData.wounds !== undefined) {
-        stats.wounds = wfrpCreature.systemData.wounds;
-      }
-      if (wfrpCreature.systemData.hasSpells) stats.spellcaster = true;
-      if (Object.keys(stats).length > 0) formatted.stats = stats;
-    }
-
-    if (creature.img) formatted.hasImage = true;
-
-    return formatted;
-  }
-
-  formatCreatureForDetails(creature: SystemCreatureIndex): any {
-    const wfrpCreature = creature as WFRP4eCreatureIndex;
-    const formatted = this.formatCreatureForList(creature);
-
-    if (wfrpCreature.systemData) {
-      formatted.detailedStats = {
-        species: wfrpCreature.systemData.species,
-        size: wfrpCreature.systemData.size,
-        wounds: wfrpCreature.systemData.wounds,
-        hasSpells: wfrpCreature.systemData.hasSpells,
-        hasPrayers: wfrpCreature.systemData.hasPrayers,
-        traits: wfrpCreature.systemData.traits || [],
-      };
-    }
-
-    if (creature.img) formatted.img = creature.img;
-
-    return formatted;
-  }
-
-  describeFilters(filters: Record<string, any>): string {
-    const validated = WFRP4eFiltersSchema.safeParse(filters);
-    if (!validated.success) {
-      return 'invalid filters';
-    }
-    return describeWFRP4eFilters(validated.data);
-  }
-
-  getPowerLevel(_creature: SystemCreatureIndex): number | undefined {
-    // WFRP4e has no Challenge Rating / level equivalent.
-    return undefined;
   }
 
   /**

@@ -31,22 +31,29 @@ describe('FoundryScriptTools', () => {
   it('forwards safe query explorer requests', async () => {
     const { tools, query } = createTools();
 
-    await tools.handleToolCall('query-foundry-data', { root: 'game.actors', fields: ['name'], limit: 3 });
-
-    expect(query).toHaveBeenCalledWith('foundry-mcp-bridge.queryFoundryData', expect.objectContaining({
+    await tools.handleToolCall('query-foundry-data', {
       root: 'game.actors',
       fields: ['name'],
       limit: 3,
-      includeSystem: true,
-      includeFlags: false,
-    }));
+    });
+
+    expect(query).toHaveBeenCalledWith(
+      'foundry-mcp-bridge.queryFoundryData',
+      expect.objectContaining({
+        root: 'game.actors',
+        fields: ['name'],
+        limit: 3,
+        includeSystem: true,
+        includeFlags: false,
+      })
+    );
   });
 
   it('requires confirmation before clearing audit logs', async () => {
     const { tools } = createTools();
 
-    await expect(tools.handleToolCall('clear-mcp-audit-log', { confirmClear: false })).rejects.toThrow(
-      'clear-mcp-audit-log requires confirmClear=true'
-    );
+    await expect(
+      tools.handleToolCall('clear-mcp-audit-log', { confirmClear: false })
+    ).rejects.toThrow('clear-mcp-audit-log requires confirmClear=true');
   });
 });

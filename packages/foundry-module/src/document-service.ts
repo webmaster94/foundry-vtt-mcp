@@ -732,6 +732,15 @@ export class DocumentService {
         result = { undone: 'embedded-delete', recreated: this.documentRef(doc) };
         break;
       }
+      case 'activate-scene': {
+        const scene = await this.resolveDocument(inverse.ref as DocumentRef);
+        if (scene.documentName !== 'Scene' || typeof scene.activate !== 'function') {
+          throw new Error('Scene activation inverse does not reference an activatable Scene');
+        }
+        await scene.activate();
+        result = { undone: 'scene.activate', activated: this.documentRef(scene) };
+        break;
+      }
       default:
         throw new Error(`Unknown inverse kind "${(inverse as any).kind}"`);
     }

@@ -74,6 +74,7 @@ test-*.ps1
 
 # Local Configuration
 config.local.json
+.claude/settings.local.json
 AI Worker/
 release/
 build-vermeillon-actors.js

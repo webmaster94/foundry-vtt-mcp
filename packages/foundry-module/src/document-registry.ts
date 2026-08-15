@@ -10,27 +10,122 @@ export interface DocumentRegistryEntry {
 }
 
 const PRIMARY_DOCUMENTS: DocumentRegistryEntry[] = [
-  { documentType: 'Actor', collectionPath: 'game.actors', mutationPolicy: 'full', risk: 'normal', embeddedTypes: ['Item', 'ActiveEffect'] },
-  { documentType: 'Cards', collectionPath: 'game.cards', mutationPolicy: 'full', risk: 'normal', embeddedTypes: ['Card'] },
-  { documentType: 'ChatMessage', collectionPath: 'game.messages', mutationPolicy: 'full', risk: 'normal', embeddedTypes: [] },
-  { documentType: 'Combat', collectionPath: 'game.combats', mutationPolicy: 'full', risk: 'normal', embeddedTypes: ['Combatant', 'CombatantGroup'] },
-  { documentType: 'Folder', collectionPath: 'game.folders', mutationPolicy: 'full', risk: 'normal', embeddedTypes: [] },
-  { documentType: 'Item', collectionPath: 'game.items', mutationPolicy: 'full', risk: 'normal', embeddedTypes: ['ActiveEffect'] },
-  { documentType: 'JournalEntry', collectionPath: 'game.journal', mutationPolicy: 'full', risk: 'normal', embeddedTypes: ['JournalEntryPage', 'JournalEntryCategory'] },
-  { documentType: 'Macro', collectionPath: 'game.macros', mutationPolicy: 'full', risk: 'normal', embeddedTypes: [] },
-  { documentType: 'Playlist', collectionPath: 'game.playlists', mutationPolicy: 'full', risk: 'normal', embeddedTypes: ['PlaylistSound'] },
-  { documentType: 'RollTable', collectionPath: 'game.tables', mutationPolicy: 'full', risk: 'normal', embeddedTypes: ['TableResult'] },
+  {
+    documentType: 'Actor',
+    collectionPath: 'game.actors',
+    mutationPolicy: 'full',
+    risk: 'normal',
+    embeddedTypes: ['Item', 'ActiveEffect'],
+  },
+  {
+    documentType: 'Cards',
+    collectionPath: 'game.cards',
+    mutationPolicy: 'full',
+    risk: 'normal',
+    embeddedTypes: ['Card'],
+  },
+  {
+    documentType: 'ChatMessage',
+    collectionPath: 'game.messages',
+    mutationPolicy: 'full',
+    risk: 'normal',
+    embeddedTypes: [],
+  },
+  {
+    documentType: 'Combat',
+    collectionPath: 'game.combats',
+    mutationPolicy: 'full',
+    risk: 'normal',
+    embeddedTypes: ['Combatant', 'CombatantGroup'],
+  },
+  {
+    documentType: 'Folder',
+    collectionPath: 'game.folders',
+    mutationPolicy: 'full',
+    risk: 'normal',
+    embeddedTypes: [],
+  },
+  {
+    documentType: 'Item',
+    collectionPath: 'game.items',
+    mutationPolicy: 'full',
+    risk: 'normal',
+    embeddedTypes: ['ActiveEffect'],
+  },
+  {
+    documentType: 'JournalEntry',
+    collectionPath: 'game.journal',
+    mutationPolicy: 'full',
+    risk: 'normal',
+    embeddedTypes: ['JournalEntryPage', 'JournalEntryCategory'],
+  },
+  {
+    documentType: 'Macro',
+    collectionPath: 'game.macros',
+    mutationPolicy: 'full',
+    risk: 'normal',
+    embeddedTypes: [],
+  },
+  {
+    documentType: 'Playlist',
+    collectionPath: 'game.playlists',
+    mutationPolicy: 'full',
+    risk: 'normal',
+    embeddedTypes: ['PlaylistSound'],
+  },
+  {
+    documentType: 'RollTable',
+    collectionPath: 'game.tables',
+    mutationPolicy: 'full',
+    risk: 'normal',
+    embeddedTypes: ['TableResult'],
+  },
   {
     documentType: 'Scene',
     collectionPath: 'game.scenes',
     mutationPolicy: 'full',
     risk: 'normal',
-    embeddedTypes: ['Token', 'Wall', 'Tile', 'Drawing', 'AmbientLight', 'AmbientSound', 'MeasuredTemplate', 'Note', 'Region', 'RegionBehavior'],
+    embeddedTypes: [
+      'Token',
+      'Wall',
+      'Tile',
+      'Drawing',
+      'AmbientLight',
+      'AmbientSound',
+      'MeasuredTemplate',
+      'Note',
+      'Region',
+      'RegionBehavior',
+    ],
   },
-  { documentType: 'User', collectionPath: 'game.users', mutationPolicy: 'read-only', risk: 'normal', embeddedTypes: [] },
-  { documentType: 'Setting', collectionPath: 'game.settings.storage', mutationPolicy: 'read-only', risk: 'high', embeddedTypes: [] },
-  { documentType: 'FogExploration', collectionPath: 'game.collections.FogExploration', mutationPolicy: 'read-only', risk: 'high', embeddedTypes: [] },
-  { documentType: 'Adventure', collectionPath: 'game.collections.Adventure', mutationPolicy: 'read-only', risk: 'high', embeddedTypes: [] },
+  {
+    documentType: 'User',
+    collectionPath: 'game.users',
+    mutationPolicy: 'read-only',
+    risk: 'normal',
+    embeddedTypes: [],
+  },
+  {
+    documentType: 'Setting',
+    collectionPath: 'game.settings.storage',
+    mutationPolicy: 'read-only',
+    risk: 'high',
+    embeddedTypes: [],
+  },
+  {
+    documentType: 'FogExploration',
+    collectionPath: 'game.collections.FogExploration',
+    mutationPolicy: 'read-only',
+    risk: 'high',
+    embeddedTypes: [],
+  },
+  {
+    documentType: 'Adventure',
+    collectionPath: 'game.collections.Adventure',
+    mutationPolicy: 'read-only',
+    risk: 'high',
+    embeddedTypes: [],
+  },
 ];
 
 const EMBEDDED_PARENT_TYPES: Record<string, string[]> = {
@@ -65,14 +160,19 @@ export class DocumentRegistry {
   }
 
   listDocumentTypes(): DocumentRegistryEntry[] {
-    return Array.from(this.entries.values()).map((entry) => ({ ...entry, embeddedTypes: [...entry.embeddedTypes] }));
+    return Array.from(this.entries.values()).map(entry => ({
+      ...entry,
+      embeddedTypes: [...entry.embeddedTypes],
+    }));
   }
 
   getEntry(documentType: string): DocumentRegistryEntry {
     const normalized = this.normalizeDocumentType(documentType);
     const entry = this.entries.get(normalized);
     if (!entry) {
-      throw new Error(`Unsupported document type "${documentType}". Supported types: ${this.supportedTypes().join(', ')}`);
+      throw new Error(
+        `Unsupported document type "${documentType}". Supported types: ${this.supportedTypes().join(', ')}`
+      );
     }
     return entry;
   }
@@ -109,7 +209,9 @@ export class DocumentRegistry {
     if (exact) return exact.documentType;
 
     const lowered = documentType.toLowerCase();
-    const found = Array.from(this.entries.values()).find((entry) => entry.documentType.toLowerCase() === lowered);
+    const found = Array.from(this.entries.values()).find(
+      entry => entry.documentType.toLowerCase() === lowered
+    );
     if (found) return found.documentType;
 
     if (lowered === 'tokendocument') return 'Token';
@@ -154,7 +256,8 @@ export class DocumentRegistry {
   private collectionToArray(collection: any): any[] {
     if (!collection) return [];
     if (Array.isArray(collection)) return collection;
-    if (typeof collection.contents !== 'undefined' && Array.isArray(collection.contents)) return collection.contents;
+    if (typeof collection.contents !== 'undefined' && Array.isArray(collection.contents))
+      return collection.contents;
     if (typeof collection.values === 'function') return Array.from(collection.values());
     if (typeof collection[Symbol.iterator] === 'function') return Array.from(collection);
     return Object.values(collection);

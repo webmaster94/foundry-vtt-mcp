@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (leave empty to auto-detect from package.json)'
+        description: 'Version tag (must match all manifests; leave empty to auto-detect)'
         required: false
         default: ''
       dry_run_foundry:
@@ -80,6 +80,11 @@ jobs:
           if ($version -match '[<>:"/\\|?*]') {
             throw "Version contains invalid filename characters: '$version'"
           }
+
+          & node scripts/check-version-consistency.mjs --expected $version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Selected package version '$version' does not match the repository manifests"
+          }
           
           Write-Host "🎯 Final PACKAGE_VERSION: $version"
           echo "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
@@ -141,6 +146,7 @@ jobs:
         
         # Copy MCP server bundle
         Copy-Item "packages\mcp-server\dist\index.bundle.cjs" "$standalonePath\index.js"
+        Copy-Item "packages\mcp-server\dist\backend.bundle.cjs" "$standalonePath\backend.bundle.cjs"
         
         # Create package.json for standalone
         $standalonePackage = @{
@@ -174,7 +180,7 @@ jobs:
           "3. Configure Claude Desktop to connect to this server",
           "4. Install the MCP Bridge module in Foundry VTT",
           "",
-          "For full documentation visit: https://github.com/adambdooley/foundry-vtt-mcp",
+          "For full documentation visit: https://github.com/webmaster94/foundry-vtt-mcp",
           "",
           "Version: ${{ env.PACKAGE_VERSION }}"
         )
@@ -283,6 +289,8 @@ jobs:
           echo "✓ Using package.json version: $VERSION"
         fi
 
+        node scripts/check-version-consistency.mjs --expected "$VERSION"
+
         echo "🎯 Final PACKAGE_VERSION: $VERSION"
         echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
         echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -302,12 +310,14 @@ jobs:
     - name: Build Mac PKG Installer
       run: |
         cd installer
-        node build-mac-pkg.js
+        VERSION_NO_V="${PACKAGE_VERSION#v}"
+        VERSION="$VERSION_NO_V" node build-mac-pkg.js
 
     - name: Build Mac DMG Distribution
       run: |
         cd installer
-        node build-dmg.js
+        VERSION_NO_V="${PACKAGE_VERSION#v}"
+        VERSION="$VERSION_NO_V" node build-dmg.js
 
     - name: Verify Mac DMG
       run: |
@@ -338,6 +348,8 @@ jobs:
     needs: [build-nsis, build-mac-pkg]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout code
@@ -354,6 +366,7 @@ jobs:
         VERSION="${{ github.ref_name }}"
         # Remove 'v' prefix for filenames if present
         PACKAGE_VERSION="${VERSION#v}"
+        node scripts/check-version-consistency.mjs --expected "$PACKAGE_VERSION"
         echo "PACKAGE_VERSION=v$PACKAGE_VERSION" >> $GITHUB_ENV
         echo "version=v$PACKAGE_VERSION" >> $GITHUB_OUTPUT
 
@@ -392,12 +405,15 @@ jobs:
       run: |
         mkdir -p standalone-mcp-server
         cp packages/mcp-server/dist/index.bundle.cjs standalone-mcp-server/index.js
+        cp packages/mcp-server/dist/backend.bundle.cjs standalone-mcp-server/backend.bundle.cjs
+        VERSION_NO_V="${{ env.PACKAGE_VERSION }}"
+        VERSION_NO_V="${VERSION_NO_V#v}"
 
         # Create package.json
         cat > standalone-mcp-server/package.json << EOF
         {
           "name": "foundry-mcp-server",
-          "version": "${{ env.PACKAGE_VERSION }}",
+          "version": "$VERSION_NO_V",
           "description": "Foundry VTT MCP Server - Standalone Installation",
           "main": "index.js",
           "scripts": {
@@ -425,7 +441,7 @@ jobs:
         3. Configure Claude Desktop to connect to this server
         4. Install the MCP Bridge module in Foundry VTT
 
-        For full documentation visit: https://github.com/adambdooley/foundry-vtt-mcp
+        For full documentation visit: https://github.com/webmaster94/foundry-vtt-mcp
 
         Version: ${{ env.PACKAGE_VERSION }}
         EOF
@@ -442,7 +458,7 @@ jobs:
         body: |
           ## Foundry MCP Server ${{ github.ref_name }}
 
-          Complete multi-platform distribution for Foundry MCP Server - AI-powered campaign management for Foundry VTT using Claude Desktop.
+          Complete multi-platform distribution for connecting MCP clients with Foundry VTT.
 
           **Compatible with Foundry VTT v13 and v14.**
 
@@ -456,7 +472,7 @@ jobs:
           **Mac Users:**
           - Download `FoundryMCPServer-${{ github.ref_name }}.dmg`
           - Open DMG and double-click the PKG installer
-          - Choose components: MCP Server (required), Foundry Module, ComfyUI AI Maps
+          - Choose components: MCP Server (required) and Foundry Module
           - Automatic Claude Desktop configuration
           - To uninstall: Double-click `Uninstall.tool` from the DMG
 
@@ -467,27 +483,27 @@ jobs:
 
           **Foundry VTT Users:**
           - Install directly from Foundry's module browser
-          - Or use manifest: `https://raw.githubusercontent.com/adambdooley/foundry-vtt-mcp/master/packages/foundry-module/module.json`
+          - Or use manifest: `https://github.com/webmaster94/foundry-vtt-mcp/releases/latest/download/module.json`
 
           ### Quick Start
           1. Choose your installation method above
           2. Install MCP Bridge module in Foundry VTT
           3. Restart Claude Desktop
-          4. Start creating AI-powered campaigns!
+          4. Start managing the connected Foundry world from your MCP client
 
           ### Features
-          - 40 MCP tools for comprehensive Foundry VTT integration
-          - Multi-system support: D&D 5e, Pathfinder 2e, DSA5, Cosmere RPG, and WFRP4e
+          - Generic Foundry document management with dry-run, audit, and undo
+          - Multi-system support: D&D 5e, Pathfinder 2e, DSA5, Cosmere RPG, WFRP4e, and Mongoose Traveller 2e
           - D&D 5e NPC creation suite: stat blocks, attacks, saves, auras, and spellcasting
           - Actor creation with natural language processing
           - Quest management with HTML generation and updates
           - Campaign system with multi-part structure and progress tracking
           - Dice roll coordination between Claude and Foundry players
           - Actor ownership management with bulk operations
-          - Enhanced creature index for instant monster searches
-          - AI-powered battlemap generation with ComfyUI integration
+          - Bounded compendium search over live Foundry data
+          - Persistent backend connections, events, and multi-server routing
 
-          For full documentation, visit: https://github.com/adambdooley/foundry-vtt-mcp
+          For full documentation, visit: https://github.com/webmaster94/foundry-vtt-mcp
         files: |
           installer/build/FoundryMCPServer-Setup-${{ env.PACKAGE_VERSION }}.exe
           installer/build/FoundryMCPServer-${{ env.PACKAGE_VERSION }}.dmg
@@ -499,15 +515,22 @@ jobs:
         prerelease: false
 
     - name: Update Foundry VTT Package Registry
+      env:
+        FOUNDRY_PACKAGE_RELEASE_TOKEN: ${{ secrets.FOUNDRY_PACKAGE_RELEASE_TOKEN }}
       run: |
+        if [ -z "$FOUNDRY_PACKAGE_RELEASE_TOKEN" ]; then
+          echo "::notice::FOUNDRY_PACKAGE_RELEASE_TOKEN is not configured; skipping the optional Foundry package-registry update."
+          exit 0
+        fi
+
         echo "🔄 Updating Foundry VTT Package Registry..."
 
         # Extract package information
         PACKAGE_ID=$(node -p "require('./packages/foundry-module/module.json').id")
         VERSION="${{ env.PACKAGE_VERSION }}"
         VERSION="${VERSION#v}"  # Remove v prefix
-        MANIFEST_URL="https://github.com/adambdooley/foundry-vtt-mcp/releases/download/${{ github.ref_name }}/module.json"
-        RELEASE_NOTES_URL="https://github.com/adambdooley/foundry-vtt-mcp/releases/tag/${{ github.ref_name }}"
+        MANIFEST_URL="https://github.com/webmaster94/foundry-vtt-mcp/releases/download/${{ github.ref_name }}/module.json"
+        RELEASE_NOTES_URL="https://github.com/webmaster94/foundry-vtt-mcp/releases/tag/${{ github.ref_name }}"
 
         MINIMUM=$(node -p "require('./packages/foundry-module/module.json').compatibility.minimum")
         VERIFIED=$(node -p "require('./packages/foundry-module/module.json').compatibility.verified")
@@ -540,9 +563,9 @@ jobs:
         echo "$REQUEST_BODY"
 
         # Make API call to Foundry VTT Package Registry
-        RESPONSE=$(curl -X POST \
+        RESPONSE=$(curl --fail-with-body --silent --show-error -X POST \
           -H "Content-Type: application/json" \
-          -H "Authorization: ${{ secrets.FOUNDRY_PACKAGE_RELEASE_TOKEN }}" \
+          -H "Authorization: $FOUNDRY_PACKAGE_RELEASE_TOKEN" \
           -d "$REQUEST_BODY" \
           https://foundryvtt.com/_api/packages/release_version/)
 

@@ -35,7 +35,8 @@ export class FoundryScriptTools {
     return [
       {
         name: 'execute-foundry-script',
-        description: 'Execute JavaScript immediately in the connected GM browser. This is privileged browser execution, not Forge server execution.',
+        description:
+          'Execute JavaScript immediately in the connected GM browser. This is privileged browser execution, not Forge server execution.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -50,7 +51,8 @@ export class FoundryScriptTools {
       },
       {
         name: 'query-foundry-data',
-        description: 'Read arbitrary common Foundry data through a constrained read-only query explorer. Prefer this before execute-foundry-script for reads.',
+        description:
+          'Read arbitrary common Foundry data through a constrained read-only query explorer. Prefer this before execute-foundry-script for reads.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -85,7 +87,8 @@ export class FoundryScriptTools {
       },
       {
         name: 'get-mcp-audit-log',
-        description: 'Read the MCP audit log for document writes, macro execution, script execution, and audit clearing.',
+        description:
+          'Read the MCP audit log for document writes, macro execution, script execution, and audit clearing.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -114,7 +117,10 @@ export class FoundryScriptTools {
 
     switch (name) {
       case 'execute-foundry-script':
-        return this.query('executeFoundryScript', FoundryScriptExecuteRequestSchema.parse(args || {}));
+        return this.query(
+          'executeFoundryScript',
+          FoundryScriptExecuteRequestSchema.parse(args || {})
+        );
       case 'query-foundry-data':
         return this.query('queryFoundryData', QueryFoundryDataRequestSchema.parse(args || {}));
       case 'get-mcp-audit-log':

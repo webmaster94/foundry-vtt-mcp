@@ -2,9 +2,9 @@
 
 Connect Foundry VTT to AI agents (Claude Desktop, Claude Code, or any MCP client) for AI-powered campaign management through the Model Context Protocol.
 
-This is [webmaster94's fork](https://github.com/webmaster94/foundry-vtt-mcp) of [adambdooley/foundry-vtt-mcp](https://github.com/adambdooley/foundry-vtt-mcp), extended with a much deeper Foundry integration: a generic document API with dry-run and undo, one-call NPC building, batch operations, system-data compendium search, GM-browser script execution, and multi-server support. It tracks upstream (currently v0.8.2 merged) and keeps all upstream features: quests, dice coordination, map generation, campaign dashboards, and system support for D&D 5e, Pathfinder 2e, DSA5, Cosmere RPG, and WFRP4e.
+This is [webmaster94's fork](https://github.com/webmaster94/foundry-vtt-mcp) of [adambdooley/foundry-vtt-mcp](https://github.com/adambdooley/foundry-vtt-mcp), extended with a much deeper Foundry integration: a generic document API with dry-run and undo, one-call NPC building, batch operations, system-data compendium search, GM-browser script execution, event streaming, and multi-server support. It keeps the useful upstream quest, dice-coordination, campaign-dashboard, and system-support capabilities while adding support for D&D 5e, Pathfinder 2e, DSA5, Cosmere RPG, WFRP4e, and Mongoose Traveller 2e workflows.
 
-**97 MCP tools** as of v0.11, verified by a 27-step live integration suite before each release — with a context-budget discipline that keeps the whole catalog under ~17k tokens (CI-enforced 70KB ceiling).
+The tool catalog is verified by unit tests and a live integration suite before release, with a CI-enforced 70KB schema ceiling to keep MCP client context use bounded.
 
 ## Installation
 
@@ -40,11 +40,13 @@ npm install && npm run setup
 | **Claude Code**    | `claude mcp add` at user scope — works from any folder                  |
 | **Codex CLI**      | `codex mcp add` (or `~/.codex/config.toml` on older versions)           |
 
-Restart your AI client, start (or refresh) your Foundry world, and the tools appear. The connection is self-healing: the server side runs as a persistent background process that survives AI-client restarts and idle periods, the module retries forever, and a freshly started server waits for the module rather than failing your first prompt. Re-running setup is safe — existing entries are updated in place, and a `foundry-servers.json` (see below) is picked up automatically. `npm run stop` shuts the background process down if you ever need to.
+Restart your AI client and open the Foundry world as a GM; the tools appear without a browser refresh. The connection is self-healing: the server side runs as a persistent background process that survives AI-client restarts and idle periods, native/application heartbeats remove dead transports, the module retries forever, and browser resume/network events wake delayed retries immediately. A freshly started server waits for the module rather than failing your first prompt. Re-running setup is safe — existing entries are updated in place, and a `foundry-servers.json` (see below) is picked up automatically. `npm run stop` shuts the background process down if you ever need to.
+
+An ordinary Foundry module cannot execute world APIs with no client loaded. Keep one authenticated GM browser or desktop-client world open. A normal inactive tab remains connected, but a browser-frozen or discarded tab cannot execute JavaScript until the browser resumes it; the bridge reconnects automatically on resume.
 
 Options: `node scripts/install.mjs --clients claude-desktop,codex` to configure specific clients only, `--list` to preview without changing anything.
 
-> Upstream's Windows/Mac installers work but ship the upstream (unextended) versions of both components. For this fork, use the setup script; the module and server versions must match (mismatches produce clear `VERSION_MISMATCH` errors rather than silent failures).
+> The module and server versions must match. Version mismatches produce a clear `VERSION_MISMATCH` error instead of silently invoking an incompatible handler.
 
 <details>
 <summary><strong>Manual configuration</strong> (if you prefer, or for other MCP clients)</summary>
@@ -94,14 +96,15 @@ The MCP server can hold connections to several Foundry instances at once (e.g. a
       "label": "My Forge Campaign",
       "port": 31415,
       "connectionType": "webrtc",
-      "remoteMode": true
+      "remoteMode": false,
+      "authToken": "replace-with-a-long-random-shared-secret"
     },
     "local": { "label": "Local dev world", "port": 31417, "connectionType": "websocket" }
   }
 }
 ```
 
-Each profile listens on its own port; point each world's module settings at its profile's port (WebRTC signaling uses `port + 1`). Then:
+Each profile listens on its own port; point each world's module settings at its profile's port (WebRTC signaling uses `port + 1`). Forge still uses `remoteMode: false` when the Forge browser and MCP server run on the same workstation: the HTTPS page connects to that workstation's loopback interface. Chrome may show a Local Network Access prompt; allow it for the Forge site. Use `remoteMode: true` only when a browser on another machine must reach the listener, set the module's **Bridge Server Host** to that server's private IP or `.local` name, and protect the exposure with an auth token and host firewall. Then:
 
 - `list-foundry-servers` — profiles, connection state, and the world/system/module version each connection reports
 - `use-foundry-server` — switch every subsequent call
@@ -122,7 +125,7 @@ Without a config file, behavior is identical to upstream: one server from enviro
 `build-actor-from-spec` — a complete NPC in one call: compendium template clone, stat overrides, spells/items resolved by name, custom features, folder filing. `create-embedded-documents` (up to 100 at once), `batch-document-operations` (ordered sequences of up to 50 ops).
 
 **Search (fork)**
-`search-compendium-contents` — filters on real system data (`{"path": "system.level", "op": "lte", "value": 3}`), optional description full-text. Complements upstream's name-based `search-compendium` and the enhanced creature index.
+`search-compendium-contents` — bounded search over live compendium data with filters on real system fields (`{"path": "system.level", "op": "lte", "value": 3}`) and optional description full-text. It complements the lightweight name-based `search-compendium` tool without maintaining a duplicate world index.
 
 **Combat & events (fork, v0.11)**
 `roll-initiative`, `apply-damage` / `apply-healing` (temp-HP aware, undoable), `add-active-effect` (buffs/debuffs with durations). Foundry pushes game events to the server — `wait-for-event` / `get-recent-events` react to combat turns, chat messages, and dice results; `get-roll-results` finally makes player roll outcomes visible to the agent.
@@ -134,10 +137,10 @@ Without a config file, behavior is identical to upstream: one server from enviro
 `execute-foundry-script` (JavaScript in the GM browser), macro CRUD + `execute-macro`, browser console capture (`get-browser-console`), `get-bridge-logs` (server self-diagnosis), `get-bridge-recipes` (curated dnd5e NPC math, combat-loop, and API patterns for agents).
 
 **Security**
-Optional shared-secret auth: set the module's _Bridge Auth Token_ and the matching `authToken` in the server profile — unauthenticated connections are rejected. Strongly recommended for remote (`0.0.0.0`) setups; loopback binding remains the default otherwise.
+Shared-secret auth: set the module's _Bridge Auth Token_ and the matching `authToken` in the server profile — unauthenticated connections are rejected before transport setup. The module token is browser-local so players cannot read it from world settings; configure it in every GM browser/device that may own the bridge. Use a long random token for Forge/browser-hosted worlds; any remote (`0.0.0.0`) listener refuses to start without a token of at least 16 characters. Loopback binding remains the default.
 
 **Inherited from upstream**
-Characters and inventories, scenes and tokens (movement, conditions, updates), compendium browsing, quest journals and campaign dashboards, interactive player dice requests, actor ownership, actor creation from compendium, AI map generation via ComfyUI, and system-specific suites for D&D 5e NPCs, DSA5 archetypes, and WFRP4e actor editing.
+Characters and inventories, scenes and tokens (movement, conditions, updates), compendium browsing, quest journals and campaign dashboards, interactive player dice requests, actor ownership, actor creation from compendium, and system-specific suites for D&D 5e NPCs, DSA5 archetypes, WFRP4e actor editing, and Mongoose Traveller 2e character/schema handling.
 
 ## Example Usage
 
@@ -146,18 +149,19 @@ Characters and inventories, scenes and tokens (movement, conditions, updates), c
 - _"Bump the whole party's HP by 10, but show me the diff first"_ — `dryRun`, then apply
 - _"Undo that"_ — `undo-last-mcp-operation`
 - _"Switch to the local test server and rerun it"_ — `use-foundry-server`
-- Everything upstream: _"Roll a stealth check for Tulkas"_, _"Create a quest about the missing villagers"_, _"Generate a riverside cottage battlemap"_
+- Other examples: _"Roll a stealth check for Tulkas"_, _"Create a quest about the missing villagers"_, _"Build a tavern scene using assets from my Foundry data folder"_
 
 ## Module Settings
 
-The module's settings menu covers: enable/disable the bridge, connection type (auto / WebSocket / WebRTC) and server host/port, **Allow Write Operations** (read-only mode), max actors per request, audit log retention, browser script execution permission, enhanced creature index, map generation service, notifications, and reconnect behavior. Write operations are GM-only by design; non-GM users get no bridge access at all.
+The module exposes separate **Connection**, **Permissions & Safety**, **Console & Diagnostics**, and **Advanced API** windows so the normal Foundry settings list stays compact. These controls cover connection type (auto / WebSocket / WebRTC), server host/port and authentication, **Allow Write Operations** (read-only mode), request limits, audit retention, browser-script permission, notifications, and reconnect behavior. Write operations are GM-only by design; non-GM users get no bridge access at all.
 
 ## Development
 
 ```bash
 npm run build        # all workspaces (shared, server, module)
 npm test             # unit tests (vitest)
-npm run smoke        # 16-step LIVE integration suite — needs a running,
+npm run test:fork-contract # baseline fork capabilities retained; only approved removals absent
+npm run smoke        # 27-step LIVE integration suite — needs a running,
                      # connected world; run before every release
 ```
 
@@ -167,6 +171,6 @@ Agent-oriented contributor documentation (architecture map, conventions, gotchas
 
 ## Credits & License
 
-Built on [Foundry VTT MCP](https://github.com/adambdooley/foundry-vtt-mcp) by [Adam Dooley](https://github.com/adambdooley) — the installer, map generation, quest/campaign systems, and the core bridge architecture are his work. Watch his [video overview](https://youtu.be/Se04A21wrbE) for the original project.
+Built on [Foundry VTT MCP](https://github.com/adambdooley/foundry-vtt-mcp) by [Adam Dooley](https://github.com/adambdooley) — the original installer, quest/campaign systems, and core bridge architecture are his work. Watch his [video overview](https://youtu.be/Se04A21wrbE) for the original project.
 
 MIT licensed, like upstream.

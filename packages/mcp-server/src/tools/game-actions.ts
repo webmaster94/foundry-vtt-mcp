@@ -6,11 +6,15 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { FoundryClient } from '../foundry-client.js';
 import { ServerRegistry } from '../server-registry.js';
 import { Logger } from '../logger.js';
+import { SystemRegistry } from '../systems/system-registry.js';
+import type { SystemAdapter } from '../systems/types.js';
+import { detectGameSystemInfo } from '../utils/system-detection.js';
 
 export interface GameActionToolsOptions {
   foundryClient: FoundryClient;
   registry: ServerRegistry;
   logger: Logger;
+  systemRegistry?: SystemRegistry;
 }
 
 const TargetSchema = z.object({
@@ -30,11 +34,13 @@ export class GameActionTools {
   private foundryClient: FoundryClient;
   private registry: ServerRegistry;
   private logger: Logger;
+  private systemRegistry: SystemRegistry | null;
 
-  constructor({ foundryClient, registry, logger }: GameActionToolsOptions) {
+  constructor({ foundryClient, registry, logger, systemRegistry }: GameActionToolsOptions) {
     this.foundryClient = foundryClient;
     this.registry = registry;
     this.logger = logger.child({ component: 'GameActionTools' });
+    this.systemRegistry = systemRegistry ?? null;
   }
 
   getToolDefinitions(): Tool[] {
@@ -196,12 +202,42 @@ export class GameActionTools {
       case 'build-scene-from-spec':
         return this.query('buildSceneFromSpec', { spec: args?.spec || {} });
       case 'build-actors-from-spec':
-        return this.query('buildActorsFromSpec', { specs: args?.specs || [] });
+        return this.buildActorsFromSpec(args);
       case 'get-bridge-logs':
         return this.getBridgeLogs(args || {});
       default:
         throw new Error(`Unknown game action tool: ${name}`);
     }
+  }
+
+  private async buildActorsFromSpec(args: any): Promise<any> {
+    const specs: unknown[] = Array.isArray(args?.specs) ? args.specs : [];
+    const adapter = await this.getAdapter();
+    const normalizedSpecs = specs.map(spec => {
+      if (!this.isRecord(spec) || !this.isRecord(spec.system) || !adapter?.normalizePayload) {
+        return spec;
+      }
+      return {
+        ...spec,
+        system: adapter.normalizePayload({ ...spec.system }),
+      };
+    });
+    return this.query('buildActorsFromSpec', { specs: normalizedSpecs });
+  }
+
+  /** Resolve from the active routed world; never cache across named profiles. */
+  private async getAdapter(): Promise<SystemAdapter | null> {
+    if (!this.systemRegistry) return null;
+    const detected = await detectGameSystemInfo(this.foundryClient, this.logger);
+    if (detected.systemId) {
+      const byRawId = this.systemRegistry.getAdapter(detected.systemId);
+      if (byRawId) return byRawId;
+    }
+    return this.systemRegistry.getAdapter(detected.system);
+  }
+
+  private isRecord(value: unknown): value is Record<string, any> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
   }
 
   private async waitForEvent(args: {
@@ -280,7 +316,7 @@ export class GameActionTools {
   private tool(
     name: string,
     description: string,
-    properties: Record<string, unknown>,
+    properties: Record<string, object>,
     required: string[] = []
   ): Tool {
     return {

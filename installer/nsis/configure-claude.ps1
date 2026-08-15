@@ -1,6 +1,9 @@
 param(
-    [Parameter(Mandatory=$true)]
-    [string]$InstallDir
+    [Parameter(Mandatory=$false)]
+    [string]$InstallDir,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$Remove
 )
 
 # Configure Claude Desktop for Foundry MCP Server
@@ -246,6 +249,73 @@ function Set-FoundryMcpConfig {
 
     Write-LogMessage "Configuration written and verified for: $configPath"
 }
+
+function Remove-FoundryMcpConfig {
+    param([Parameter(Mandatory=$true)][string]$ConfigPath)
+
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+        return $false
+    }
+
+    $fileState = Get-ConfigFileState $ConfigPath
+    if ($fileState -ne "ValidJSON") {
+        throw "Claude Desktop configuration is not valid JSON and was left unchanged: $ConfigPath"
+    }
+
+    $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    if (-not $config -or -not ($config -is [PSCustomObject])) {
+        throw "Claude Desktop configuration root is not a JSON object and was left unchanged: $ConfigPath"
+    }
+
+    if (-not ($config.PSObject.Properties.Name -contains "mcpServers") -or
+        $null -eq $config.mcpServers -or
+        -not ($config.mcpServers -is [PSCustomObject])) {
+        Write-LogMessage "No MCP server object found in: $ConfigPath"
+        return $false
+    }
+
+    $entryNames = @("foundry-mcp", "foundry-vtt-mcp")
+    $removedNames = [System.Collections.Generic.List[string]]::new()
+    foreach ($entryName in $entryNames) {
+        if ($config.mcpServers.PSObject.Properties.Name -contains $entryName) {
+            $config.mcpServers.PSObject.Properties.Remove($entryName)
+            $removedNames.Add($entryName)
+        }
+    }
+
+    if ($removedNames.Count -eq 0) {
+        Write-LogMessage "No Foundry MCP entry found in: $ConfigPath"
+        return $false
+    }
+
+    $backupPath = "$ConfigPath.backup-$(Get-Date -Format 'yyyyMMdd-HHmmssfff')"
+    Copy-Item -LiteralPath $ConfigPath -Destination $backupPath
+    Write-LogMessage "Created backup: $backupPath"
+
+    $newConfigJson = $config | ConvertTo-Json -Depth 100
+    if (-not (Test-JsonValid $newConfigJson)) {
+        throw "Generated configuration JSON is invalid; the original file was left unchanged"
+    }
+
+    $temporaryPath = "$ConfigPath.tmp-$PID"
+    try {
+        [System.IO.File]::WriteAllText(
+            $temporaryPath,
+            $newConfigJson,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        Get-Content -LiteralPath $temporaryPath -Raw | ConvertFrom-Json | Out-Null
+        Move-Item -LiteralPath $temporaryPath -Destination $ConfigPath -Force
+    }
+    catch {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        throw
+    }
+
+    Write-LogMessage "Removed only $($removedNames -join ', ') from: $ConfigPath"
+    return $true
+}
+
 try {
     Write-LogMessage "=============================================="
     Write-LogMessage "Starting Claude Desktop configuration..."
@@ -256,6 +326,42 @@ try {
     Write-LogMessage "Install directory: $InstallDir"
     Write-LogMessage "APPDATA: $($env:APPDATA)"
     Write-LogMessage "Script parameters: $($PSBoundParameters | ConvertTo-Json)"
+
+    if ($Remove) {
+        Write-LogMessage "Removing Foundry MCP entries from every existing Claude Desktop configuration target..."
+        $targets = Get-ClaudeConfigTargets
+        $removedCount = 0
+        $failures = [System.Collections.Generic.List[string]]::new()
+
+        foreach ($target in $targets) {
+            $configPath = Join-Path $target.Dir "claude_desktop_config.json"
+            if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+                Write-LogMessage "No configuration file for $($target.Kind); skipping: $configPath"
+                continue
+            }
+
+            try {
+                if (Remove-FoundryMcpConfig -ConfigPath $configPath) {
+                    $removedCount++
+                }
+            }
+            catch {
+                Write-LogMessage "Failed to update $($target.Kind): $($_.Exception.Message)" "ERROR"
+                $failures.Add("$($target.Kind): $($_.Exception.Message)")
+            }
+        }
+
+        Write-LogMessage "Removed Foundry MCP entries from $removedCount configuration file(s)."
+        if ($failures.Count -gt 0) {
+            throw "One or more Claude Desktop configurations were left unchanged: $($failures -join '; ')"
+        }
+
+        exit 0
+    }
+
+    if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+        throw "InstallDir is required unless -Remove is used"
+    }
     
     # Validate installation directory exists
     if (-not (Test-Path $InstallDir)) {
@@ -342,7 +448,12 @@ catch {
     Write-LogMessage "Configuration failed: $errorMsg" "ERROR"
     Write-LogMessage "Full exception details: $($_.Exception | ConvertTo-Json -Depth 3)" "ERROR"
     Write-LogMessage "Stack trace: $($_.ScriptStackTrace)" "ERROR"
-    Write-LogMessage "The Claude Desktop configuration was not modified" "ERROR"
+    if ($Remove) {
+        Write-LogMessage "Failed targets were left unchanged; other targets may already have been cleaned and backed up" "ERROR"
+    }
+    else {
+        Write-LogMessage "The Claude Desktop configuration was not modified" "ERROR"
+    }
     Write-LogMessage "=============================================="
     Write-LogMessage "For detailed error information, check: $LogFile" "ERROR"
     Write-LogMessage "=============================================="

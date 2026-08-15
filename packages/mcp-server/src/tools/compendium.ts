@@ -4,11 +4,8 @@ import { Logger } from '../logger.js';
 import { SystemRegistry } from '../systems/system-registry.js';
 import {
   detectGameSystem,
-  getSystemPaths,
   getCreatureLevel,
   getCreatureType,
-  hasSpellcasting,
-  formatSystemError,
   type GameSystem,
 } from '../utils/system-detection.js';
 import {
@@ -28,7 +25,6 @@ export class CompendiumTools {
   private foundryClient: FoundryClient;
   private logger: Logger;
   private systemRegistry: SystemRegistry | null;
-  private gameSystem: GameSystem | null = null;
 
   constructor({ foundryClient, logger, systemRegistry }: CompendiumToolsOptions) {
     this.foundryClient = foundryClient;
@@ -36,14 +32,9 @@ export class CompendiumTools {
     this.systemRegistry = systemRegistry || null;
   }
 
-  /**
-   * Get or detect the game system (cached)
-   */
+  /** Detect the current routed world's system for this call. */
   private async getGameSystem(): Promise<GameSystem> {
-    if (!this.gameSystem) {
-      this.gameSystem = await detectGameSystem(this.foundryClient, this.logger);
-    }
-    return this.gameSystem;
+    return detectGameSystem(this.foundryClient, this.logger);
   }
 
   /**
@@ -54,7 +45,7 @@ export class CompendiumTools {
       {
         name: 'search-compendium',
         description:
-          'Search compendium packs by entry NAME only (descriptions are not searched; the filters are name-keyword heuristics). For real system-data filters (spell level, item type, CR) use search-compendium-contents; for indexed creature filtering use list-creatures-by-criteria.',
+          'Search compendium packs by entry NAME only (descriptions are not searched; the filters are name-keyword heuristics). For real system-data filters such as spell level, item type, or challenge rating, use search-compendium-contents.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -146,103 +137,6 @@ export class CompendiumTools {
             },
           },
           required: ['packId', 'itemId'],
-        },
-      },
-      {
-        name: 'list-creatures-by-criteria',
-        description:
-          'Indexed creature discovery for encounter building. Filters by real stats with automatic system detection: D&D 5e CR, PF2e level/traits/rarity, Cosmere tier/role/investiture. Returns minimal rows; pull details for finalists with get-compendium-item.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            challengeRating: {
-              description: 'D&D 5e: number, string, or {min,max}',
-              oneOf: [
-                { type: 'number' },
-                { type: 'string' },
-                {
-                  type: 'object',
-                  properties: { min: { type: 'number' }, max: { type: 'number' } },
-                },
-              ],
-            },
-            creatureType: {
-              type: 'string',
-              enum: [
-                'humanoid',
-                'dragon',
-                'beast',
-                'undead',
-                'fey',
-                'fiend',
-                'celestial',
-                'construct',
-                'elemental',
-                'giant',
-                'monstrosity',
-                'ooze',
-                'plant',
-                'aberration',
-              ],
-            },
-            size: {
-              type: 'string',
-              enum: ['tiny', 'small', 'medium', 'large', 'huge', 'gargantuan'],
-            },
-            hasSpells: { type: 'boolean' },
-            hasLegendaryActions: { type: 'boolean' },
-            level: {
-              description: 'PF2e: number, string, or {min,max}',
-              oneOf: [
-                { type: 'number' },
-                { type: 'string' },
-                {
-                  type: 'object',
-                  properties: { min: { type: 'number' }, max: { type: 'number' } },
-                },
-              ],
-            },
-            traits: { type: 'array', items: { type: 'string' }, description: 'PF2e' },
-            rarity: {
-              type: 'string',
-              enum: ['common', 'uncommon', 'rare', 'unique'],
-              description: 'PF2e',
-            },
-            tier: {
-              description: 'Cosmere: 1-4 or {min,max}',
-              oneOf: [
-                { type: 'number' },
-                {
-                  type: 'object',
-                  properties: { min: { type: 'number' }, max: { type: 'number' } },
-                },
-              ],
-            },
-            role: { type: 'string', description: 'Cosmere: minion/rival/boss' },
-            hasInvestiture: { type: 'boolean', description: 'Cosmere' },
-            hitPoints: {
-              oneOf: [
-                { type: 'number' },
-                {
-                  type: 'object',
-                  properties: { min: { type: 'number' }, max: { type: 'number' } },
-                },
-              ],
-            },
-            defensesMin: {
-              type: 'object',
-              properties: {
-                phy: { type: 'number' },
-                cog: { type: 'number' },
-                spi: { type: 'number' },
-              },
-              additionalProperties: false,
-              description: 'Cosmere minimum defenses',
-            },
-            deflectMin: { type: 'number', description: 'Cosmere' },
-            limit: { type: 'number', minimum: 1, maximum: 1000, default: 500 },
-          },
-          required: [],
         },
       },
       {
@@ -406,299 +300,6 @@ export class CompendiumTools {
     }
   }
 
-  async handleListCreaturesByCriteria(args: any): Promise<any> {
-    // Detect game system for appropriate filtering
-    const gameSystem = await this.getGameSystem();
-
-    // Use generic filters schema to support both systems
-    const schema = z.object({
-      // D&D 5e: challengeRating
-      challengeRating: z
-        .union([
-          z.object({
-            min: z.number().optional().default(0),
-            max: z.number().optional().default(30),
-          }),
-          z
-            .string()
-            .refine(
-              val => {
-                try {
-                  const parsed = JSON.parse(val);
-                  return (
-                    typeof parsed === 'object' &&
-                    parsed !== null &&
-                    (typeof parsed.min === 'number' || typeof parsed.max === 'number')
-                  );
-                } catch {
-                  return false;
-                }
-              },
-              {
-                message: 'Challenge rating range must be valid JSON object with min/max numbers',
-              }
-            )
-            .transform(val => {
-              const parsed = JSON.parse(val);
-              return {
-                min: parsed.min || 0,
-                max: parsed.max || 30,
-              };
-            }),
-          z.number(),
-          z
-            .string()
-            .refine(val => !isNaN(parseFloat(val)), {
-              message: 'Challenge rating must be a valid number',
-            })
-            .transform(val => parseFloat(val)),
-        ])
-        .optional(),
-
-      // Pathfinder 2e: level
-      level: z
-        .union([
-          z.object({
-            min: z.number().optional().default(-1),
-            max: z.number().optional().default(25),
-          }),
-          z
-            .string()
-            .refine(val => {
-              try {
-                const parsed = JSON.parse(val);
-                return (
-                  typeof parsed === 'object' &&
-                  parsed !== null &&
-                  (typeof parsed.min === 'number' || typeof parsed.max === 'number')
-                );
-              } catch {
-                return false;
-              }
-            })
-            .transform(val => {
-              const parsed = JSON.parse(val);
-              return {
-                min: parsed.min ?? -1,
-                max: parsed.max ?? 25,
-              };
-            }),
-          z.number(),
-          z
-            .string()
-            .refine(val => !isNaN(parseFloat(val)))
-            .transform(val => parseFloat(val)),
-        ])
-        .optional(),
-
-      // Common filters
-      creatureType: z.string().optional(), // Accept any string, validate per system
-      size: z.enum(['tiny', 'small', 'medium', 'large', 'huge', 'gargantuan']).optional(),
-
-      // Pathfinder 2e specific
-      traits: z.array(z.string()).optional(),
-      rarity: z.enum(['common', 'uncommon', 'rare', 'unique']).optional(),
-
-      // Cosmere RPG specific
-      tier: z
-        .union([
-          z.object({
-            min: z.number().optional(),
-            max: z.number().optional(),
-          }),
-          z
-            .string()
-            .refine(
-              val => {
-                try {
-                  const parsed = JSON.parse(val);
-                  return (
-                    typeof parsed === 'object' &&
-                    parsed !== null &&
-                    (typeof parsed.min === 'number' || typeof parsed.max === 'number')
-                  );
-                } catch {
-                  return false;
-                }
-              },
-              { message: 'Tier range must be valid JSON object with min/max numbers' }
-            )
-            .transform(val => JSON.parse(val) as { min?: number; max?: number }),
-          z.number(),
-          z
-            .string()
-            .refine(val => !isNaN(parseFloat(val)), {
-              message: 'Tier must be a valid number',
-            })
-            .transform(val => parseFloat(val)),
-        ])
-        .optional(),
-      role: z.string().optional(),
-      hasInvestiture: z
-        .union([
-          z.boolean(),
-          z
-            .string()
-            .refine(v => ['true', 'false'].includes(v.toLowerCase()))
-            .transform(v => v.toLowerCase() === 'true'),
-        ])
-        .optional(),
-      hitPoints: z
-        .union([
-          z.object({
-            min: z.number().optional(),
-            max: z.number().optional(),
-          }),
-          z
-            .string()
-            .refine(
-              val => {
-                try {
-                  const parsed = JSON.parse(val);
-                  return (
-                    typeof parsed === 'object' &&
-                    parsed !== null &&
-                    (typeof parsed.min === 'number' || typeof parsed.max === 'number')
-                  );
-                } catch {
-                  return false;
-                }
-              },
-              { message: 'hitPoints range must be valid JSON object with min/max numbers' }
-            )
-            .transform(val => JSON.parse(val) as { min?: number; max?: number }),
-          z.number(),
-          z
-            .string()
-            .refine(val => !isNaN(parseFloat(val)), {
-              message: 'hitPoints must be a valid number',
-            })
-            .transform(val => parseFloat(val)),
-        ])
-        .optional(),
-      defensesMin: z
-        .object({
-          phy: z.number().optional(),
-          cog: z.number().optional(),
-          spi: z.number().optional(),
-        })
-        .optional(),
-      deflectMin: z
-        .union([
-          z.number(),
-          z
-            .string()
-            .refine(val => !isNaN(parseFloat(val)), {
-              message: 'deflectMin must be a valid number',
-            })
-            .transform(val => parseFloat(val)),
-        ])
-        .optional(),
-
-      // Spellcasting flags (different names per system)
-      hasSpells: z
-        .union([
-          z.boolean(),
-          z
-            .string()
-            .refine(val => ['true', 'false'].includes(val.toLowerCase()))
-            .transform(val => val.toLowerCase() === 'true'),
-        ])
-        .optional(),
-      hasLegendaryActions: z
-        .union([
-          z.boolean(),
-          z
-            .string()
-            .refine(val => ['true', 'false'].includes(val.toLowerCase()))
-            .transform(val => val.toLowerCase() === 'true'),
-        ])
-        .optional(),
-
-      limit: z
-        .union([
-          z.number().min(1).max(1000),
-          z
-            .string()
-            .refine(val => {
-              const num = parseInt(val, 10);
-              return !isNaN(num) && num >= 1 && num <= 1000;
-            })
-            .transform(val => parseInt(val, 10)),
-        ])
-        .optional()
-        .default(100),
-    });
-
-    let params;
-    try {
-      params = schema.parse(args);
-      this.logger.debug('Parsed creature criteria parameters successfully', params);
-    } catch (parseError) {
-      this.logger.error('Failed to parse creature criteria parameters', { args, parseError });
-      if (parseError instanceof z.ZodError) {
-        const errorDetails = parseError.errors
-          .map(err => `${err.path.join('.')}: ${err.message}`)
-          .join('; ');
-        throw new Error(
-          `Parameter validation failed: ${errorDetails}. Received args: ${JSON.stringify(args)}`
-        );
-      }
-      throw parseError;
-    }
-
-    // Log system detection and criteria
-    const criteriaDescription = this.describeCriteria(params, gameSystem);
-    this.logger.info('Creature criteria search with system detection', {
-      gameSystem,
-      criteria: criteriaDescription,
-    });
-
-    try {
-      const results = await this.foundryClient.query(
-        'foundry-mcp-bridge.listCreaturesByCriteria',
-        params
-      );
-
-      this.logger.debug('Creature criteria search completed', {
-        gameSystem,
-        criteriaCount: Object.keys(params).length,
-        totalFound: results.response?.creatures?.length || 0,
-        limit: params.limit,
-        packsSearched: results.response?.searchSummary?.packsSearched || 0,
-      });
-
-      // Extract search summary for transparency
-      const searchSummary = results.response?.searchSummary || {
-        packsSearched: 0,
-        topPacks: [],
-        totalCreaturesFound: results.response?.creatures?.length || 0,
-      };
-
-      return {
-        gameSystem, // Include detected system
-        criteriaDescription, // Human-readable criteria
-        creatures: (results.response?.creatures || results).map((creature: any) =>
-          this.formatCreatureListItem(creature, gameSystem)
-        ),
-        totalFound: results.response?.creatures?.length || results.length,
-        criteria: params,
-        searchSummary: {
-          ...searchSummary,
-          searchStrategy: `Prioritized pack search - ${gameSystem === 'pf2e' ? 'PF2e' : gameSystem === 'cosmere-rpg' ? 'Cosmere RPG' : 'D&D 5e'} content first, then modules, then campaign-specific`,
-          note: 'Packs searched in priority order to find most relevant creatures first',
-        },
-        optimizationNote:
-          'Use creature names to identify suitable options, then call get-compendium-item for final details only',
-      };
-    } catch (error) {
-      this.logger.error('Failed to list creatures by criteria', error);
-      throw new Error(
-        `Failed to list creatures: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-    }
-  }
-
   async handleListCompendiumPacks(args: any): Promise<any> {
     const schema = z.object({
       type: z.string().optional(),
@@ -754,12 +355,31 @@ export class CompendiumTools {
     };
 
     // Add key stats for actors/creatures to reduce need for detail calls.
-    // `adversary` is Cosmere RPG's NPC equivalent.
-    if (item.type === 'npc' || item.type === 'character' || item.type === 'adversary') {
+    // `adversary` is Cosmere RPG's NPC equivalent; mgt2e has several actor types.
+    const isMGT2eActor =
+      gameSystem === 'mgt2e' &&
+      [
+        'traveller',
+        'npc',
+        'creature',
+        'spacecraft',
+        'vehicle',
+        'world',
+        'package',
+        'swarm',
+      ].includes(item.type);
+    if (
+      item.type === 'npc' ||
+      item.type === 'character' ||
+      item.type === 'adversary' ||
+      isMGT2eActor
+    ) {
       const stats: any = {};
 
       // Use system detection utilities for accurate stat extraction
-      if (gameSystem === 'cosmere-rpg') {
+      if (gameSystem === 'mgt2e') {
+        Object.assign(stats, this.extractMGT2eCompactStats(item));
+      } else if (gameSystem === 'cosmere-rpg') {
         const system = item.system || {};
 
         if (typeof system.tier === 'number') stats.tier = system.tier;
@@ -967,215 +587,13 @@ export class CompendiumTools {
     return parts.join(' • ');
   }
 
-  private formatCreatureListItem(creature: any, gameSystem?: GameSystem): any {
-    const system = creature.system || {};
-    const formatted: any = {
-      name: creature.name,
-      id: creature.id,
-      pack: { id: creature.pack, label: creature.packLabel },
-    };
-
-    if (gameSystem === 'cosmere-rpg') {
-      // Cosmere fields come pre-flattened from data-access.ts; pass them through.
-      if (creature.tier !== undefined) formatted.tier = creature.tier;
-      if (creature.role) formatted.role = creature.role;
-      if (creature.subtype) formatted.subtype = creature.subtype;
-      if (creature.creatureType) formatted.creatureType = creature.creatureType;
-      if (creature.size) formatted.size = creature.size;
-      if (creature.hitPoints !== undefined) formatted.hitPoints = creature.hitPoints;
-      if (creature.focus !== undefined) formatted.focus = creature.focus;
-      if (creature.investiture !== undefined) formatted.investiture = creature.investiture;
-      if (creature.hasInvestiture !== undefined) formatted.hasInvestiture = creature.hasInvestiture;
-      if (creature.defenses) formatted.defenses = creature.defenses;
-      if (creature.deflect !== undefined) formatted.deflect = creature.deflect;
-      if (creature.walkSpeed !== undefined) formatted.walkSpeed = creature.walkSpeed;
-      if (creature.summary) formatted.summary = creature.summary;
-      return formatted;
-    }
-
-    if (gameSystem) {
-      // System-specific extraction using detection utilities
-      const level = getCreatureLevel(creature, gameSystem);
-      if (level !== undefined) {
-        if (gameSystem === 'dnd5e') {
-          formatted.challengeRating = level;
-        } else if (gameSystem === 'pf2e') {
-          formatted.level = level;
-        }
-      }
-
-      const creatureType = getCreatureType(creature, gameSystem);
-      if (creatureType) {
-        if (gameSystem === 'pf2e' && Array.isArray(creatureType)) {
-          formatted.traits = creatureType;
-          // Extract primary type from traits
-          const creatureTraits = [
-            'aberration',
-            'animal',
-            'beast',
-            'celestial',
-            'construct',
-            'dragon',
-            'elemental',
-            'fey',
-            'fiend',
-            'fungus',
-            'humanoid',
-            'monitor',
-            'ooze',
-            'plant',
-            'undead',
-          ];
-          const primaryType = creatureType.find((t: string) =>
-            creatureTraits.includes(t.toLowerCase())
-          );
-          if (primaryType) formatted.creatureType = primaryType;
-        } else {
-          formatted.creatureType = creatureType;
-        }
-      }
-
-      const size = system.traits?.size?.value || system.traits?.size || system.size || 'medium';
-      formatted.size = size;
-
-      // PF2e specific: rarity
-      if (gameSystem === 'pf2e') {
-        const rarity = system.traits?.rarity;
-        if (rarity) formatted.rarity = rarity;
-      }
-
-      // Feature flags
-      const hasSpells = hasSpellcasting(creature, gameSystem);
-      formatted.flags = {
-        spellcaster: hasSpells,
-      };
-
-      // D&D 5e specific flags
-      if (gameSystem === 'dnd5e') {
-        const hasLegendary = !!(
-          system.resources?.legact ||
-          system.legendary ||
-          (system.resources?.legres && system.resources.legres.value > 0)
-        );
-        formatted.flags.legendary = hasLegendary;
-
-        const typeStr = typeof creatureType === 'string' ? creatureType.toLowerCase() : '';
-        formatted.flags.undead = typeStr === 'undead';
-        formatted.flags.dragon = typeStr === 'dragon';
-        formatted.flags.fiend = typeStr === 'fiend';
-      }
-    } else {
-      // Legacy fallback (D&D 5e assumptions)
-      const challengeRating = creature.challengeRating ?? system.details?.cr ?? system.cr ?? 0;
-      const creatureType =
-        creature.creatureType ?? system.details?.type?.value ?? system.type?.value ?? 'unknown';
-      const size = creature.size ?? system.traits?.size ?? system.size ?? 'medium';
-
-      const hasSpells =
-        creature.hasSpells ??
-        !!(
-          system.spells ||
-          system.attributes?.spellcasting ||
-          (system.details?.spellLevel && system.details.spellLevel > 0)
-        );
-      const hasLegendary =
-        creature.hasLegendaryActions ??
-        !!(
-          system.resources?.legact ||
-          system.legendary ||
-          (system.resources?.legres && system.resources.legres.value > 0)
-        );
-
-      formatted.challengeRating = challengeRating;
-      formatted.creatureType = creatureType;
-      formatted.size = size;
-      formatted.flags = {
-        spellcaster: hasSpells,
-        legendary: hasLegendary,
-        undead: creatureType.toLowerCase() === 'undead',
-        dragon: creatureType.toLowerCase() === 'dragon',
-        fiend: creatureType.toLowerCase() === 'fiend',
-      };
-    }
-
-    return formatted;
-  }
-
-  /**
-   * Helper method to describe criteria in human-readable format
-   */
-  private describeCriteria(params: any, gameSystem: GameSystem): string {
-    const parts: string[] = [];
-
-    if (gameSystem === 'dnd5e') {
-      if (params.challengeRating !== undefined) {
-        if (typeof params.challengeRating === 'number') {
-          parts.push(`CR ${params.challengeRating}`);
-        } else if (typeof params.challengeRating === 'object') {
-          const min = params.challengeRating.min ?? 0;
-          const max = params.challengeRating.max ?? 30;
-          parts.push(`CR ${min}-${max}`);
-        }
-      }
-    } else if (gameSystem === 'pf2e') {
-      if (params.level !== undefined) {
-        if (typeof params.level === 'number') {
-          parts.push(`Level ${params.level}`);
-        } else if (typeof params.level === 'object') {
-          const min = params.level.min ?? -1;
-          const max = params.level.max ?? 25;
-          parts.push(`Level ${min}-${max}`);
-        }
-      }
-    } else if (gameSystem === 'cosmere-rpg') {
-      if (params.tier !== undefined) {
-        if (typeof params.tier === 'number') {
-          parts.push(`Tier ${params.tier}`);
-        } else if (typeof params.tier === 'object') {
-          const min = params.tier.min ?? 1;
-          const max = params.tier.max ?? 4;
-          parts.push(`Tier ${min}-${max}`);
-        }
-      }
-      if (params.role) parts.push(`role=${String(params.role).toLowerCase()}`);
-      if (params.hasInvestiture !== undefined) {
-        parts.push(params.hasInvestiture ? 'has Investiture' : 'no Investiture');
-      }
-      if (params.hitPoints !== undefined) {
-        if (typeof params.hitPoints === 'number') {
-          parts.push(`hp=${params.hitPoints}`);
-        } else if (typeof params.hitPoints === 'object') {
-          const min = params.hitPoints.min;
-          const max = params.hitPoints.max;
-          if (min !== undefined && max !== undefined) parts.push(`hp ${min}-${max}`);
-          else if (min !== undefined) parts.push(`hp>=${min}`);
-          else if (max !== undefined) parts.push(`hp<=${max}`);
-        }
-      }
-      if (params.defensesMin) {
-        const { phy, cog, spi } = params.defensesMin;
-        if (phy !== undefined) parts.push(`phy>=${phy}`);
-        if (cog !== undefined) parts.push(`cog>=${cog}`);
-        if (spi !== undefined) parts.push(`spi>=${spi}`);
-      }
-      if (params.deflectMin !== undefined) parts.push(`deflect>=${params.deflectMin}`);
-    }
-
-    if (params.creatureType) parts.push(params.creatureType);
-    if (params.size) parts.push(params.size);
-    if (params.rarity) parts.push(params.rarity);
-    if (params.traits && params.traits.length > 0) {
-      parts.push(`traits: ${params.traits.join(', ')}`);
-    }
-    if (params.hasSpells) parts.push('spellcaster');
-    if (params.hasLegendaryActions) parts.push('legendary');
-
-    return parts.length > 0 ? parts.join(', ') : 'no criteria';
-  }
-
   private extractCompactStats(item: any): any {
     const system = item.system || {};
     const stats: any = {};
+
+    // get-compendium-item does not need a separate world-info round trip. These
+    // mgt2e shapes are distinctive, and the helper remains empty for other systems.
+    Object.assign(stats, this.extractMGT2eCompactStats(item));
 
     // Core combat stats
     if (system.attributes?.ac?.value) stats.armorClass = system.attributes.ac.value;
@@ -1211,6 +629,61 @@ export class CompendiumTools {
       if (movement.fly) speeds.push(`fly ${movement.fly} ft`);
       if (movement.swim) speeds.push(`swim ${movement.swim} ft`);
       if (speeds.length > 0) stats.speed = speeds.join(', ');
+    }
+
+    return stats;
+  }
+
+  /** Extract a bounded mgt2e summary without persistent creature indexing. */
+  private extractMGT2eCompactStats(item: any): any {
+    const system = item.system || {};
+    const stats: any = {};
+    const type = String(item.type || '').toLowerCase();
+    const looksLikeMGT2e =
+      ['traveller', 'spacecraft', 'vehicle', 'package', 'swarm'].includes(type) ||
+      !!system.sophont ||
+      !!system.spacecraft ||
+      !!system.vehicle ||
+      !!system.world?.uwp ||
+      (type === 'creature' &&
+        (typeof system.behaviour === 'string' || typeof system.traits === 'string'));
+
+    if (!looksLikeMGT2e) return stats;
+
+    const hits = system.hits;
+    if (typeof hits === 'number') {
+      stats.hits = { current: hits, max: hits };
+    } else if (hits && typeof hits === 'object') {
+      const current = typeof hits.value === 'number' ? hits.value : undefined;
+      const max = typeof hits.max === 'number' ? hits.max : undefined;
+      if (current !== undefined || max !== undefined) stats.hits = { current, max };
+    }
+
+    if (['traveller', 'npc', 'package'].includes(type)) {
+      const sophont = system.sophont || {};
+      if (sophont.species) stats.species = sophont.species;
+      if (sophont.profession) stats.profession = sophont.profession;
+      if (sophont.homeworld) stats.homeworld = sophont.homeworld;
+    } else if (type === 'creature' || type === 'swarm') {
+      if (system.behaviour) stats.behaviour = system.behaviour;
+      if (system.traits) stats.traits = system.traits;
+    } else if (type === 'spacecraft') {
+      const spacecraft = system.spacecraft || {};
+      if (typeof spacecraft.dtons === 'number') stats.dtons = spacecraft.dtons;
+      if (spacecraft.configuration) stats.configuration = spacecraft.configuration;
+      if (spacecraft.tl !== undefined) stats.techLevel = spacecraft.tl;
+      if (spacecraft.mdrive !== undefined) stats.mDrive = spacecraft.mdrive;
+      if (spacecraft.jdrive !== undefined) stats.jDrive = spacecraft.jdrive;
+      if (spacecraft.rdrive !== undefined) stats.rDrive = spacecraft.rdrive;
+      if (spacecraft.armour !== undefined) stats.armour = spacecraft.armour;
+    } else if (type === 'vehicle') {
+      const vehicle = system.vehicle || {};
+      if (vehicle.chassis) stats.chassis = vehicle.chassis;
+      if (vehicle.subtype) stats.subtype = vehicle.subtype;
+      if (vehicle.tl !== undefined) stats.techLevel = vehicle.tl;
+      if (vehicle.skill) stats.skill = vehicle.skill;
+    } else if (type === 'world' && system.world?.uwp) {
+      stats.uwp = system.world.uwp;
     }
 
     return stats;

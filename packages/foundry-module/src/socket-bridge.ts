@@ -41,12 +41,51 @@ export class SocketBridge {
   private activeConnectionType: 'websocket' | 'webrtc' | null = null;
   private disposed = false;
   private pendingConnectReject: ((error: Error) => void) | null = null;
+  private standbyBecauseOwnerActive = false;
 
   constructor(
     private config: BridgeConfig,
     private activityCallbacks: SocketBridgeActivityCallbacks = {}
   ) {
     this.maxReconnectAttempts = config.reconnectAttempts;
+  }
+
+  /** Refresh a passive retry owner's settings without replacing the bridge. */
+  updateConfig(config: BridgeConfig): void {
+    const changed =
+      this.config.serverHost !== config.serverHost ||
+      this.config.serverPort !== config.serverPort ||
+      this.config.namespace !== config.namespace ||
+      this.config.connectionType !== config.connectionType ||
+      this.config.authToken !== config.authToken ||
+      this.config.autoReconnect !== config.autoReconnect ||
+      this.config.reconnectAttempts !== config.reconnectAttempts ||
+      this.config.reconnectDelay !== config.reconnectDelay ||
+      this.config.connectionTimeout !== config.connectionTimeout;
+
+    this.config = config;
+    this.maxReconnectAttempts = config.reconnectAttempts;
+
+    if (config.autoReconnect === false) {
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+      if (!this.isTransportReady()) this.connectionState = CONNECTION_STATES.DISCONNECTED;
+      return;
+    }
+
+    if (
+      !changed ||
+      this.disposed ||
+      this.isTransportReady() ||
+      this.connectionState === CONNECTION_STATES.CONNECTING
+    ) {
+      return;
+    }
+
+    // Preserve an existing standby cadence. Replacing its timer with a fast
+    // retry while the active GM restarts could make the standby race for
+    // ownership; the pending attempt will read this updated config.
+    if (!this.reconnectTimer) this.scheduleReconnect();
   }
 
   async connect(): Promise<void> {
@@ -60,11 +99,10 @@ export class SocketBridge {
       return;
     }
 
-    this.connectionState = CONNECTION_STATES.CONNECTING;
-    this.log('Connecting to MCP server...');
-
     // Determine connection type
     const connectionType = this.determineConnectionType();
+    this.connectionState = CONNECTION_STATES.CONNECTING;
+    this.log('Connecting to MCP server...');
     this.log(`Using connection type: ${connectionType}`);
 
     if (connectionType === 'webrtc') {
@@ -76,18 +114,49 @@ export class SocketBridge {
 
   private determineConnectionType(): 'websocket' | 'webrtc' {
     const configType = this.config.connectionType || 'auto';
+    let connectionType: 'websocket' | 'webrtc';
 
     if (configType === 'auto') {
       // Use WebRTC for HTTPS (secure), WebSocket for HTTP (localhost)
       // WebRTC provides P2P encrypted channel without needing SSL certificates
       const isHttps = window.location.protocol === 'https:';
-      const type = isHttps ? 'webrtc' : 'websocket';
-      this.log(`Auto-detected connection type: ${type} (page is ${window.location.protocol})`);
-      return type;
+      connectionType = isHttps ? 'webrtc' : 'websocket';
+      this.log(
+        `Auto-detected connection type: ${connectionType} (page is ${window.location.protocol})`
+      );
+    } else {
+      connectionType = configType as 'websocket' | 'webrtc';
     }
 
-    // Use explicit connection type from config
-    return configType as 'websocket' | 'webrtc';
+    if (
+      connectionType === 'websocket' &&
+      window.location.protocol === 'https:' &&
+      this.isLoopbackHost(this.config.serverHost)
+    ) {
+      // The bundled daemon is a cleartext loopback listener. Browsers forbid
+      // ws:// from an HTTPS world, while wss:// cannot speak to that listener
+      // without a separate TLS reverse proxy. Do not silently change an
+      // explicit transport choice; guide the GM to the compatible option.
+      throw new Error(
+        'WebSocket cannot reach the bundled cleartext loopback bridge from an HTTPS Foundry page; select Auto or WebRTC'
+      );
+    }
+
+    if ((configType === 'auto' || connectionType === 'webrtc') && this.config.serverPort > 65534) {
+      throw new Error(
+        'Auto/WebRTC serverPort must be at most 65534 because signaling uses the next port'
+      );
+    }
+
+    return connectionType;
+  }
+
+  private isLoopbackHost(host: string): boolean {
+    const normalized = host
+      .trim()
+      .toLowerCase()
+      .replace(/^\[|\]$/g, '');
+    return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
   }
 
   private async connectWebRTC(): Promise<void> {
@@ -113,6 +182,7 @@ export class SocketBridge {
         : CONNECTION_STATES.DISCONNECTED;
 
       if (connected) {
+        this.standbyBecauseOwnerActive = false;
         this.reconnectAttempts = 0;
         if (!wasConnected) this.notifyConnectionState(true);
       } else {
@@ -132,6 +202,9 @@ export class SocketBridge {
       this.log('Connected via WebRTC');
     } catch (error) {
       this.log(`WebRTC connection failed: ${error}`);
+      if (/Another Foundry module connection is active|HTTP 409/i.test(String(error))) {
+        this.standbyBecauseOwnerActive = true;
+      }
       if (this.webrtc === connection) {
         this.webrtc = null;
         connection.disconnect();
@@ -146,8 +219,9 @@ export class SocketBridge {
   private async connectWebSocket(): Promise<void> {
     this.activeConnectionType = 'websocket';
 
-    // WebSocket for HTTP localhost connections only
-    const protocol = 'ws';
+    // Match the page's transport security. Browsers reject ws:// from an
+    // HTTPS world as mixed content, including Forge-hosted worlds.
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const host = this.config.serverHost;
     this.log(`Using WebSocket (${protocol}://${host}:${this.config.serverPort})`);
 
@@ -208,7 +282,6 @@ export class SocketBridge {
             return;
           }
           this.connectionState = CONNECTION_STATES.CONNECTED;
-          this.reconnectAttempts = 0;
           this.notifyConnectionState(true);
           this.log('Connected to MCP server via WebSocket');
           this.setupEventHandlers();
@@ -246,6 +319,12 @@ export class SocketBridge {
           this.ws = null;
           if (this.disposed) return;
           this.log(`Disconnected: ${event.reason || 'Connection closed'}`);
+          if (
+            event.code === 4009 ||
+            /Another Foundry module connection is active/i.test(event.reason)
+          ) {
+            this.standbyBecauseOwnerActive = true;
+          }
           this.connectionState = CONNECTION_STATES.DISCONNECTED;
           this.notifyConnectionState(false);
           rejectConnect(new Error('WebSocket closed'));
@@ -276,8 +355,9 @@ export class SocketBridge {
     }
 
     if (this.webrtc) {
-      this.webrtc.disconnect();
+      const webrtc = this.webrtc;
       this.webrtc = null;
+      webrtc.disconnect();
     }
 
     if (this.ws) {
@@ -296,12 +376,47 @@ export class SocketBridge {
     this.log('Disconnected from MCP server');
   }
 
+  /**
+   * Bring a throttled/backgrounded tab back into the retry loop immediately.
+   * This keeps a single SocketBridge as the reconnect owner while avoiding an
+   * additional long-lived timer or replacement bridge.
+   */
+  async reconnectNow(): Promise<void> {
+    if (this.disposed || this.config.autoReconnect === false) return;
+
+    if (this.isTransportReady()) {
+      return;
+    }
+
+    if (this.connectionState === CONNECTION_STATES.CONNECTED) {
+      this.handleTransportFailure();
+    }
+
+    if (this.connectionState === CONNECTION_STATES.CONNECTING) {
+      return;
+    }
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    this.connectionState = CONNECTION_STATES.DISCONNECTED;
+    await this.connect();
+  }
+
   private setupEventHandlers(): void {
     if (!this.ws) return;
 
     this.ws.onmessage = event => {
       try {
         const message = JSON.parse(event.data);
+        // Only an application-level response proves the connection was
+        // accepted by the backend. A duplicate socket can open and then be
+        // immediately closed with code 4009, so resetting on `open` creates a
+        // one-second two-tab retry loop.
+        this.reconnectAttempts = 0;
+        this.standbyBecauseOwnerActive = false;
         this.handleMessage(message);
       } catch (error) {
         this.log(`Failed to parse message: ${error}`);
@@ -318,36 +433,22 @@ export class SocketBridge {
         ].includes(message.data?.method);
         const activityToken = tracksActivity ? this.notifyActivityStart() : undefined;
         try {
-          await this.handleMCPQuery(message.data, response => {
+          await this.handleMCPQuery(message.data, response =>
             this.sendMessage({
               type: 'mcp-response',
               id: message.id,
               data: response,
-            });
-          });
+            })
+          );
         } finally {
           if (tracksActivity) this.notifyActivityEnd(activityToken);
         }
       } else if (message.type === 'ping') {
-        this.sendMessage({
+        await this.sendMessage({
           type: 'pong',
           id: message.id,
           data: { timestamp: Date.now(), status: 'ok' },
         });
-      } else if (message.type === 'job-completed') {
-        const activityToken = this.notifyActivityStart();
-        try {
-          await this.handleJobCompleted(message.data);
-        } finally {
-          this.notifyActivityEnd(activityToken);
-        }
-      } else if (message.type === 'map-generation-progress') {
-        const activityToken = this.notifyActivityStart();
-        try {
-          this.handleProgressUpdate(message.data);
-        } finally {
-          this.notifyActivityEnd(activityToken);
-        }
       }
     } catch (error) {
       console.error(`[foundry-mcp-bridge] ERROR in handleMessage:`, error);
@@ -385,47 +486,11 @@ export class SocketBridge {
     }
   }
 
-  private handleProgressUpdate(data: any): void {
-    try {
-      if (!data) {
-        // Silently ignore empty progress updates (can happen during initialization)
-        return;
-      }
-      const { progress, status, queueInfo } = data;
-
-      // Build progress message
-      let message = `🎨 Generating battlemap: ${progress}%`;
-
-      if (queueInfo) {
-        const { currentStep, totalSteps, estimatedTimeRemaining } = queueInfo;
-        if (currentStep !== undefined && totalSteps !== undefined) {
-          message += ` (Step ${currentStep}/${totalSteps})`;
-        }
-        if (estimatedTimeRemaining) {
-          const minutes = Math.floor(estimatedTimeRemaining / 60);
-          const seconds = Math.floor(estimatedTimeRemaining % 60);
-          if (minutes > 0) {
-            message += ` - ${minutes}m ${seconds}s remaining`;
-          } else {
-            message += ` - ${seconds}s remaining`;
-          }
-        }
-      }
-
-      if (status) {
-        message += ` - ${status}`;
-      }
-
-      // Show as banner notification
-      ui.notifications?.info(message);
-
-      this.log(`Progress: ${message}`);
-    } catch (error) {
-      console.error(`[foundry-mcp-bridge] Error handling progress update:`, error);
-    }
-  }
-
-  private async handleMCPQuery(data: any, callback: (response: any) => void): Promise<void> {
+  private async handleMCPQuery(
+    data: any,
+    callback: (response: any) => Promise<void>
+  ): Promise<void> {
+    let response: any;
     try {
       this.log(`Handling MCP query: ${data.method}`);
 
@@ -441,180 +506,17 @@ export class SocketBridge {
       const result = await handler(data.data || {});
 
       this.log(`Query completed: ${data.method}`);
-      callback({ success: true, data: result });
+      response = { success: true, data: result };
     } catch (error) {
       this.log(
         `Query failed: ${data.method} - ${error instanceof Error ? error.message : 'Unknown error'}`
       );
-      callback({
+      response = {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      };
     }
-  }
-
-  private async handleJobCompleted(data: any): Promise<void> {
-    try {
-      console.log(`[foundry-mcp-bridge] Map generation completed, creating scene...`);
-      console.log(`[foundry-mcp-bridge] Job completion data:`, data);
-
-      // Handle mapgen-style data structure
-      if (!data.result) {
-        console.error(`[foundry-mcp-bridge] ERROR: No scene result data provided`);
-        throw new Error('No scene result data provided');
-      }
-
-      if (!data.image_path) {
-        console.error(`[foundry-mcp-bridge] ERROR: No image path provided for scene creation`);
-        throw new Error('No image path provided for scene creation');
-      }
-
-      // Use the complete scene data from backend (like mapgen does)
-      const sceneData = data.result;
-
-      console.log(`[foundry-mcp-bridge] Scene data to create:`, sceneData);
-      console.log(`[foundry-mcp-bridge] Scene name: "${sceneData.name}"`);
-
-      // Ensure "AI Generated Maps" folder exists and get its ID
-      console.log(`[foundry-mcp-bridge] Ensuring AI Generated Maps folder exists...`);
-      const folderId = await this.ensureAIMapsFolderExists();
-      console.log(`[foundry-mcp-bridge] Folder ID:`, folderId);
-
-      // Add folder to scene data
-      if (folderId) {
-        sceneData.folder = folderId;
-        console.log(`[foundry-mcp-bridge] Added folder ID to scene data`);
-      }
-
-      // Create the scene using the complete payload from backend
-      console.log(`[foundry-mcp-bridge] Attempting to create scene...`);
-      const scene = await (globalThis as any).Scene.create(sceneData);
-      console.log(`[foundry-mcp-bridge] Scene created successfully:`, scene);
-
-      // CRITICAL: Foundry v13 bug workaround (like working mapgen system)
-      if (!scene.img && sceneData.img) {
-        await scene.update({
-          img: sceneData.img,
-          background: { src: sceneData.img },
-        });
-      }
-
-      if (sceneData.walls && sceneData.walls.length > 0) {
-        await this.createSceneWalls(scene, sceneData.walls);
-      }
-
-      ui.notifications?.info(`Scene "${sceneData.name}" created successfully!`);
-
-      // Auto-activate the scene if enabled
-      const autoActivate = true; // You might want to make this configurable
-      if (autoActivate) {
-        await scene.activate();
-        ui.notifications?.info(`Switched to "${sceneData.name}" - Ready for token placement!`);
-      }
-
-      this.log(`Scene "${sceneData.name}" created and activated`);
-    } catch (error) {
-      this.log(
-        `Failed to create scene from generated map: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-      ui.notifications?.error(
-        `Failed to create scene: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-    }
-  }
-
-  private async createSceneWalls(scene: any, wallsData: any[]): Promise<void> {
-    if (!wallsData || !Array.isArray(wallsData) || wallsData.length === 0) {
-      this.log('No wall data provided');
-      return;
-    }
-
-    try {
-      this.log(`Creating ${wallsData.length} walls for scene ${scene.name}`);
-
-      // Filter out walls with invalid coordinates
-      const validWalls = wallsData.filter((wall: any) => {
-        if (!wall.c || !Array.isArray(wall.c) || wall.c.length !== 4) {
-          this.log(`Invalid wall coordinates: ${JSON.stringify(wall)}`);
-          return false;
-        }
-        if (!wall.c.every((coord: any) => typeof coord === 'number' && !isNaN(coord))) {
-          this.log(`Invalid coordinate values: ${JSON.stringify(wall.c)}`);
-          return false;
-        }
-        return true;
-      });
-
-      this.log(`${validWalls.length} valid walls out of ${wallsData.length} total`);
-
-      const wallDocuments = validWalls.map((wall: any) => ({
-        c: wall.c, // Wall coordinates [x1, y1, x2, y2]
-        move: wall.movement || 0,
-        sense: wall.sight || 0,
-        doorSound: '',
-        dir: wall.direction || 0,
-        door: wall.door || 0,
-        ds: wall.doorState || 0,
-        flags: wall.flags || {},
-      }));
-
-      if (wallDocuments.length > 0) {
-        await scene.createEmbeddedDocuments('Wall', wallDocuments);
-        ui.notifications?.info(`Created ${wallDocuments.length} walls in scene "${scene.name}"`);
-      } else {
-        this.log('No valid walls to create');
-        ui.notifications?.warn('No valid walls could be created from detection data');
-      }
-    } catch (error) {
-      this.log(
-        `Failed to create walls: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-      ui.notifications?.warn(
-        `Some walls could not be created: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-    }
-  }
-
-  /**
-   * Ensure "AI Generated Maps" folder exists for organizing generated scenes
-   */
-  private async ensureAIMapsFolderExists(): Promise<string | null> {
-    try {
-      const folderName = 'AI Generated Maps';
-
-      // Check if folder already exists
-      const existingFolder = (globalThis as any).game.folders.find(
-        (f: any) => f.type === 'Scene' && f.name === folderName
-      );
-
-      if (existingFolder) {
-        this.log(`AI Generated Maps folder already exists with ID: ${existingFolder.id}`);
-        return existingFolder.id;
-      }
-
-      // Create the folder
-      this.log('Creating AI Generated Maps folder...');
-      const folder = await (globalThis as any).Folder.create({
-        name: folderName,
-        type: 'Scene',
-        description: 'Scenes created by AI Map Generation',
-        color: '#4a90e2', // Nice blue color
-        sorting: 'a', // Sort alphabetically
-      });
-
-      if (folder) {
-        this.log(`Created AI Generated Maps folder with ID: ${folder.id}`);
-        return folder.id;
-      }
-
-      this.log('Failed to create AI Generated Maps folder');
-      return null;
-    } catch (error) {
-      this.log(
-        `Error managing AI Generated Maps folder: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-      return null;
-    }
+    await callback(response);
   }
 
   private scheduleReconnect(): void {
@@ -640,6 +542,7 @@ export class SocketBridge {
     this.connectionState = CONNECTION_STATES.RECONNECTING;
 
     this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
       if (this.disposed) return;
       try {
         await this.connect();
@@ -651,40 +554,76 @@ export class SocketBridge {
 
   /** Push a game event to the MCP server (see event-service.ts). */
   sendEvent(event: unknown): void {
-    this.sendMessage({ type: 'bridge-event', event });
+    void this.sendMessage({ type: 'bridge-event', event }).catch(() => {});
   }
 
-  private sendMessage(message: any): void {
+  private async sendMessage(message: any): Promise<void> {
     if (this.disposed || this.connectionState !== CONNECTION_STATES.CONNECTED) {
-      this.log(`Cannot send message - not connected`);
+      this.log('Cannot send message - not connected');
       return;
     }
 
     try {
       if (this.activeConnectionType === 'webrtc' && this.webrtc) {
-        this.webrtc.sendMessage(message);
+        await this.webrtc.sendMessage(message);
       } else if (this.activeConnectionType === 'websocket' && this.ws) {
         this.ws.send(JSON.stringify(message));
       } else {
         this.log('No active connection to send message');
-        return;
+        throw new Error('No active connection to send message');
       }
       this.log(`Sent message via ${this.activeConnectionType}: ${message.type}`);
     } catch (error) {
       this.log(`Failed to send message: ${error}`);
+      this.handleTransportFailure();
+      throw error;
     }
   }
 
   emitToServer(event: string, data?: any): void {
-    this.sendMessage({
+    void this.sendMessage({
       type: event,
       data: data,
       timestamp: Date.now(),
-    });
+    }).catch(() => {});
   }
 
   isConnected(): boolean {
-    return this.connectionState === CONNECTION_STATES.CONNECTED;
+    return this.connectionState === CONNECTION_STATES.CONNECTED && this.isTransportReady();
+  }
+
+  private isTransportReady(): boolean {
+    if (this.activeConnectionType === 'webrtc') {
+      return this.webrtc?.isConnected() === true;
+    }
+    if (this.activeConnectionType === 'websocket') {
+      return this.ws?.readyState === 1;
+    }
+    return false;
+  }
+
+  private handleTransportFailure(): void {
+    const wasConnected = this.connectionState === CONNECTION_STATES.CONNECTED;
+
+    if (this.webrtc) {
+      const webrtc = this.webrtc;
+      this.webrtc = null;
+      webrtc.disconnect();
+    }
+    if (this.ws) {
+      const ws = this.ws;
+      this.ws = null;
+      ws.onopen = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.onmessage = null;
+      ws.close();
+    }
+
+    this.activeConnectionType = null;
+    this.connectionState = CONNECTION_STATES.DISCONNECTED;
+    if (wasConnected) this.notifyConnectionState(false);
+    this.scheduleReconnect();
   }
 
   getConnectionState(): string {
@@ -698,6 +637,7 @@ export class SocketBridge {
       disposed: this.disposed,
       reconnectAttempts: this.reconnectAttempts,
       maxReconnectAttempts: this.maxReconnectAttempts,
+      standbyBecauseOwnerActive: this.standbyBecauseOwnerActive,
       config: {
         host: this.config.serverHost,
         port: this.config.serverPort,

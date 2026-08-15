@@ -11,69 +11,63 @@ import { Logger } from '../logger.js';
 /**
  * Supported game systems
  */
-export type GameSystem = 'dnd5e' | 'pf2e' | 'cosmere-rpg' | 'other';
+export type GameSystem = 'dnd5e' | 'pf2e' | 'cosmere-rpg' | 'mgt2e' | 'other';
+
+export interface DetectedGameSystem {
+  system: GameSystem;
+  systemId: string | null;
+}
 
 /**
- * Cache for system detection (avoid repeated queries)
+ * Detect the active routed Foundry game system and return its raw ID.
+ *
+ * Deliberately uncached: the same RoutingFoundryClient facade can target a
+ * different named profile on every tool call. A process-global or per-tool
+ * cache would therefore leak one world's system into another profile.
  */
-let cachedSystem: GameSystem | null = null;
-let cachedSystemId: string | null = null;
+export async function detectGameSystemInfo(
+  foundryClient: FoundryClient,
+  logger?: Logger
+): Promise<DetectedGameSystem> {
+  try {
+    const worldInfo = await foundryClient.query('foundry-mcp-bridge.getWorldInfo');
+    const rawSystem = worldInfo?.system;
+    const rawId =
+      typeof rawSystem === 'string'
+        ? rawSystem
+        : rawSystem && typeof rawSystem.id === 'string'
+          ? rawSystem.id
+          : '';
+    const systemId = rawId.trim().toLowerCase();
+    const system: GameSystem =
+      systemId === 'dnd5e' ||
+      systemId === 'pf2e' ||
+      systemId === 'cosmere-rpg' ||
+      systemId === 'mgt2e'
+        ? systemId
+        : 'other';
+
+    if (logger) {
+      logger.info('Game system detected', { systemId, detectedAs: system });
+    }
+
+    return { system, systemId: systemId || null };
+  } catch (error) {
+    if (logger) {
+      logger.warn('Failed to detect game system; the next call will retry', { error });
+    }
+    return { system: 'other', systemId: null };
+  }
+}
 
 /**
- * Detect the active Foundry game system
- * Results are cached to avoid repeated queries
+ * Detect the active Foundry game system for the current routed call.
  */
 export async function detectGameSystem(
   foundryClient: FoundryClient,
   logger?: Logger
 ): Promise<GameSystem> {
-  if (cachedSystem) {
-    return cachedSystem;
-  }
-
-  try {
-    const worldInfo = await foundryClient.query('foundry-mcp-bridge.getWorldInfo');
-    const systemId = (worldInfo.system ?? '').toLowerCase();
-
-    cachedSystemId = systemId;
-
-    if (systemId === 'dnd5e') {
-      cachedSystem = 'dnd5e';
-    } else if (systemId === 'pf2e') {
-      cachedSystem = 'pf2e';
-    } else if (systemId === 'cosmere-rpg') {
-      cachedSystem = 'cosmere-rpg';
-    } else {
-      cachedSystem = 'other';
-    }
-
-    if (logger) {
-      logger.info('Game system detected', { systemId, detectedAs: cachedSystem });
-    }
-
-    return cachedSystem;
-  } catch (error) {
-    if (logger) {
-      logger.error('Failed to detect game system, defaulting to other', { error });
-    }
-    cachedSystem = 'other';
-    return cachedSystem;
-  }
-}
-
-/**
- * Get the raw system ID string (e.g., "dnd5e", "pf2e", "coc7")
- */
-export function getCachedSystemId(): string | null {
-  return cachedSystemId;
-}
-
-/**
- * Clear cached system detection (useful for testing or world switches)
- */
-export function clearSystemCache(): void {
-  cachedSystem = null;
-  cachedSystemId = null;
+  return (await detectGameSystemInfo(foundryClient, logger)).system;
 }
 
 /**

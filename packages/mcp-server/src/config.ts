@@ -1,58 +1,84 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
-import { getFoundryDataDir, getDefaultComfyUIDir } from './utils/platform.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+declare const __FOUNDRY_MCP_VERSION__: string | undefined;
 
 dotenv.config();
 
-const ConfigSchema = z.object({
+function readPackageVersion(): string {
+  const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.join(moduleDirectory, 'package.json'),
+    path.join(moduleDirectory, '..', 'package.json'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      if (typeof parsed.version === 'string' && parsed.version.length > 0) return parsed.version;
+    } catch {
+      // Try the next distribution layout.
+    }
+  }
+
+  throw new Error('Unable to determine MCP server version from package.json');
+}
+
+const PACKAGE_VERSION =
+  typeof __FOUNDRY_MCP_VERSION__ === 'string' ? __FOUNDRY_MCP_VERSION__ : readPackageVersion();
+
+export const ConfigSchema = z.object({
   logLevel: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
   logFormat: z.enum(['json', 'simple']).default('simple'),
   enableFileLogging: z.boolean().default(false),
   logFilePath: z.string().optional(),
-  foundry: z.object({
-    host: z.string().default('localhost'),
-    port: z.number().min(1024).max(65535).default(31415),
-    namespace: z.string().default('/foundry-mcp'),
-    reconnectAttempts: z.number().min(1).max(20).default(5),
-    reconnectDelay: z.number().min(100).max(30000).default(1000),
-    connectionTimeout: z.number().min(1000).max(60000).default(10000),
-    connectionType: z.enum(['websocket', 'webrtc', 'auto']).default('auto'),
-    protocol: z.enum(['ws', 'wss']).default('ws'), // Legacy, used only for WebSocket mode
-    remoteMode: z.boolean().default(false),
-    dataPath: z.string().optional(), // Custom path for generated maps (remote mode)
-    rejectUnauthorized: z.boolean().default(true), // TLS certificate validation
-    // WebRTC signaling HTTP port; defaults to port + 1 when unset
-    webrtcSignalingPort: z.number().min(1024).max(65535).optional(),
-    // Shared secret; when set, module connections must present the same token
-    authToken: z.string().optional(),
-    // WebRTC configuration
-    webrtc: z
-      .object({
-        stunServers: z
-          .array(z.string())
-          .default(['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302']),
-        // Future: TURN servers support
-        // turnServers: z.array(z.object({
-        //   urls: z.string(),
-        //   username: z.string().optional(),
-        //   credential: z.string().optional()
-        // })).optional()
-      })
-      .default({
-        stunServers: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
-      }),
-  }),
-  comfyui: z.object({
-    // ComfyUI always runs locally on the same machine as the MCP server
-    port: z.number().min(1024).max(65535).default(31411),
-    installPath: z.string(), // No default here - set in rawConfig
-    host: z.string().default('127.0.0.1'),
-    pythonCommand: z.string().default('python/python.exe'), // Will be platform-specific
-  }),
+  foundry: z
+    .object({
+      host: z.string().default('localhost'),
+      port: z.number().int().min(1024).max(65535).default(31415),
+      namespace: z.string().default('/foundry-mcp'),
+      reconnectAttempts: z.number().int().min(1).max(20).default(5),
+      reconnectDelay: z.number().int().min(100).max(30000).default(1000),
+      connectionTimeout: z.number().int().min(1000).max(60000).default(10000),
+      connectionType: z.enum(['websocket', 'webrtc', 'auto']).default('auto'),
+      protocol: z.enum(['ws', 'wss']).default('ws'), // Legacy, used only for WebSocket mode
+      remoteMode: z.boolean().default(false),
+      rejectUnauthorized: z.boolean().default(true), // TLS certificate validation
+      // Shared secret; when set, module connections must present the same token
+      authToken: z.string().optional(),
+      // WebRTC configuration
+      webrtc: z
+        .object({
+          stunServers: z
+            .array(z.string())
+            .default(['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302']),
+          // Future: TURN servers support
+          // turnServers: z.array(z.object({
+          //   urls: z.string(),
+          //   username: z.string().optional(),
+          //   credential: z.string().optional()
+          // })).optional()
+        })
+        .default({
+          stunServers: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
+        }),
+    })
+    .superRefine((value, context) => {
+      if (value.remoteMode && (!value.authToken || value.authToken.trim().length < 16)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['authToken'],
+          message: 'remoteMode requires an authToken of at least 16 characters',
+        });
+      }
+    }),
   toolResponseMaxChars: z.number().min(256).max(500000).default(20000),
   server: z.object({
     name: z.string().default('foundry-mcp-server'),
-    version: z.string().default('0.4.17'),
+    version: z.string().default(PACKAGE_VERSION),
   }),
 });
 
@@ -76,11 +102,7 @@ const rawConfig = {
       | 'auto',
     protocol: (process.env.FOUNDRY_PROTOCOL || 'ws') as 'ws' | 'wss',
     remoteMode: process.env.FOUNDRY_REMOTE_MODE === 'true',
-    dataPath: process.env.FOUNDRY_DATA_PATH,
     rejectUnauthorized: process.env.FOUNDRY_REJECT_UNAUTHORIZED !== 'false',
-    webrtcSignalingPort: process.env.FOUNDRY_WEBRTC_SIGNALING_PORT
-      ? parseInt(process.env.FOUNDRY_WEBRTC_SIGNALING_PORT, 10)
-      : undefined,
     authToken: process.env.FOUNDRY_AUTH_TOKEN || undefined,
     webrtc: {
       stunServers: process.env.FOUNDRY_STUN_SERVERS
@@ -88,17 +110,10 @@ const rawConfig = {
         : ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
     },
   },
-  comfyui: {
-    // ComfyUI always runs locally on the same machine as the MCP server (localhost:31411)
-    port: parseInt(process.env.COMFYUI_PORT || '31411', 10),
-    installPath: process.env.COMFYUI_INSTALL_PATH || getDefaultComfyUIDir(),
-    host: process.env.COMFYUI_HOST || '127.0.0.1',
-    pythonCommand: process.env.COMFYUI_PYTHON_COMMAND || 'python/python.exe',
-  },
   toolResponseMaxChars: parseInt(process.env.TOOL_RESPONSE_MAX_CHARS || '20000', 10),
   server: {
     name: process.env.SERVER_NAME || 'foundry-mcp-server',
-    version: process.env.SERVER_VERSION || '1.0.0',
+    version: PACKAGE_VERSION,
   },
 };
 

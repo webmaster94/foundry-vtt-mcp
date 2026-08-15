@@ -62,7 +62,7 @@ console.log('   • Creating README.txt...');
 const readme = `Foundry MCP Server ${VERSION}
 ═══════════════════════════════════════════════════════════════
 
-AI-powered campaign management for Foundry VTT using Claude Desktop
+MCP-powered campaign management for Foundry VTT
 
 📦 INSTALLATION
 ═══════════════════════════════════════════════════════════════
@@ -72,9 +72,8 @@ AI-powered campaign management for Foundry VTT using Claude Desktop
 3. Choose components:
    ✅ MCP Server (Required)
    ✅ Foundry Module (Optional, recommended)
-   ✅ ComfyUI AI Maps (Optional, ~13GB download)
 4. Restart Claude Desktop
-5. Start using AI-powered D&D campaigns in Foundry VTT!
+5. Start using your MCP client with Foundry VTT!
 
 The installer will automatically configure Claude Desktop to connect
 to the MCP server.
@@ -87,10 +86,11 @@ Double-click "Uninstall.tool" to completely remove all components.
 This will remove:
 • MCP Server from /Applications
 • Claude Desktop configuration
-• ComfyUI and AI models (~17GB)
 • Foundry VTT module
-• AI-generated maps
-• All cache and log files
+• Bridge-owned cache and log files
+
+User-created Foundry content and generated maps are preserved. Only the
+retired per-world Enhanced Creature Index cache is removed.
 
 ⚠️  Note: Uninstallation cannot be undone!
 
@@ -99,9 +99,8 @@ This will remove:
 
 • macOS 11.0 (Big Sur) or later
 • Apple Silicon (M1/M2/M3/M4) or Intel Mac
-• 20GB free disk space (if installing ComfyUI)
 • Claude Desktop application
-• Foundry VTT (any version 11+)
+• Foundry VTT v13 or v14
 
 🚀 QUICK START
 ═══════════════════════════════════════════════════════════════
@@ -111,29 +110,28 @@ After installation:
 1. Open Claude Desktop (it will auto-connect to MCP server)
 2. Open Foundry VTT and enable "MCP Bridge" module
 3. In Claude, try: "Create a level 5 elven wizard named Elara"
-4. In Claude, try: "Generate a dark forest battlemap"
-5. In Claude, try: "Create a quest to find the lost amulet"
+4. In Claude, try: "Create a quest to find the lost amulet"
+5. In Claude, try: "Show me the actors in the current scene"
 
 📚 FEATURES
 ═══════════════════════════════════════════════════════════════
 
-• 25 MCP tools for comprehensive Foundry VTT integration
+• Generic Foundry document management with dry-run, audit, and undo
 • Actor creation with natural language processing
 • Quest management with HTML generation
 • Campaign system with multi-part adventures
 • Dice roll coordination between Claude and Foundry
-• AI-powered battlemap generation (ComfyUI)
-• Real-time WebSocket communication
+• WebSocket and WebRTC bridge connections
 • Actor ownership and permission management
-• Enhanced creature search and filtering
+• Bounded compendium search over live Foundry data
 
 📖 DOCUMENTATION
 ═══════════════════════════════════════════════════════════════
 
-Full documentation: https://github.com/adambdooley/foundry-vtt-mcp
+Full documentation: https://github.com/webmaster94/foundry-vtt-mcp
 
 Need help? Report issues at:
-https://github.com/adambdooley/foundry-vtt-mcp/issues
+https://github.com/webmaster94/foundry-vtt-mcp/issues
 
 ═══════════════════════════════════════════════════════════════
 © 2025 Foundry MCP Server

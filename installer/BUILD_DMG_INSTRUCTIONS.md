@@ -1,167 +1,43 @@
-# Building the Mac DMG Installer
+# Build the macOS installer and disk image
 
-## Overview
+The macOS distribution contains the MCP server, the optional Foundry MCP Bridge module, documentation, and a bridge-only uninstaller.
 
-The Mac installer uses a two-step build process:
+## Requirements
 
-1. **On Windows:** Build the .app bundle (cross-platform)
-2. **On Mac:** Create the DMG installer (Mac-only)
+- macOS 11 or later
+- Node.js 18 or later
+- Xcode Command Line Tools (`xcode-select --install`)
+- repository dependencies installed with `npm install`
 
----
+## Build
 
-## Step 1: Build .app Bundle on Windows (ALREADY DONE!)
-
-This step is complete. The app bundle is ready at:
-
-```
-installer/build/FoundryMCPServer.app
-```
-
-Files included:
-
-- ✅ MCP server bundles (index.cjs, backend.bundle.cjs)
-- ✅ Foundry module (dist/)
-- ✅ ComfyUI setup script (setup-comfyui.js)
-- ✅ Launch script
-- ✅ Info.plist
-- ✅ README.md
-
----
-
-## Step 2: Create DMG on Mac (DO THIS ON MAC)
-
-### Prerequisites:
-
-- Mac computer (any Mac will work)
-- The FoundryMCPServer.app bundle from Step 1
-
-### Transfer Files to Mac:
-
-**Option A: USB Drive**
+From the repository root:
 
 ```bash
-# Copy entire build directory to USB
-# Then on Mac:
-cp -R /Volumes/USB/build ~/Desktop/foundry-mcp-build
-```
-
-**Option B: Git**
-
-```bash
-# If you have the repo on Mac:
-git pull origin feature/mac-support-and-installer
+npm run build
+npm run build:bundle --workspace=packages/mcp-server
 cd installer
+node build-mac-pkg.js
+node build-dmg.js
 ```
 
-**Option C: Direct Copy** (if building on same network)
+The resulting files are written under `installer/build/`:
 
-```bash
-# From Windows, copy to Mac via network share
-```
+- `FoundryMCPServer-<version>-macOS.pkg`
+- `FoundryMCPServer-<version>.dmg`
 
-### Build the DMG:
+The PKG has two choices: the required MCP server and the Foundry module, selected by default. The disk image also includes `README.txt` and `Uninstall.tool`.
 
-```bash
-cd ~/Desktop/foundry-mcp-build  # or wherever you put it
-chmod +x ../build-dmg-on-mac.sh
-../build-dmg-on-mac.sh
-```
+## Verify
 
-Or if you have the full repo:
+Test on a clean macOS user account when possible:
 
-```bash
-cd installer
-chmod +x build-dmg-on-mac.sh
-./build-dmg-on-mac.sh
-```
+1. Open the DMG and install the PKG.
+2. Confirm `/Applications/FoundryMCPServer.app` contains both server bundles.
+3. Confirm the existing Claude Desktop JSON remains valid and unrelated MCP entries remain present.
+4. Confirm the module installs only into a detected Foundry modules directory.
+5. Restart Claude Desktop and connect a GM world.
+6. Run the live bridge smoke test.
+7. Run `Uninstall.tool` and verify only bridge-owned application/module/config data is removed.
 
-### What the Script Does:
-
-1. Verifies FoundryMCPServer.app exists
-2. Creates temporary DMG structure
-3. Copies app bundle to temp
-4. Creates symlink to /Applications (for drag-and-drop)
-5. Creates compressed DMG with `hdiutil`
-6. Cleans up temp files
-
-### Output:
-
-```
-installer/build/FoundryMCPServer-v0.5.4-macOS.dmg
-```
-
-Size: ~800KB (compressed)
-
----
-
-## Step 3: Test the DMG
-
-```bash
-# Mount the DMG
-open installer/build/FoundryMCPServer-v0.5.4-macOS.dmg
-
-# A Finder window opens showing:
-# - FoundryMCPServer.app
-# - Applications (symlink)
-# - README.md
-
-# Drag the app to Applications
-# Unmount DMG
-# Run from /Applications
-```
-
----
-
-## DMG Features:
-
-✅ **Drag-and-drop installer** - Visual interface
-✅ **Applications symlink** - Easy install target
-✅ **Compressed** - Small download size (~800KB)
-✅ **Professional** - Standard Mac installer format
-✅ **README included** - Installation instructions
-
----
-
-## Troubleshooting:
-
-**"App bundle not found"**
-
-- Ensure you ran `node installer/build-mac-simple.js` on Windows first
-- Check that `installer/build/FoundryMCPServer.app` exists
-
-**"hdiutil: command not found"**
-
-- hdiutil is built into macOS, should always be available
-- Make sure you're running on a real Mac, not a VM or cross-compiler
-
-**"Permission denied"**
-
-- Run: `chmod +x build-dmg-on-mac.sh`
-
----
-
-## Alternative: Quick DMG Creation
-
-If the script doesn't work, you can create a DMG manually:
-
-```bash
-cd installer/build
-
-# Create DMG directly
-hdiutil create -volname "Foundry MCP Server" \
-  -srcfolder FoundryMCPServer.app \
-  -ov -format UDZO \
-  FoundryMCPServer-v0.5.4-macOS.dmg
-```
-
-This creates a simpler DMG without the Applications symlink or README, but still works fine.
-
----
-
-## Current Status:
-
-- ✅ Windows build complete (.app bundle ready)
-- ⏳ Mac DMG build (run on Mac when you have it)
-- ⏳ Testing (after DMG is built)
-
-The .app bundle is ready to go! Just needs the final DMG wrapper on Mac.
+For a signed public build, sign the component packages and final product with the appropriate Developer ID Installer identity, notarize the DMG, and staple the notarization ticket before release.

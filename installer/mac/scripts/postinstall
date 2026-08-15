@@ -1,180 +1,116 @@
 #!/bin/bash
+# Legacy single-package postinstall hook. Keep this aligned with build-mac-pkg.js.
+# All per-user work is best-effort so an unattended package install still succeeds.
 
-# Post-install script for Foundry MCP Server on macOS
-# Runs after PKG installation to configure Claude Desktop and detect Foundry/ComfyUI
+CURRENT_USER=$(stat -f '%Su' /dev/console 2>/dev/null)
+if [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ] || [ "$CURRENT_USER" = "loginwindow" ]; then
+  CURRENT_USER=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null | awk '/Name :/ && ! /loginwindow/ { print $3 }')
+fi
+if [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ]; then
+  echo "Could not determine the logged-in user; skipping per-user configuration."
+  exit 0
+fi
 
-set -e
+USER_HOME=$(dscl . -read "/Users/$CURRENT_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+if [ -z "$USER_HOME" ]; then
+  USER_HOME=$(eval echo ~$CURRENT_USER)
+fi
 
-echo "Configuring Foundry MCP Server..."
-
-# Get the current user (the one who ran the installer)
-CURRENT_USER=$(stat -f '%Su' /dev/console)
-USER_HOME=$(eval echo ~$CURRENT_USER)
-
-# Paths
 CLAUDE_CONFIG_DIR="$USER_HOME/Library/Application Support/Claude"
 CLAUDE_CONFIG="$CLAUDE_CONFIG_DIR/claude_desktop_config.json"
-APP_BUNDLE="/Applications/FoundryMCPServer.app"
-MCP_SERVER_BUNDLE="$APP_BUNDLE/Contents/Resources/foundry-mcp-server/backend.bundle.cjs"
-MCP_APP_SUPPORT="$USER_HOME/Library/Application Support/FoundryMCPServer"
+SERVER_PATH="/Applications/FoundryMCPServer.app/Contents/Resources/foundry-mcp-server/index.cjs"
+mkdir -p "$CLAUDE_CONFIG_DIR" "$USER_HOME/Library/Application Support/FoundryMCPServer"
 
-echo "User: $CURRENT_USER"
-echo "Home: $USER_HOME"
-
-# Create MCP Server app support directory for logs
-if [ ! -d "$MCP_APP_SUPPORT" ]; then
-  mkdir -p "$MCP_APP_SUPPORT"
-  chown "$CURRENT_USER:staff" "$MCP_APP_SUPPORT"
-  echo "✅ Created MCP Server app support directory"
-fi
-
-# Create Claude config directory if it doesn't exist
-if [ ! -d "$CLAUDE_CONFIG_DIR" ]; then
-  mkdir -p "$CLAUDE_CONFIG_DIR"
-  chown "$CURRENT_USER:staff" "$CLAUDE_CONFIG_DIR"
-fi
-
-# Configure Claude Desktop MCP server
 if [ -f "$CLAUDE_CONFIG" ]; then
-  echo "Claude Desktop config already exists, backing up..."
   cp "$CLAUDE_CONFIG" "$CLAUDE_CONFIG.backup.$(date +%s)"
 fi
 
-# Create or update Claude config
-cat > "$CLAUDE_CONFIG" << EOF
-{
-  "mcpServers": {
-    "foundry-vtt-mcp": {
-      "command": "node",
-      "args": [
-        "$MCP_SERVER_BUNDLE"
-      ],
-      "env": {
-        "FOUNDRY_HOST": "localhost",
-        "FOUNDRY_PORT": "31415"
-      }
-    }
-  }
+NODE_PATH=""
+for candidate in /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node; do
+  if [ -x "$candidate" ]; then
+    NODE_PATH="$candidate"
+    break
+  fi
+done
+if [ -z "$NODE_PATH" ] && command -v node >/dev/null 2>&1; then
+  NODE_PATH=$(command -v node)
+fi
+
+if [ -n "$NODE_PATH" ]; then
+  CLAUDE_CONFIG="$CLAUDE_CONFIG" SERVER_PATH="$SERVER_PATH" NODE_PATH="$NODE_PATH" "$NODE_PATH" <<'NODE_EOF'
+const fs = require('fs');
+const configPath = process.env.CLAUDE_CONFIG;
+let config = {};
+if (fs.existsSync(configPath)) {
+  const contents = fs.readFileSync(configPath, 'utf8').trim();
+  if (contents) config = JSON.parse(contents);
 }
-EOF
-
-chown "$CURRENT_USER:staff" "$CLAUDE_CONFIG"
-chmod 644 "$CLAUDE_CONFIG"
-
-echo "✅ Claude Desktop configured"
-
-# Detect ComfyUI installation
-COMFYUI_PATHS=(
-  "$USER_HOME/Library/Application Support/ComfyUI"
-  "/Applications/ComfyUI.app/Contents/Resources/ComfyUI"
-  "$USER_HOME/ComfyUI"
-  "/opt/ComfyUI"
-  "/usr/local/ComfyUI"
-)
-
-COMFYUI_FOUND=""
-for COMFYUI_PATH in "${COMFYUI_PATHS[@]}"; do
-  if [ -f "$COMFYUI_PATH/main.py" ]; then
-    COMFYUI_FOUND="$COMFYUI_PATH"
-    echo "✅ ComfyUI detected at: $COMFYUI_PATH"
-    break
-  fi
-done
-
-if [ -z "$COMFYUI_FOUND" ]; then
-  echo "⚠️  ComfyUI not found"
-  echo ""
-  echo "To enable AI map generation, download ComfyUI Desktop from:"
-  echo "https://www.comfy.org/download"
-  echo ""
-  echo "After installing ComfyUI, the MCP server will automatically detect it."
-fi
-
-# Detect Foundry VTT installation
-FOUNDRY_PATHS=(
-  "$USER_HOME/Library/Application Support/FoundryVTT"
-  "$USER_HOME/FoundryVTT"
-  "/Applications/FoundryVTT"
-)
-
-FOUNDRY_FOUND=""
-for FOUNDRY_PATH in "${FOUNDRY_PATHS[@]}"; do
-  if [ -d "$FOUNDRY_PATH/Data/modules" ]; then
-    FOUNDRY_FOUND="$FOUNDRY_PATH/Data/modules"
-    echo "✅ Foundry VTT detected at: $FOUNDRY_PATH"
-
-    # Check if module is already installed
-    MODULE_PATH="$FOUNDRY_FOUND/foundry-mcp-bridge"
-    if [ ! -d "$MODULE_PATH" ]; then
-      echo "Installing Foundry module..."
-      # Module will be auto-installed by MCP server on first connection
-      echo "Module will be auto-installed on first connection to Foundry VTT"
-    else
-      echo "✅ Foundry module already installed"
-    fi
-    break
-  fi
-done
-
-if [ -z "$FOUNDRY_FOUND" ]; then
-  echo "ℹ️  Foundry VTT not detected"
-  echo "The Foundry module will be auto-installed when you first connect."
-fi
-
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📦 Installing ComfyUI (this will take 20-30 minutes)..."
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "This will download and install:"
-echo "  - Python 3.11 (system installation)"
-echo "  - ComfyUI headless server"
-echo "  - PyTorch with MPS support (Apple Silicon GPU)"
-echo "  - D&D Battlemaps SDXL Model (6.5GB)"
-echo "  - SDXL VAE (335MB)"
-echo "  Total: ~8GB download + 15GB installed"
-echo ""
-
-# Run ComfyUI setup script as the current user
-SETUP_SCRIPT="$APP_BUNDLE/Contents/Resources/setup-comfyui-headless.js"
-
-if [ -f "$SETUP_SCRIPT" ]; then
-  # Check if node is available
-  if command -v node >/dev/null 2>&1; then
-    echo "Running ComfyUI setup..."
-    # Run as the user who installed, not as root
-    su "$CURRENT_USER" -c "node '$SETUP_SCRIPT'" || {
-      echo "⚠️  ComfyUI setup encountered an error"
-      echo "You can run the setup manually later:"
-      echo "  cd /Applications/FoundryMCPServer.app/Contents/Resources"
-      echo "  node setup-comfyui-headless.js"
-      echo ""
-      echo "Installation log: $USER_HOME/foundry-mcp-install.log"
-    }
+if (!config || typeof config !== 'object' || Array.isArray(config)) config = {};
+if (!config.mcpServers || typeof config.mcpServers !== 'object' || Array.isArray(config.mcpServers)) {
+  config.mcpServers = {};
+}
+config.mcpServers['foundry-mcp'] = {
+  command: process.env.NODE_PATH,
+  args: [process.env.SERVER_PATH],
+  env: { FOUNDRY_HOST: 'localhost', FOUNDRY_PORT: '31415' }
+};
+const temporaryPath = `${configPath}.tmp-${process.pid}`;
+fs.writeFileSync(temporaryPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+fs.renameSync(temporaryPath, configPath);
+NODE_EOF
+  MERGE_STATUS=$?
+  if [ "$MERGE_STATUS" -eq 0 ]; then
+    chown "$CURRENT_USER:staff" "$CLAUDE_CONFIG"
+    chmod 600 "$CLAUDE_CONFIG"
   else
-    echo "⚠️  Node.js not found - cannot run ComfyUI setup automatically"
-    echo "Please install Node.js from https://nodejs.org/"
-    echo "Then run: node '$SETUP_SCRIPT'"
+    echo "Claude Desktop configuration is not valid JSON; it was left unchanged and a backup was saved."
   fi
 else
-  echo "⚠️  Setup script not found at: $SETUP_SCRIPT"
+  echo "Node.js was not found; install it and configure your MCP client manually."
 fi
 
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🎉 Installation Complete!"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "Next steps:"
-echo "1. Restart Claude Desktop"
-echo "2. Launch Foundry VTT"
-echo "3. Enable 'Foundry MCP Bridge' in Module Management"
-echo ""
-echo "Optional:"
-echo "- Check settings in Foundry MCP Bridge module"
-echo "- View install log: $USER_HOME/foundry-mcp-install.log"
-echo ""
-echo "Documentation: https://github.com/adambdooley/foundry-vtt-mcp"
-echo ""
+MODULE_SOURCE="/Applications/FoundryMCPServer.app/Contents/Resources/foundry-module"
+if [ -d "$MODULE_SOURCE" ]; then
+  FOUNDRY_PATHS=(
+    "$USER_HOME/Library/Application Support/FoundryVTT/Data/modules"
+    "$USER_HOME/Documents/FoundryVTT/Data/modules"
+    "$USER_HOME/FoundryVTT/Data/modules"
+  )
+  for FOUNDRY_PATH in "${FOUNDRY_PATHS[@]}"; do
+    if [ -d "$FOUNDRY_PATH" ]; then
+      MODULE_DEST="$FOUNDRY_PATH/foundry-mcp-bridge"
+      if [ -L "$MODULE_DEST" ]; then
+        echo "Refusing to replace symlinked Foundry module target: $MODULE_DEST"
+        continue
+      fi
 
+      # Validate the allowlisted modules path before deleting only the retired
+      # per-world cache. Generated maps and every other user file are retained.
+      if [ "$(basename "$FOUNDRY_PATH")" = "modules" ]; then
+        FOUNDRY_DATA="${FOUNDRY_PATH%/modules}"
+        if [ -n "$FOUNDRY_DATA" ] && [ "$FOUNDRY_DATA" != "/" ] && [ -d "$FOUNDRY_DATA/modules" ]; then
+          for WORLD_DIR in "$FOUNDRY_DATA"/worlds/*; do
+            [ -d "$WORLD_DIR" ] || continue
+            [ -L "$WORLD_DIR" ] && continue
+            if [ -f "$WORLD_DIR/enhanced-creature-index.json" ]; then
+              rm -f -- "$WORLD_DIR/enhanced-creature-index.json"
+              echo "Removed retired Enhanced Creature Index cache from $(basename "$WORLD_DIR")."
+            fi
+          done
+        fi
+      fi
+
+      mkdir -p "$MODULE_DEST"
+      # Preserve user-created content from older releases while replacing the
+      # module's own code and bundled assets.
+      rm -rf "$MODULE_DEST/dist" "$MODULE_DEST/lang" "$MODULE_DEST/scripts" \
+        "$MODULE_DEST/styles" "$MODULE_DEST/templates"
+      cp -R "$MODULE_SOURCE/." "$MODULE_DEST/"
+      chown -R "$CURRENT_USER:staff" "$MODULE_DEST"
+      break
+    fi
+  done
+fi
+
+echo "Foundry MCP Server installation complete."
 exit 0

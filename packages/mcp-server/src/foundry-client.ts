@@ -1,6 +1,10 @@
 import { Logger } from './logger.js';
 import { Config } from './config.js';
-import { FoundryConnector } from './foundry-connector.js';
+import {
+  FoundryConnector,
+  QueryOutcomeUnknownError,
+  QueryTimeoutError,
+} from './foundry-connector.js';
 
 export interface FoundryQuery {
   method: string;
@@ -18,6 +22,7 @@ export type BridgeErrorCode =
   | 'NO_HANDLER'
   | 'VERSION_MISMATCH'
   | 'TIMEOUT'
+  | 'UNKNOWN_OUTCOME'
   | 'QUERY_FAILED';
 
 /** Error with a machine-readable code so agents can branch on failure class. */
@@ -45,7 +50,9 @@ export class FoundryClient {
   private config: Config['foundry'];
   private connector: FoundryConnector;
   private capabilities: ModuleCapabilities | null = null;
-  private listenerStartedAt = 0;
+  private capabilitiesGeneration: number | null = null;
+  private listenerStartedAt: number | null = null;
+  private listenerStarting = false;
 
   constructor(config: Config['foundry'], logger: Logger) {
     this.config = config;
@@ -60,6 +67,7 @@ export class FoundryClient {
 
   async connect(): Promise<void> {
     this.logger.info('Starting Foundry connector socket.io server');
+    this.listenerStarting = true;
 
     try {
       // Start the socket.io server that Foundry will connect to
@@ -67,17 +75,27 @@ export class FoundryClient {
       this.listenerStartedAt = Date.now();
       this.logger.info('Foundry connector started, waiting for module connection...');
     } catch (error) {
+      this.listenerStartedAt = null;
       const errorMessage = error instanceof Error ? error.message : 'Unknown connection error';
       this.logger.error('Failed to start Foundry connector', { error: errorMessage });
       throw new Error(`Failed to start Foundry connector: ${errorMessage}`);
+    } finally {
+      this.listenerStarting = false;
     }
   }
 
-  disconnect(): void {
+  async disconnect(): Promise<void> {
     this.logger.info('Stopping Foundry connector...');
-    this.connector.stop().catch(error => {
+    try {
+      await this.connector.stop();
+    } catch (error) {
       this.logger.error('Error stopping connector', error);
-    });
+      throw error;
+    } finally {
+      this.listenerStartedAt = null;
+      this.capabilities = null;
+      this.capabilitiesGeneration = null;
+    }
   }
 
   /** Receive unsolicited game events pushed by the module. */
@@ -94,14 +112,18 @@ export class FoundryClient {
       // Startup grace: a freshly (re)started backend races the Foundry
       // module's ~30s reconnect cadence. Instead of failing the user's first
       // prompt, wait for the module to come back.
-      // listenerStartedAt === 0 means the listener is still starting — that
-      // is the earliest (and raciest) moment, so it is always within grace.
-      const withinGrace = !this.listenerStartedAt || Date.now() - this.listenerStartedAt < 90_000;
-      if (withinGrace) {
-        this.logger.info('Module not connected yet; waiting for reconnect (startup grace)', {
+      const withinStartupGrace =
+        this.listenerStarting ||
+        (this.listenerStartedAt !== null && Date.now() - this.listenerStartedAt < 90_000);
+      const lastDisconnectedAt = this.connector.getLastDisconnectAt();
+      const withinRecentDisconnectGrace =
+        lastDisconnectedAt !== null && Date.now() - lastDisconnectedAt < 90_000;
+      if (withinStartupGrace || withinRecentDisconnectGrace) {
+        this.logger.info('Module not connected yet; waiting for bounded reconnect grace', {
           method,
+          reason: withinStartupGrace ? 'startup' : 'recent-disconnect',
         });
-        const deadline = Date.now() + 45_000;
+        const deadline = Date.now() + (withinStartupGrace ? 45_000 : 30_000);
         while (Date.now() < deadline && !this.connector.isConnected()) {
           await new Promise(resolve => setTimeout(resolve, 500));
         }
@@ -113,6 +135,7 @@ export class FoundryClient {
 
     if (!this.connector.isConnected()) {
       this.capabilities = null;
+      this.capabilitiesGeneration = null;
       throw new BridgeError(
         'NOT_CONNECTED',
         'Foundry VTT module not connected. Please ensure Foundry is running and the MCP Bridge module is enabled.'
@@ -128,7 +151,7 @@ export class FoundryClient {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown query error';
       this.logger.error('Query failed', { method, error: errorMessage });
-      throw await this.classifyQueryError(method, errorMessage);
+      throw await this.classifyQueryError(method, error);
     }
   }
 
@@ -137,7 +160,8 @@ export class FoundryClient {
    * always means the installed module predates this server — say so, with the
    * module version when we can discover it.
    */
-  private async classifyQueryError(method: string, errorMessage: string): Promise<Error> {
+  private async classifyQueryError(method: string, error: unknown): Promise<Error> {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown query error';
     if (/No handler found/i.test(errorMessage)) {
       const caps = await this.getCapabilities().catch(() => null);
       if (caps) {
@@ -152,10 +176,26 @@ export class FoundryClient {
         `The connected Foundry module does not support "${method}" — it likely predates this MCP server. Update the module and reload the world.`
       );
     }
-    if (/timeout/i.test(errorMessage)) {
+    if (
+      (error instanceof QueryTimeoutError || error instanceof QueryOutcomeUnknownError) &&
+      !this.isReadOnlyMethod(method)
+    ) {
+      return new BridgeError(
+        'UNKNOWN_OUTCOME',
+        `The response to ${method} was lost after it may have reached Foundry. It may have completed; inspect current state before retrying the write.`
+      );
+    }
+    if (error instanceof QueryTimeoutError || /timeout/i.test(errorMessage)) {
       return new BridgeError('TIMEOUT', `Query ${method} timed out: ${errorMessage}`);
     }
     return new BridgeError('QUERY_FAILED', `Query ${method} failed: ${errorMessage}`);
+  }
+
+  private isReadOnlyMethod(method: string): boolean {
+    const operation = method.split('.').pop() || method;
+    return /^(get|list|search|find|browse|check|validate|resolve|preview|ping|inspect|read|query|wait|audit)/i.test(
+      operation
+    );
   }
 
   /**
@@ -165,13 +205,20 @@ export class FoundryClient {
   async getCapabilities(force = false): Promise<ModuleCapabilities | null> {
     if (!this.connector.isConnected()) {
       this.capabilities = null;
+      this.capabilitiesGeneration = null;
       return null;
     }
-    if (this.capabilities && !force) return this.capabilities;
+    const connectionGeneration = this.connector.getConnectionGeneration();
+    if (this.capabilities && this.capabilitiesGeneration === connectionGeneration && !force) {
+      return this.capabilities;
+    }
     try {
       const result = await this.connector.query('foundry-mcp-bridge.getCapabilities', {});
       if (result?.moduleVersion) {
+        // Never attach world A's response to a replacement transport for B.
+        if (this.connector.getConnectionGeneration() !== connectionGeneration) return null;
         this.capabilities = result as ModuleCapabilities;
+        this.capabilitiesGeneration = connectionGeneration;
         return this.capabilities;
       }
       return null;
@@ -196,17 +243,17 @@ export class FoundryClient {
     return this.connector.isConnected();
   }
 
-  sendMessage(message: any): void {
+  async sendMessage(message: any): Promise<void> {
     this.logger.debug('Sending message to Foundry', {
       type: message.type,
       requestId: message.requestId,
     });
-    this.connector.sendToFoundry(message);
+    await this.connector.sendToFoundry(message);
   }
 
-  broadcastMessage(message: any): void {
+  async broadcastMessage(message: any): Promise<void> {
     this.logger.debug('Broadcasting message to Foundry', { type: message.type });
-    this.connector.broadcastMessage(message);
+    await this.connector.broadcastMessage(message);
   }
 
   isConnected(): boolean {

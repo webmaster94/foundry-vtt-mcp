@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { ServerRegistry } from '../server-registry.js';
+import { runWithServer, ServerRegistry } from '../server-registry.js';
 import { ServerManagementTools } from './server-management.js';
 import { config } from '../config.js';
 import { Logger } from '../logger.js';
@@ -73,7 +73,13 @@ describe('ServerRegistry', () => {
     const file = writeServersFile({
       defaultServer: 'local',
       servers: {
-        forge: { label: 'Forge World', port: 31415, connectionType: 'webrtc', remoteMode: true },
+        forge: {
+          label: 'Forge World',
+          port: 31415,
+          connectionType: 'webrtc',
+          remoteMode: true,
+          authToken: 'a-secure-test-token',
+        },
         local: { label: 'Local Dev', port: 31417, connectionType: 'websocket' },
       },
     });
@@ -106,6 +112,57 @@ describe('ServerRegistry', () => {
     expect(await registry.routingClient.query('x')).toMatchObject({ port: 31415 });
     registry.setActive('local');
     expect(await registry.routingClient.query('x')).toMatchObject({ port: 31417 });
+  });
+
+  it('preserves concurrent per-call routing without changing the active profile', async () => {
+    const file = writeServersFile({
+      defaultServer: 'forge',
+      servers: {
+        forge: { port: 31415 },
+        local: { port: 31417 },
+      },
+    });
+    const registry = new ServerRegistry(config, logger, file);
+
+    const [local, active] = await Promise.all([
+      runWithServer('local', () => registry.routingClient.query('x')),
+      registry.routingClient.query('x'),
+    ]);
+
+    expect(local).toMatchObject({ port: 31417 });
+    expect(active).toMatchObject({ port: 31415 });
+    expect(registry.getActiveName()).toBe('forge');
+  });
+
+  it('keeps a multi-step call pinned while the global active profile changes', async () => {
+    const file = writeServersFile({
+      defaultServer: 'forge',
+      servers: {
+        forge: { port: 31415 },
+        local: { port: 31417 },
+      },
+    });
+    const registry = new ServerRegistry(config, logger, file);
+    const pinnedName = registry.getActiveName();
+    let releaseSecondQuery!: () => void;
+    const pause = new Promise<void>(resolve => {
+      releaseSecondQuery = resolve;
+    });
+
+    const operation = runWithServer(pinnedName, async () => {
+      const first = await registry.routingClient.query('first');
+      await pause;
+      const second = await registry.routingClient.query('second');
+      return { first, second };
+    });
+    registry.setActive('local');
+    releaseSecondQuery();
+
+    await expect(operation).resolves.toMatchObject({
+      first: { port: 31415 },
+      second: { port: 31415 },
+    });
+    expect(registry.getActiveName()).toBe('local');
   });
 
   it('throws a helpful error for unknown server names', () => {

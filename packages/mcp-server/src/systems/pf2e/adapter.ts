@@ -1,22 +1,10 @@
 /**
  * Pathfinder 2e System Adapter
  *
- * Implements SystemAdapter interface for Pathfinder 2nd Edition support.
- * Handles creature indexing, filtering, formatting, and data extraction.
+ * Implements character-stat extraction for Pathfinder 2nd Edition.
  */
 
-import type {
-  SystemAdapter,
-  SystemMetadata,
-  SystemCreatureIndex,
-  PF2eCreatureIndex,
-} from '../types.js';
-import {
-  PF2eFiltersSchema,
-  matchesPF2eFilters,
-  describePF2eFilters,
-  type PF2eFilters,
-} from './filters.js';
+import type { SystemAdapter, SystemMetadata } from '../types.js';
 
 /**
  * Pathfinder 2e system adapter
@@ -29,9 +17,8 @@ export class PF2eAdapter implements SystemAdapter {
       displayName: 'Pathfinder 2nd Edition',
       version: '1.0.0',
       description:
-        'Support for PF2e game system with Level, traits, rarity, and spellcasting entries',
+        'Character support for PF2e, including level, traits, skills, saves, and spellcasting',
       supportedFeatures: {
-        creatureIndex: true,
         characterStats: true,
         spellcasting: true,
         powerLevel: true, // Uses Level
@@ -41,184 +28,6 @@ export class PF2eAdapter implements SystemAdapter {
 
   canHandle(systemId: string): boolean {
     return systemId.toLowerCase() === 'pf2e';
-  }
-
-  /**
-   * Extract creature data from Foundry document for indexing
-   * This is called by the index builder in Foundry's browser context
-   */
-  extractCreatureData(
-    doc: any,
-    pack: any
-  ): { creature: SystemCreatureIndex; errors: number } | null {
-    // Implementation is in index-builder.ts since it runs in browser
-    // This method is here for type compliance but delegates to IndexBuilder
-    throw new Error('extractCreatureData should be called from PF2eIndexBuilder, not the adapter');
-  }
-
-  getFilterSchema() {
-    return PF2eFiltersSchema;
-  }
-
-  matchesFilters(creature: SystemCreatureIndex, filters: Record<string, any>): boolean {
-    // Validate filters match PF2e schema
-    const validated = PF2eFiltersSchema.safeParse(filters);
-    if (!validated.success) {
-      return false;
-    }
-
-    return matchesPF2eFilters(creature, validated.data as PF2eFilters);
-  }
-
-  getDataPaths(): Record<string, string | null> {
-    return {
-      // Pathfinder 2e specific paths
-      level: 'system.details.level.value',
-      creatureType: 'system.traits.value', // Array of traits
-      size: 'system.traits.size.value',
-      alignment: 'system.details.alignment.value',
-      rarity: 'system.traits.rarity',
-      traits: 'system.traits.value', // All traits as array
-      hitPoints: 'system.attributes.hp',
-      armorClass: 'system.attributes.ac.value',
-      abilities: 'system.abilities',
-      skills: 'system.skills',
-      perception: 'system.perception',
-      saves: 'system.saves',
-      // PF2e doesn't have CR or legendary actions
-      challengeRating: null,
-      legendaryActions: null,
-      legendaryResistances: null,
-      spells: null, // PF2e uses spellcasting entries instead
-    };
-  }
-
-  formatCreatureForList(creature: SystemCreatureIndex): any {
-    const pf2eCreature = creature as PF2eCreatureIndex;
-    const formatted: any = {
-      id: creature.id,
-      name: creature.name,
-      type: creature.type,
-      pack: {
-        id: creature.packName,
-        label: creature.packLabel,
-      },
-    };
-
-    // Add PF2e specific stats
-    if (pf2eCreature.systemData) {
-      const stats: any = {};
-
-      if (pf2eCreature.systemData.level !== undefined) {
-        stats.level = pf2eCreature.systemData.level;
-      }
-
-      if (pf2eCreature.systemData.traits && pf2eCreature.systemData.traits.length > 0) {
-        stats.traits = pf2eCreature.systemData.traits;
-
-        // Extract primary creature type from traits
-        const creatureTraits = [
-          'aberration',
-          'animal',
-          'beast',
-          'celestial',
-          'construct',
-          'dragon',
-          'elemental',
-          'fey',
-          'fiend',
-          'fungus',
-          'humanoid',
-          'monitor',
-          'ooze',
-          'plant',
-          'undead',
-        ];
-        const primaryType = pf2eCreature.systemData.traits.find((t: string) =>
-          creatureTraits.includes(t.toLowerCase())
-        );
-        if (primaryType) stats.creatureType = primaryType;
-      }
-
-      if (pf2eCreature.systemData.rarity) {
-        stats.rarity = pf2eCreature.systemData.rarity;
-      }
-
-      if (pf2eCreature.systemData.size) {
-        stats.size = pf2eCreature.systemData.size;
-      }
-
-      if (pf2eCreature.systemData.alignment) {
-        stats.alignment = pf2eCreature.systemData.alignment;
-      }
-
-      if (pf2eCreature.systemData.hitPoints) {
-        stats.hitPoints = pf2eCreature.systemData.hitPoints;
-      }
-
-      if (pf2eCreature.systemData.armorClass) {
-        stats.armorClass = pf2eCreature.systemData.armorClass;
-      }
-
-      if (pf2eCreature.systemData.hasSpellcasting) {
-        stats.spellcaster = true;
-      }
-
-      if (Object.keys(stats).length > 0) {
-        formatted.stats = stats;
-      }
-    }
-
-    if (creature.img) {
-      formatted.hasImage = true;
-    }
-
-    return formatted;
-  }
-
-  formatCreatureForDetails(creature: SystemCreatureIndex): any {
-    const pf2eCreature = creature as PF2eCreatureIndex;
-    const formatted = this.formatCreatureForList(creature);
-
-    // Add additional details
-    if (pf2eCreature.systemData) {
-      formatted.detailedStats = {
-        level: pf2eCreature.systemData.level,
-        traits: pf2eCreature.systemData.traits,
-        size: pf2eCreature.systemData.size,
-        alignment: pf2eCreature.systemData.alignment,
-        rarity: pf2eCreature.systemData.rarity,
-        hitPoints: pf2eCreature.systemData.hitPoints,
-        armorClass: pf2eCreature.systemData.armorClass,
-        hasSpellcasting: pf2eCreature.systemData.hasSpellcasting,
-      };
-    }
-
-    if (creature.img) {
-      formatted.img = creature.img;
-    }
-
-    return formatted;
-  }
-
-  describeFilters(filters: Record<string, any>): string {
-    const validated = PF2eFiltersSchema.safeParse(filters);
-    if (!validated.success) {
-      return 'invalid filters';
-    }
-
-    return describePF2eFilters(validated.data as PF2eFilters);
-  }
-
-  getPowerLevel(creature: SystemCreatureIndex): number | undefined {
-    const pf2eCreature = creature as PF2eCreatureIndex;
-
-    // PF2e: Level is the primary metric
-    if (pf2eCreature.systemData?.level !== undefined) {
-      return pf2eCreature.systemData.level;
-    }
-
-    return undefined;
   }
 
   /**

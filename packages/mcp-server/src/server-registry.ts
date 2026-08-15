@@ -41,17 +41,15 @@ export function runWithServer<T>(serverName: string, fn: () => Promise<T>): Prom
 const ServerProfileSchema = z.object({
   label: z.string().optional(),
   host: z.string().optional(),
-  port: z.number().min(1024).max(65535).optional(),
+  port: z.number().int().min(1024).max(65535).optional(),
   namespace: z.string().optional(),
-  reconnectAttempts: z.number().min(1).max(20).optional(),
-  reconnectDelay: z.number().min(100).max(30000).optional(),
-  connectionTimeout: z.number().min(1000).max(60000).optional(),
+  reconnectAttempts: z.number().int().min(1).max(20).optional(),
+  reconnectDelay: z.number().int().min(100).max(30000).optional(),
+  connectionTimeout: z.number().int().min(1000).max(60000).optional(),
   connectionType: z.enum(['websocket', 'webrtc', 'auto']).optional(),
   protocol: z.enum(['ws', 'wss']).optional(),
   remoteMode: z.boolean().optional(),
-  dataPath: z.string().optional(),
   rejectUnauthorized: z.boolean().optional(),
-  webrtcSignalingPort: z.number().min(1024).max(65535).optional(),
   authToken: z.string().optional(),
 });
 
@@ -80,10 +78,61 @@ export interface BufferedEvent {
 
 const EVENT_BUFFER_SIZE = 200;
 
+interface PortOwner {
+  profile: string;
+  role: 'main' | 'webrtc-signaling';
+}
+
+function reserveProfilePorts(
+  profileName: string,
+  foundryConfig: Config['foundry'],
+  usedPorts: Map<number, PortOwner>
+): string | null {
+  const requested: Array<{ port: number; role: PortOwner['role'] }> = [
+    { port: foundryConfig.port, role: 'main' },
+  ];
+  if (foundryConfig.connectionType !== 'websocket') {
+    requested.push({
+      port: foundryConfig.port + 1,
+      role: 'webrtc-signaling',
+    });
+  }
+
+  if (
+    foundryConfig.remoteMode &&
+    (!foundryConfig.authToken || foundryConfig.authToken.trim().length < 16)
+  ) {
+    return `Server profile "${profileName}" enables remoteMode without an authToken of at least 16 characters`;
+  }
+
+  const localPorts = new Set<number>();
+  for (const request of requested) {
+    if (!Number.isInteger(request.port) || request.port < 1024 || request.port > 65535) {
+      return `Server profile "${profileName}" ${request.role} port ${request.port} is outside the valid range 1024-65535`;
+    }
+    if (localPorts.has(request.port)) {
+      return `Server profile "${profileName}" assigns port ${request.port} to both its main and WebRTC signaling listeners`;
+    }
+    localPorts.add(request.port);
+
+    const owner = usedPorts.get(request.port);
+    if (owner) {
+      return `Server profile "${profileName}" ${request.role} port ${request.port} conflicts with "${owner.profile}" ${owner.role} port`;
+    }
+  }
+
+  for (const request of requested) {
+    usedPorts.set(request.port, { profile: profileName, role: request.role });
+  }
+  return null;
+}
+
 export class ServerRegistry {
   private servers = new Map<string, RegisteredServer>();
   private activeName: string;
+  private configuredDefaultName: string;
   private logger: Logger;
+  private lifecycleTail: Promise<void> = Promise.resolve();
   public readonly routingClient: RoutingFoundryClient;
 
   // Game-event ring buffer (all profiles share one sequence for simple cursors)
@@ -98,7 +147,7 @@ export class ServerRegistry {
       default: { label: 'Default (from environment)' },
     };
 
-    const usedPorts = new Map<number, string>();
+    const usedPorts = new Map<number, PortOwner>();
     for (const [name, profile] of Object.entries(profiles)) {
       const foundryConfig: Config['foundry'] = {
         ...config.foundry,
@@ -107,14 +156,11 @@ export class ServerRegistry {
         ),
       };
 
-      const portOwner = usedPorts.get(foundryConfig.port);
-      if (portOwner) {
-        this.logger.error(
-          `Server profile "${name}" reuses port ${foundryConfig.port} already taken by "${portOwner}" — skipping`
-        );
+      const portConflict = reserveProfilePorts(name, foundryConfig, usedPorts);
+      if (portConflict) {
+        this.logger.error(`${portConflict} — skipping`);
         continue;
       }
-      usedPorts.set(foundryConfig.port, name);
 
       const server: RegisteredServer = {
         name,
@@ -140,6 +186,7 @@ export class ServerRegistry {
       requestedDefault && this.servers.has(requestedDefault)
         ? requestedDefault
         : this.servers.keys().next().value!;
+    this.configuredDefaultName = this.activeName;
 
     this.routingClient = new RoutingFoundryClient(this, config.foundry, logger);
 
@@ -161,20 +208,31 @@ export class ServerRegistry {
     }
     candidates.push(path.join(process.cwd(), 'foundry-servers.json'));
 
+    const visited = new Set<string>();
     for (const candidate of candidates) {
+      const resolvedCandidate = path.resolve(candidate);
+      if (visited.has(resolvedCandidate)) continue;
+      visited.add(resolvedCandidate);
+      if (!fs.existsSync(resolvedCandidate)) continue;
+
       try {
-        if (!fs.existsSync(candidate)) continue;
-        const raw = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+        const raw = JSON.parse(fs.readFileSync(resolvedCandidate, 'utf8'));
         const parsed = ServersFileSchema.parse(raw);
         this.logger.info('Loaded Foundry servers config', {
-          path: candidate,
+          path: resolvedCandidate,
           servers: Object.keys(parsed.servers),
         });
         return parsed;
       } catch (error) {
-        this.logger.error(`Failed to load servers config from ${candidate}`, {
-          error: error instanceof Error ? error.message : String(error),
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Failed to load servers config from ${resolvedCandidate}`, {
+          error: message,
         });
+        // An existing higher-priority config is authoritative. Treating a
+        // malformed/partially-written file as "no file" would synthesize the
+        // environment profile and tear down healthy named connections during
+        // reload, violating the registry's transactional guarantee.
+        throw new Error(`Invalid Foundry servers config at "${resolvedCandidate}": ${message}`);
       }
     }
     return null;
@@ -240,6 +298,12 @@ export class ServerRegistry {
 
   /** Start listeners for every profile; failures on one don't block others. */
   async connectAll(): Promise<void> {
+    return this.runLifecycle(async () => {
+      await this.connectAllInternal();
+    });
+  }
+
+  private async connectAllInternal(): Promise<void> {
     await Promise.all(
       [...this.servers.values()].map(async server => {
         try {
@@ -278,18 +342,23 @@ export class ServerRegistry {
     limit?: number;
   }): BufferedEvent[] {
     const limit = Math.min(Math.max(options.limit ?? 25, 1), EVENT_BUFFER_SIZE);
+    const routedServer = options.server ?? serverContext.getStore() ?? this.activeName;
     return this.events
       .filter(
         event =>
           (!options.sinceSeq || event.seq > options.sinceSeq) &&
           (!options.types?.length || options.types.includes(event.type)) &&
-          (!options.server || event.server === options.server)
+          event.server === routedServer
       )
       .slice(-limit);
   }
 
   /** Restart the listener for one profile (module reconnects on its own). */
   async reconnect(name: string): Promise<RegisteredServer> {
+    return this.runLifecycle(() => this.reconnectInternal(name));
+  }
+
+  private async reconnectInternal(name: string): Promise<RegisteredServer> {
     const server = this.servers.get(name);
     if (!server) {
       throw new Error(
@@ -297,12 +366,10 @@ export class ServerRegistry {
       );
     }
     try {
-      server.client.disconnect();
+      await server.client.disconnect();
     } catch {
       // already stopped
     }
-    // disconnect() stops async; give the port a moment to free before rebinding
-    await new Promise(resolve => setTimeout(resolve, 500));
     await server.client.connect();
     this.logger.info('Server connector restarted', { server: name });
     return server;
@@ -317,31 +384,26 @@ export class ServerRegistry {
     config: Config,
     logger: Logger
   ): Promise<{ added: string[]; removed: string[]; changed: string[]; unchanged: string[] }> {
+    return this.runLifecycle(() => this.reloadConfigInternal(config, logger));
+  }
+
+  private async reloadConfigInternal(
+    config: Config,
+    logger: Logger
+  ): Promise<{ added: string[]; removed: string[]; changed: string[]; unchanged: string[] }> {
     const file = this.loadServersFile();
     const profiles: Record<string, ServerProfile> = file?.servers ?? {
       default: { label: 'Default (from environment)' },
     };
 
-    const added: string[] = [];
-    const removed: string[] = [];
-    const changed: string[] = [];
-    const unchanged: string[] = [];
-
-    // Remove profiles that disappeared
-    for (const name of [...this.servers.keys()]) {
-      if (!(name in profiles)) {
-        const server = this.servers.get(name)!;
-        try {
-          server.client.disconnect();
-        } catch {
-          // best effort
-        }
-        this.servers.delete(name);
-        removed.push(name);
-      }
-    }
-
-    // Add new or apply changed
+    // Resolve and validate the complete listener plan before changing any
+    // live profile. This makes a bad reload transactional instead of tearing
+    // down healthy connections and then failing halfway through a rebind.
+    const plannedProfiles = new Map<
+      string,
+      { profile: ServerProfile; foundryConfig: Config['foundry'] }
+    >();
+    const usedPorts = new Map<number, PortOwner>();
     for (const [name, profile] of Object.entries(profiles)) {
       const foundryConfig: Config['foundry'] = {
         ...config.foundry,
@@ -349,55 +411,114 @@ export class ServerRegistry {
           Object.entries(profile).filter(([key, v]) => key !== 'label' && v !== undefined)
         ),
       };
-      const existing = this.servers.get(name);
-      if (existing) {
-        if (JSON.stringify(existing.foundryConfig) === JSON.stringify(foundryConfig)) {
-          existing.label = profile.label || name;
-          unchanged.push(name);
-          continue;
-        }
-        try {
-          existing.client.disconnect();
-        } catch {
-          // best effort
-        }
-        this.servers.delete(name);
-        changed.push(name);
+      const conflict = reserveProfilePorts(name, foundryConfig, usedPorts);
+      if (conflict) throw new Error(conflict);
+      plannedProfiles.set(name, { profile, foundryConfig });
+    }
+    if (plannedProfiles.size === 0) throw new Error('No valid Foundry server profiles configured');
+
+    const added: string[] = [];
+    const removed: string[] = [];
+    const changed: string[] = [];
+    const unchanged: string[] = [];
+
+    for (const [name, existing] of this.servers) {
+      const planned = plannedProfiles.get(name);
+      if (!planned) removed.push(name);
+      else if (JSON.stringify(existing.foundryConfig) === JSON.stringify(planned.foundryConfig)) {
+        unchanged.push(name);
       } else {
-        added.push(name);
+        changed.push(name);
+      }
+    }
+    for (const name of plannedProfiles.keys()) {
+      if (!this.servers.has(name)) added.push(name);
+    }
+
+    const stoppedExisting: RegisteredServer[] = [];
+    const staged = new Map<string, RegisteredServer>();
+    const priorActiveName = this.activeName;
+    const priorConfiguredDefaultName = this.configuredDefaultName;
+    const wasFollowingConfiguredDefault = priorActiveName === priorConfiguredDefaultName;
+
+    try {
+      // Changed listeners may retain the same port, and new profiles may take
+      // a removed profile's port. Stop only profiles that cannot survive the
+      // transaction; unchanged live connections remain untouched.
+      for (const name of [...removed, ...changed]) {
+        const existing = this.servers.get(name);
+        if (!existing) continue;
+        stoppedExisting.push(existing);
+        await existing.client.disconnect();
       }
 
-      const server: RegisteredServer = {
-        name,
-        label: profile.label || name,
-        foundryConfig,
-        client: new FoundryClient(foundryConfig, logger.child({ server: name })),
-      };
-      server.client.setEventHandler(event => this.pushEvent(name, event));
-      this.servers.set(name, server);
-      await new Promise(resolve => setTimeout(resolve, changed.includes(name) ? 500 : 0));
-      server.client.connect().catch(error => {
-        this.logger.error(`Failed to start connector for reloaded server "${name}"`, {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+      // Every replacement must bind successfully before the registry map is
+      // committed. A failed start rolls all stopped profiles back below.
+      for (const name of [...added, ...changed]) {
+        const planned = plannedProfiles.get(name)!;
+        const server: RegisteredServer = {
+          name,
+          label: planned.profile.label || name,
+          foundryConfig: planned.foundryConfig,
+          client: new FoundryClient(planned.foundryConfig, logger.child({ server: name })),
+        };
+        server.client.setEventHandler(event => this.pushEvent(name, event));
+        staged.set(name, server);
+        await server.client.connect();
+      }
+    } catch (error) {
+      for (const server of staged.values()) {
+        try {
+          await server.client.disconnect();
+        } catch {
+          // Best effort; continue restoring the known-good profiles.
+        }
+      }
+
+      const rollbackErrors: string[] = [];
+      for (const server of stoppedExisting) {
+        try {
+          await server.client.connect();
+        } catch (rollbackError) {
+          rollbackErrors.push(
+            `${server.name}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+          );
+        }
+      }
+      this.activeName = priorActiveName;
+
+      const originalMessage = error instanceof Error ? error.message : String(error);
+      const rollbackSuffix = rollbackErrors.length
+        ? ` Rollback also failed for ${rollbackErrors.join('; ')}`
+        : '';
+      throw new Error(`Server config reload failed: ${originalMessage}.${rollbackSuffix}`);
     }
 
-    // Keep a valid active server
-    if (!this.servers.has(this.activeName)) {
-      const fallback =
-        file?.defaultServer && this.servers.has(file.defaultServer)
-          ? file.defaultServer
-          : this.servers.keys().next().value!;
-      this.activeName = fallback;
-    } else if (
-      file?.defaultServer &&
-      this.servers.has(file.defaultServer) &&
-      (added.length || removed.length)
-    ) {
-      // honor a changed defaultServer on structural reloads
-      this.activeName = file.defaultServer;
+    // Commit only after all staged connectors are listening.
+    for (const name of [...removed, ...changed]) this.servers.delete(name);
+    for (const [name, server] of staged) this.servers.set(name, server);
+    for (const name of unchanged) {
+      const planned = plannedProfiles.get(name)!;
+      this.servers.get(name)!.label = planned.profile.label || name;
     }
+
+    const nextConfiguredDefaultName =
+      file?.defaultServer && this.servers.has(file.defaultServer)
+        ? file.defaultServer
+        : this.servers.keys().next().value!;
+
+    // Keep a valid active server. An explicit default-only config change is
+    // honored when the registry was still following the prior default, but
+    // does not clobber a deliberate manual selection of a different profile.
+    if (!this.servers.has(this.activeName)) {
+      this.activeName = nextConfiguredDefaultName;
+    } else if (
+      nextConfiguredDefaultName !== priorConfiguredDefaultName &&
+      wasFollowingConfiguredDefault
+    ) {
+      this.activeName = nextConfiguredDefaultName;
+    }
+    this.configuredDefaultName = nextConfiguredDefaultName;
 
     this.logger.info('Servers config reloaded', {
       added,
@@ -409,14 +530,27 @@ export class ServerRegistry {
     return { added, removed, changed, unchanged };
   }
 
-  disconnectAll(): void {
-    for (const server of this.servers.values()) {
-      try {
-        server.client.disconnect();
-      } catch {
-        // best effort
-      }
-    }
+  async disconnectAll(): Promise<void> {
+    return this.runLifecycle(async () => {
+      await Promise.all(
+        [...this.servers.values()].map(async server => {
+          try {
+            await server.client.disconnect();
+          } catch {
+            // best effort
+          }
+        })
+      );
+    });
+  }
+
+  private runLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.lifecycleTail.then(operation, operation);
+    this.lifecycleTail = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
   }
 }
 
@@ -437,8 +571,8 @@ export class RoutingFoundryClient extends FoundryClient {
     return this.registry.getActive().client.connect();
   }
 
-  override disconnect(): void {
-    this.registry.getActive().client.disconnect();
+  override async disconnect(): Promise<void> {
+    await this.registry.getActive().client.disconnect();
   }
 
   override getConnectionType(): 'websocket' | 'webrtc' | null {
@@ -465,12 +599,12 @@ export class RoutingFoundryClient extends FoundryClient {
     return this.registry.getActive().client.isReady();
   }
 
-  override sendMessage(message: any): void {
-    this.registry.getActive().client.sendMessage(message);
+  override async sendMessage(message: any): Promise<void> {
+    await this.registry.getActive().client.sendMessage(message);
   }
 
-  override broadcastMessage(message: any): void {
-    this.registry.getActive().client.broadcastMessage(message);
+  override async broadcastMessage(message: any): Promise<void> {
+    await this.registry.getActive().client.broadcastMessage(message);
   }
 
   override isConnected(): boolean {

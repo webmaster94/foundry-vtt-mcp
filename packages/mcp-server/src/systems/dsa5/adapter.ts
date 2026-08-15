@@ -1,27 +1,13 @@
 /**
  * DSA5 System Adapter
  *
- * Implements SystemAdapter interface for DSA5 (Das Schwarze Auge 5) support.
- * Handles creature indexing, filtering, formatting, and data extraction.
+ * Implements character-stat extraction for DSA5 (Das Schwarze Auge 5).
  */
 
-import type {
-  SystemAdapter,
-  SystemMetadata,
-  SystemCreatureIndex,
-  DSA5CreatureIndex,
-} from '../types.js';
-import {
-  DSA5FiltersSchema,
-  matchesDSA5Filters,
-  describeDSA5Filters,
-  type DSA5Filters,
-} from './filters.js';
-import { FIELD_PATHS, getExperienceLevel, EIGENSCHAFT_NAMES } from './constants.js';
+import type { SystemAdapter, SystemMetadata } from '../types.js';
+import { getExperienceLevel, EIGENSCHAFT_NAMES } from './constants.js';
 
-/**
- * DSA5 system adapter
- */
+/** DSA5 system adapter. */
 export class DSA5Adapter implements SystemAdapter {
   getMetadata(): SystemMetadata {
     return {
@@ -30,214 +16,17 @@ export class DSA5Adapter implements SystemAdapter {
       displayName: 'Das Schwarze Auge 5',
       version: '1.0.0',
       description:
-        'Support for DSA5 (Das Schwarze Auge 5. Edition) with Eigenschaften, Talente, Erfahrungsgrade, and LeP/AsP/KaP resources',
+        'Character support for DSA5 with Eigenschaften, Talente, Erfahrungsgrade, and LeP/AsP/KaP resources',
       supportedFeatures: {
-        creatureIndex: true,
         characterStats: true,
         spellcasting: true,
-        powerLevel: true, // Uses Experience Level (Erfahrungsgrad 1-7)
+        powerLevel: true,
       },
     };
   }
 
   canHandle(systemId: string): boolean {
     return systemId.toLowerCase() === 'dsa5';
-  }
-
-  /**
-   * Extract creature data from Foundry document for indexing
-   * This is called by the index builder in Foundry's browser context
-   */
-  extractCreatureData(
-    doc: any,
-    pack: any
-  ): { creature: SystemCreatureIndex; errors: number } | null {
-    // Implementation is in index-builder.ts since it runs in browser
-    // This method is here for type compliance but delegates to IndexBuilder
-    throw new Error('extractCreatureData should be called from DSA5IndexBuilder, not the adapter');
-  }
-
-  getFilterSchema() {
-    return DSA5FiltersSchema;
-  }
-
-  matchesFilters(creature: SystemCreatureIndex, filters: Record<string, any>): boolean {
-    // Validate filters match DSA5 schema
-    const validated = DSA5FiltersSchema.safeParse(filters);
-    if (!validated.success) {
-      return false;
-    }
-
-    return matchesDSA5Filters(creature, validated.data as DSA5Filters);
-  }
-
-  getDataPaths(): Record<string, string | null> {
-    return {
-      // DSA5 specific paths
-      level: FIELD_PATHS.DETAILS_EXPERIENCE_TOTAL, // Level is calculated from AP
-      species: FIELD_PATHS.DETAILS_SPECIES,
-      culture: FIELD_PATHS.DETAILS_CULTURE,
-      profession: FIELD_PATHS.DETAILS_CAREER, // IMPORTANT: 'career' not 'profession'
-      size: FIELD_PATHS.STATUS_SIZE,
-
-      // Characteristics (Eigenschaften)
-      characteristics: FIELD_PATHS.CHARACTERISTICS,
-      mu: FIELD_PATHS.CHAR_MU,
-      kl: FIELD_PATHS.CHAR_KL,
-      in: FIELD_PATHS.CHAR_IN,
-      ch: FIELD_PATHS.CHAR_CH,
-      ff: FIELD_PATHS.CHAR_FF,
-      ge: FIELD_PATHS.CHAR_GE,
-      ko: FIELD_PATHS.CHAR_KO,
-      kk: FIELD_PATHS.CHAR_KK,
-
-      // Status values
-      wounds: FIELD_PATHS.STATUS_WOUNDS,
-      lifePoints: FIELD_PATHS.STATUS_WOUNDS_CURRENT, // wounds.current has actual LeP
-      astralenergy: FIELD_PATHS.STATUS_ASTRAL,
-      karmaenergy: FIELD_PATHS.STATUS_KARMA,
-      speed: FIELD_PATHS.STATUS_SPEED,
-      initiative: FIELD_PATHS.STATUS_INITIATIVE,
-      dodge: FIELD_PATHS.STATUS_DODGE,
-      armor: FIELD_PATHS.STATUS_ARMOR,
-
-      // Tradition
-      tradition: FIELD_PATHS.TRADITION,
-
-      // D&D5e-specific paths don't exist in DSA5
-      challengeRating: null,
-      creatureType: null,
-      alignment: null,
-      hitPoints: null,
-      armorClass: null,
-      legendaryActions: null,
-      legendaryResistances: null,
-
-      // PF2e-specific paths don't exist in DSA5
-      perception: null,
-      saves: null,
-      rarity: null,
-    };
-  }
-
-  formatCreatureForList(creature: SystemCreatureIndex): any {
-    const dsa5Creature = creature as DSA5CreatureIndex;
-    const formatted: any = {
-      id: creature.id,
-      name: creature.name,
-      type: creature.type,
-      pack: {
-        id: creature.packName,
-        label: creature.packLabel,
-      },
-    };
-
-    // Add DSA5 specific stats
-    if (dsa5Creature.systemData) {
-      const stats: any = {};
-
-      if (dsa5Creature.systemData.level !== undefined) {
-        stats.level = dsa5Creature.systemData.level;
-
-        // Add experience level name (e.g., "Erfahren")
-        const expLevel = getExperienceLevel(dsa5Creature.systemData.experiencePoints ?? 0);
-        stats.experienceLevel = expLevel.name;
-      }
-
-      if (dsa5Creature.systemData.species) {
-        stats.species = dsa5Creature.systemData.species;
-      }
-
-      if (dsa5Creature.systemData.culture) {
-        stats.culture = dsa5Creature.systemData.culture;
-      }
-
-      if (dsa5Creature.systemData.size) {
-        stats.size = dsa5Creature.systemData.size;
-      }
-
-      if (dsa5Creature.systemData.lifePoints) {
-        stats.lifePoints = dsa5Creature.systemData.lifePoints;
-      }
-
-      if (dsa5Creature.systemData.meleeDefense) {
-        stats.meleeDefense = dsa5Creature.systemData.meleeDefense;
-      }
-
-      if (dsa5Creature.systemData.hasSpells) {
-        stats.spellcaster = true;
-      }
-
-      if (Object.keys(stats).length > 0) {
-        formatted.stats = stats;
-      }
-    }
-
-    if (creature.img) {
-      formatted.hasImage = true;
-    }
-
-    return formatted;
-  }
-
-  formatCreatureForDetails(creature: SystemCreatureIndex): any {
-    const dsa5Creature = creature as DSA5CreatureIndex;
-    const formatted = this.formatCreatureForList(creature);
-
-    // Add additional details
-    if (dsa5Creature.systemData) {
-      const expLevel = getExperienceLevel(dsa5Creature.systemData.experiencePoints ?? 0);
-
-      formatted.detailedStats = {
-        level: dsa5Creature.systemData.level,
-        experienceLevel: {
-          name: expLevel.name,
-          nameEn: expLevel.nameEn,
-          level: expLevel.level,
-          apRange: `${expLevel.min}-${expLevel.max === Infinity ? '∞' : expLevel.max}`,
-        },
-        experiencePoints: dsa5Creature.systemData.experiencePoints,
-        species: dsa5Creature.systemData.species,
-        culture: dsa5Creature.systemData.culture,
-        profession: dsa5Creature.systemData.profession,
-        size: dsa5Creature.systemData.size,
-        lifePoints: dsa5Creature.systemData.lifePoints,
-        meleeDefense: dsa5Creature.systemData.meleeDefense,
-        rangedDefense: dsa5Creature.systemData.rangedDefense,
-        armor: dsa5Creature.systemData.armor,
-        hasSpells: dsa5Creature.systemData.hasSpells,
-        hasAstralEnergy: dsa5Creature.systemData.hasAstralEnergy,
-        hasKarmaEnergy: dsa5Creature.systemData.hasKarmaEnergy,
-        traits: dsa5Creature.systemData.traits || [],
-        rarity: dsa5Creature.systemData.rarity,
-      };
-    }
-
-    if (creature.img) {
-      formatted.img = creature.img;
-    }
-
-    return formatted;
-  }
-
-  describeFilters(filters: Record<string, any>): string {
-    const validated = DSA5FiltersSchema.safeParse(filters);
-    if (!validated.success) {
-      return 'ungültige Filter';
-    }
-
-    return describeDSA5Filters(validated.data as DSA5Filters);
-  }
-
-  getPowerLevel(creature: SystemCreatureIndex): number | undefined {
-    const dsa5Creature = creature as DSA5CreatureIndex;
-
-    // DSA5: Use Experience Level (Erfahrungsgrad 1-7)
-    if (dsa5Creature.systemData?.level !== undefined) {
-      return dsa5Creature.systemData.level;
-    }
-
-    return undefined;
   }
 
   /**

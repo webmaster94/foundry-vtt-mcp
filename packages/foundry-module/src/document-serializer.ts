@@ -16,6 +16,7 @@ export interface SerializedResult {
 }
 
 const DEFAULT_MAX_BYTES = 256_000;
+const DND5E_LEGACY_SENSE_KEYS = ['darkvision', 'blindsight', 'tremorsense', 'truesight'] as const;
 
 export class DocumentSerializer {
   serialize(value: unknown, options: DocumentSerializationOptions = {}): SerializedResult {
@@ -61,17 +62,43 @@ export class DocumentSerializer {
       if (seen.has(objectValue)) return '[Circular]';
       seen.add(objectValue);
 
-      const documentLike = this.serializeDocumentLike(objectValue, options, seen, path, depth, truncatedPaths);
+      const documentLike = this.serializeDocumentLike(
+        objectValue,
+        options,
+        seen,
+        path,
+        depth,
+        truncatedPaths
+      );
       if (documentLike) return documentLike;
 
       if (Array.isArray(value)) {
-        return value.slice(0, 500).map((item, index) => this.serializeValue(item, options, seen, `${path}[${index}]`, depth + 1, truncatedPaths));
+        return value
+          .slice(0, 500)
+          .map((item, index) =>
+            this.serializeValue(item, options, seen, `${path}[${index}]`, depth + 1, truncatedPaths)
+          );
       }
 
       const output: Record<string, unknown> = {};
-      for (const [key, child] of Object.entries(objectValue)) {
+      const dnd5eSenseRanges = this.getDnd5eLegacySenseRanges(objectValue);
+      for (const key of Object.keys(objectValue)) {
         if (this.shouldSkipKey(key)) continue;
-        output[key] = this.serializeValue(child, options, seen, `${path}.${key}`, depth + 1, truncatedPaths);
+        // D&D5e 5.3 exposes the old sense paths as warning-emitting accessors.
+        // Read their canonical ranges values directly so legacy projections keep
+        // working without invoking the deprecated getters.
+        const child =
+          dnd5eSenseRanges && this.isDnd5eLegacySenseKey(key)
+            ? dnd5eSenseRanges[key]
+            : objectValue[key];
+        output[key] = this.serializeValue(
+          child,
+          options,
+          seen,
+          `${path}.${key}`,
+          depth + 1,
+          truncatedPaths
+        );
       }
       return output;
     }
@@ -87,7 +114,9 @@ export class DocumentSerializer {
     depth: number,
     truncatedPaths: string[]
   ): Record<string, unknown> | null {
-    const documentName = this.stringProp(value, 'documentName') || this.stringProp(value.constructor as unknown as Record<string, unknown>, 'documentName');
+    const documentName =
+      this.stringProp(value, 'documentName') ||
+      this.stringProp(value.constructor as unknown as Record<string, unknown>, 'documentName');
     const uuid = this.stringProp(value, 'uuid');
     const id = this.stringProp(value, 'id');
 
@@ -111,16 +140,40 @@ export class DocumentSerializer {
     if (folder) output.folder = folder;
 
     const ownership = value.ownership ?? source?.ownership;
-    if (ownership) output.ownership = this.serializeValue(ownership, options, seen, `${path}.ownership`, depth + 1, truncatedPaths);
+    if (ownership)
+      output.ownership = this.serializeValue(
+        ownership,
+        options,
+        seen,
+        `${path}.ownership`,
+        depth + 1,
+        truncatedPaths
+      );
 
     if (options.includeSystem !== false) {
       const system = value.system ?? source?.system;
-      if (system !== undefined) output.system = this.serializeValue(system, options, seen, `${path}.system`, depth + 1, truncatedPaths);
+      if (system !== undefined)
+        output.system = this.serializeValue(
+          system,
+          options,
+          seen,
+          `${path}.system`,
+          depth + 1,
+          truncatedPaths
+        );
     }
 
     if (options.includeFlags) {
       const flags = value.flags ?? source?.flags;
-      if (flags !== undefined) output.flags = this.serializeValue(flags, options, seen, `${path}.flags`, depth + 1, truncatedPaths);
+      if (flags !== undefined)
+        output.flags = this.serializeValue(
+          flags,
+          options,
+          seen,
+          `${path}.flags`,
+          depth + 1,
+          truncatedPaths
+        );
     }
 
     if (options.includeEmbedded) {
@@ -128,7 +181,14 @@ export class DocumentSerializer {
     }
 
     if (options.includeSource && source) {
-      output._source = this.serializeValue(source, { ...options, includeSource: false }, seen, `${path}._source`, depth + 1, truncatedPaths);
+      output._source = this.serializeValue(
+        source,
+        { ...options, includeSource: false },
+        seen,
+        `${path}._source`,
+        depth + 1,
+        truncatedPaths
+      );
     }
 
     return output;
@@ -145,7 +205,7 @@ export class DocumentSerializer {
     }
 
     const source = value._source;
-    return source && typeof source === 'object' ? source as Record<string, unknown> : null;
+    return source && typeof source === 'object' ? (source as Record<string, unknown>) : null;
   }
 
   private serializeEmbeddedSummary(value: Record<string, unknown>): Record<string, number> {
@@ -154,16 +214,21 @@ export class DocumentSerializer {
     if (!collections || typeof collections !== 'object') return output;
 
     for (const [key, collection] of Object.entries(collections as Record<string, any>)) {
-      output[key] = typeof collection?.size === 'number'
-        ? collection.size
-        : Array.isArray(collection)
-          ? collection.length
-          : 0;
+      output[key] =
+        typeof collection?.size === 'number'
+          ? collection.size
+          : Array.isArray(collection)
+            ? collection.length
+            : 0;
     }
     return output;
   }
 
-  private enforceMaxBytes(value: unknown, maxBytes: number, truncatedPaths: string[]): SerializedResult {
+  private enforceMaxBytes(
+    value: unknown,
+    maxBytes: number,
+    truncatedPaths: string[]
+  ): SerializedResult {
     let text = '';
     try {
       text = JSON.stringify(value);
@@ -195,7 +260,7 @@ export class DocumentSerializer {
 
   private project(value: unknown, fields: string[]): unknown {
     if (Array.isArray(value)) {
-      return value.map((item) => this.project(item, fields));
+      return value.map(item => this.project(item, fields));
     }
 
     if (!value || typeof value !== 'object') {
@@ -248,8 +313,35 @@ export class DocumentSerializer {
   }
 
   private shouldSkipKey(key: string): boolean {
-    return key.startsWith('_') && !['_id', '_source'].includes(key)
-      || ['apps', 'sheet', 'rendered', 'element', 'canvas', 'texture', 'mesh'].includes(key);
+    return (
+      (key.startsWith('_') && !['_id', '_source'].includes(key)) ||
+      ['apps', 'sheet', 'rendered', 'element', 'canvas', 'texture', 'mesh'].includes(key)
+    );
+  }
+
+  private getDnd5eLegacySenseRanges(
+    value: Record<string, unknown>
+  ): Record<string, unknown> | null {
+    const rangesDescriptor = Object.getOwnPropertyDescriptor(value, 'ranges');
+    if (!rangesDescriptor || !('value' in rangesDescriptor)) return null;
+
+    const ranges = rangesDescriptor.value;
+    if (!ranges || typeof ranges !== 'object') return null;
+
+    const hasLegacyAccessors = DND5E_LEGACY_SENSE_KEYS.every(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return (
+        descriptor?.enumerable === true &&
+        typeof descriptor.get === 'function' &&
+        typeof descriptor.set === 'function'
+      );
+    });
+
+    return hasLegacyAccessors ? (ranges as Record<string, unknown>) : null;
+  }
+
+  private isDnd5eLegacySenseKey(key: string): key is (typeof DND5E_LEGACY_SENSE_KEYS)[number] {
+    return (DND5E_LEGACY_SENSE_KEYS as readonly string[]).includes(key);
   }
 
   private stringProp(value: Record<string, unknown> | undefined, key: string): string | undefined {
@@ -259,7 +351,8 @@ export class DocumentSerializer {
 
   private extractId(value: unknown): string | undefined {
     if (typeof value === 'string') return value;
-    if (value && typeof value === 'object' && typeof (value as any).id === 'string') return (value as any).id;
+    if (value && typeof value === 'object' && typeof (value as any).id === 'string')
+      return (value as any).id;
     return undefined;
   }
 
@@ -270,7 +363,9 @@ export class DocumentSerializer {
 
     try {
       const setting = Number(game.settings.get(MODULE_ID, 'documentResultMaxBytes'));
-      return Number.isFinite(setting) ? Math.min(Math.max(setting, 1000), 2_000_000) : DEFAULT_MAX_BYTES;
+      return Number.isFinite(setting)
+        ? Math.min(Math.max(setting, 1000), 2_000_000)
+        : DEFAULT_MAX_BYTES;
     } catch {
       return DEFAULT_MAX_BYTES;
     }

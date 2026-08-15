@@ -347,7 +347,6 @@ export class QuestCreationTools {
   }
 
   // REMOVED: analyze-campaign-context tool - was causing too many debugging issues
-  // Enhanced creature index is still available for other tools that need monster detection
 
   /**
    * Handle update quest journal request

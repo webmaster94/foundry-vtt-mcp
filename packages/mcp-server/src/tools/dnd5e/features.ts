@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { FoundryClient } from '../../foundry-client.js';
 import { Logger } from '../../logger.js';
 import { ErrorHandler } from '../../utils/error-handler.js';
-import { detectGameSystem, getCachedSystemId } from '../../utils/system-detection.js';
+import { detectGameSystemInfo } from '../../utils/system-detection.js';
 
 // ---------------------------------------------------------------------------
 // Options interface
@@ -108,11 +108,11 @@ export class DnD5eFeaturesFromCompendiumTools {
     });
 
     try {
-      const system = await detectGameSystem(this.foundryClient, this.logger);
-      if (system !== 'dnd5e') {
+      const detected = await detectGameSystemInfo(this.foundryClient, this.logger);
+      if (detected.system !== 'dnd5e') {
         throw new Error(
           `dnd5e-add-features-from-compendium requires D&D 5e. ` +
-            `Detected system: "${getCachedSystemId() ?? 'unknown'}".`
+            `Detected system: "${detected.systemId ?? 'unknown'}".`
         );
       }
 

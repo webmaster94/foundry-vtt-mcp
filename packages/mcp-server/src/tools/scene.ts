@@ -49,6 +49,52 @@ export class SceneTools {
           properties: {},
         },
       },
+      {
+        name: 'list-scenes',
+        description: 'List all available Foundry VTT scenes with their details',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filter: {
+              type: 'string',
+              description: 'Optional filter to search scene names (case-insensitive)',
+              default: '',
+            },
+            include_active_only: {
+              type: 'boolean',
+              description: 'Only return the currently active scene',
+              default: false,
+            },
+          },
+        },
+      },
+      {
+        name: 'switch-scene',
+        description: 'Switch to a different Foundry VTT scene by name or ID',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            scene_identifier: {
+              type: 'string',
+              description: 'Scene name or ID to switch to',
+            },
+            sceneId: {
+              type: 'string',
+              description: 'Compatibility alias for scene_identifier',
+            },
+            optimize_view: {
+              type: 'boolean',
+              description: 'Automatically optimize the view for the scene',
+              default: true,
+            },
+            dryRun: {
+              type: 'boolean',
+              description: 'Preview the scene change without activating it',
+              default: false,
+            },
+          },
+        },
+      },
     ];
   }
 
@@ -97,6 +143,44 @@ export class SceneTools {
       throw new Error(
         `Failed to get world information: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
+    }
+  }
+
+  async listScenes(input: any): Promise<any> {
+    const safeInput = input ?? {};
+    try {
+      const params = {
+        filter: typeof safeInput.filter === 'string' ? safeInput.filter : undefined,
+        include_active_only: Boolean(safeInput.include_active_only),
+      };
+      return await this.foundryClient.query('foundry-mcp-bridge.list-scenes', params);
+    } catch (error: any) {
+      this.logger.error('List scenes failed', { error, input: safeInput });
+      return { success: false, error: error?.message ?? 'Unknown error' };
+    }
+  }
+
+  async switchScene(input: any): Promise<any> {
+    const safeInput = input ?? {};
+    try {
+      const sceneIdentifier =
+        typeof safeInput.scene_identifier === 'string'
+          ? safeInput.scene_identifier
+          : safeInput.sceneId;
+      if (!sceneIdentifier || typeof sceneIdentifier !== 'string' || !sceneIdentifier.trim()) {
+        return { success: false, error: 'scene_identifier is required' };
+      }
+
+      const params = {
+        scene_identifier: sceneIdentifier,
+        optimize_view: safeInput.optimize_view !== false,
+        dryRun: safeInput.dryRun === true,
+      };
+
+      return await this.foundryClient.query('foundry-mcp-bridge.switch-scene', params);
+    } catch (error: any) {
+      this.logger.error('Switch scene failed', { error, input: safeInput });
+      return { success: false, error: error?.message ?? 'Unknown error' };
     }
   }
 
