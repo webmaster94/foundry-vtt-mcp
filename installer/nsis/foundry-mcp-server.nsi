@@ -448,7 +448,13 @@ Section "Uninstall"
   client_config_cleanup_abort:
   DetailPrint "Uninstall cancelled before removing application files because MCP client cleanup was not confirmed."
   SetErrorLevel 2
+  ; Abort keeps the interactive uninstaller open, but NSIS normalizes its
+  ; silent process exit to zero. Quit preserves the explicit failure code.
+  IfSilent client_config_cleanup_quit
   Abort
+
+  client_config_cleanup_quit:
+  Quit
 
   client_config_cleanup_retry:
   Call un.RemoveClaudeConfig
