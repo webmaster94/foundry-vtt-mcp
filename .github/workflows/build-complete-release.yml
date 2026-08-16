@@ -341,6 +341,23 @@ jobs:
           echo "PACKAGE_VERSION=v$PACKAGE_VERSION" >> $GITHUB_ENV
           echo "version=v$PACKAGE_VERSION" >> $GITHUB_OUTPUT
 
+      - name: Build Foundry module release package
+        run: |
+          npm ci --workspaces --include-workspace-root
+          npm run build:foundry
+          VERSION="${GITHUB_REF_NAME#v}"
+          DOWNLOAD="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/module.zip"
+          MANIFEST="https://github.com/${{ github.repository }}/releases/latest/download/module.json"
+          jq --arg version "$VERSION" \
+             --arg download "$DOWNLOAD" \
+             --arg manifest "$MANIFEST" \
+             --arg url "https://github.com/${{ github.repository }}" \
+             '.version = $version | .download = $download | .manifest = $manifest | .url = $url' \
+             packages/foundry-module/module.json > /tmp/module.json
+          mv /tmp/module.json packages/foundry-module/module.json
+          cd packages/foundry-module
+          zip --recurse-paths module.zip module.json dist lang styles templates scripts
+
       - name: Download Windows installer artifact
         uses: actions/download-artifact@v6
         with:
@@ -357,9 +374,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Foundry MCP Server ${{ github.ref_name }}
+          name: Foundry VTT MCP Bridge ${{ github.ref_name }}
           body: |
-            ## Foundry MCP Server ${{ github.ref_name }}
+            ## Foundry VTT MCP Bridge ${{ github.ref_name }}
 
             Complete multi-platform distribution for connecting MCP clients with Foundry VTT.
 
@@ -406,6 +423,8 @@ jobs:
           files: |
             installer/build/FoundryVTT-MCP-Bridge-Setup-${{ env.PACKAGE_VERSION }}.exe
             installer/build/FoundryMCPServer-${{ env.PACKAGE_VERSION }}.dmg
+            packages/foundry-module/module.json
+            packages/foundry-module/module.zip
           generate_release_notes: true
           draft: false
           prerelease: false
