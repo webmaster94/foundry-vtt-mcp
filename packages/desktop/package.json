@@ -1,6 +1,6 @@
 {
   "name": "@foundry-mcp/desktop",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Desktop control panel and notification-area host for FoundryVTT MCP Bridge",
   "private": true,
   "type": "module",

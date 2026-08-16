@@ -95,6 +95,9 @@ function runStaticChecks() {
     'WriteRegStr HKCU "${UNINSTALL_KEY}" "URLInfoAbout" "${PRODUCT_URL}"',
     'WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" ${ESTIMATED_SIZE_KB}',
     '!define MUI_FINISHPAGE_RUN "$INSTDIR\\${PRODUCT_EXE}"',
+    '!define MUI_WELCOMEPAGE_TEXT "Setup will install ${PRODUCT_NAME} on this computer.',
+    '!define MUI_DIRECTORYPAGE_TEXT_TOP "Choose where ${PRODUCT_NAME} will be installed.',
+    '!define MUI_DIRECTORYPAGE_TEXT_DESTINATION "Install location:"',
   ]) {
     assertIncludes(nsis, required);
   }
@@ -183,10 +186,14 @@ function runStaticChecks() {
   assertIncludes(configure, 'Test-EntryOwnedByBridge');
   assertIncludes(configure, 'Get-OnlyArgument');
   assertIncludes(configure, 'Claude Code (user scope)');
+  assertIncludes(configure, 'System.Web.Script.Serialization.JavaScriptSerializer');
+  assertIncludes(configure, 'ConvertFrom-CompatibleJson');
+  assertIncludes(configure, 'Test-IsVerifiedBridgeSourceEntry');
   assertIncludes(configure, 'FoundryVTT MCP Bridge\\foundry-servers.json');
   assertIncludes(configureCodex, "const OWNER_ID = 'io.github.webmaster94.foundry-vtt-mcp'");
   assertIncludes(configureCodex, 'function planInstall');
   assertIncludes(configureCodex, 'function planRemoval');
+  assertIncludes(configureCodex, 'function isVerifiedBridgeSource');
   assertIncludes(configureCodex, 'Codex configuration changed during migration');
   assertIncludes(moduleCleanup, 'Assert-TreeHasNoReparsePoints');
   assertIncludes(moduleCleanup, 'Remove-TreeNoFollow');
@@ -205,6 +212,14 @@ function runStaticChecks() {
   assert.ok(!build.includes('FoundryMCPServer-Setup-'), 'legacy installer artifact name remains');
   assertIncludes(releaseWorkflow, 'FoundryVTT-MCP-Bridge-Setup-${{ env.PACKAGE_VERSION }}.exe');
   assertIncludes(releaseWorkflow, 'npm run test:windows-installer-safety');
+  assertIncludes(releaseWorkflow, 'id-token: write');
+  assertIncludes(releaseWorkflow, 'uses: azure/artifact-signing-action@v2');
+  assertIncludes(releaseWorkflow, 'ARTIFACT_SIGNING_ENABLED');
+  assertIncludes(
+    releaseWorkflow,
+    'node build-nsis.js --version $env:PACKAGE_VERSION --skip-desktop-build'
+  );
+  assertIncludes(releaseWorkflow, 'Get-AuthenticodeSignature -LiteralPath $path');
   assert.equal(
     rootPackage.scripts['test:windows-installer-safety'],
     'node installer/tests/windows-installer-safety.mjs'
@@ -745,6 +760,52 @@ async function runWindowsFixtures() {
       path.join(configuredInstall, 'resources', 'server', 'index.bundle.cjs'),
       'server'
     );
+    const sourceCheckoutRoot = path.join(fixtureRoot, 'Verified Source Checkout');
+    const sourceServerRoot = path.join(sourceCheckoutRoot, 'packages', 'mcp-server');
+    const sourceScript = path.join(sourceServerRoot, 'dist', 'index.js');
+    writeJson(path.join(sourceCheckoutRoot, 'package.json'), {
+      name: 'foundry-mcp-integration',
+      repository: {
+        type: 'git',
+        url: 'https://github.com/webmaster94/foundry-vtt-mcp.git',
+      },
+    });
+    writeJson(path.join(sourceServerRoot, 'package.json'), {
+      name: '@foundry-mcp/server',
+    });
+    writeJson(path.join(sourceCheckoutRoot, 'packages', 'foundry-module', 'module.json'), {
+      id: 'foundry-mcp-bridge',
+    });
+    fs.mkdirSync(path.dirname(sourceScript), { recursive: true });
+    fs.writeFileSync(sourceScript, 'console.log("source sentinel");\n');
+
+    const sourceClaudeConfig = path.join(fixtureRoot, 'Claude', 'source-client-config.json');
+    writeJson(sourceClaudeConfig, {
+      mcpServers: {
+        'foundry-mcp': {
+          command: 'node',
+          args: [sourceScript],
+        },
+        other: { command: 'other', args: [] },
+      },
+    });
+    runPowerShell(
+      configurePath,
+      ['-InstallDir', configuredInstall, '-ConfigPathOverride', sourceClaudeConfig],
+      environment
+    );
+    const migratedSourceClaude = JSON.parse(read(sourceClaudeConfig)).mcpServers;
+    assertSamePath(
+      migratedSourceClaude['foundry-mcp'].command,
+      path.join(configuredInstall, 'FoundryVTT MCP Bridge.exe')
+    );
+    assert.ok(migratedSourceClaude.other, 'source migration removed an unrelated Claude entry');
+    assert.equal(
+      read(sourceScript),
+      'console.log("source sentinel");\n',
+      'source migration modified the source checkout'
+    );
+
     const legacyClientRoot = path.join(fixtureRoot, 'Legacy Client Install');
     const legacyClientConfig = path.join(fixtureRoot, 'Claude', 'legacy-client-config.json');
     writeJson(legacyClientConfig, {
@@ -839,6 +900,35 @@ async function runWindowsFixtures() {
     assert.equal(migratedClaudeCode['foundry-mcp'].env.ELECTRON_RUN_AS_NODE, '1');
     assert.equal(migratedClaudeCode['foundry-mcp'].env.FOUNDRY_MCP_MANAGED_BY, productId);
     assert.ok(migratedClaudeCode.other, 'Claude Code migration removed an unrelated entry');
+
+    const claudeCodeEmptyKeyConfig = path.join(fixtureRoot, 'Claude Code', 'empty-key.json');
+    writeJson(claudeCodeEmptyKeyConfig, {
+      projects: {
+        '': { preserved: true },
+      },
+      mcpServers: {
+        other: { command: 'other', args: [] },
+      },
+    });
+    runPowerShell(
+      configurePath,
+      ['-InstallDir', configuredInstall, '-ClaudeCodeConfigPathOverride', claudeCodeEmptyKeyConfig],
+      environment
+    );
+    const migratedEmptyKeyClaudeCode = JSON.parse(read(claudeCodeEmptyKeyConfig));
+    assert.equal(
+      migratedEmptyKeyClaudeCode.projects[''].preserved,
+      true,
+      'Claude Code empty-string property was not preserved'
+    );
+    assertSamePath(
+      migratedEmptyKeyClaudeCode.mcpServers['foundry-mcp'].command,
+      path.join(configuredInstall, 'FoundryVTT MCP Bridge.exe')
+    );
+    assert.ok(
+      migratedEmptyKeyClaudeCode.mcpServers.other,
+      'Claude Code empty-key migration removed an unrelated entry'
+    );
 
     const foreignClientConfig = path.join(fixtureRoot, 'Claude', 'foreign-client-config.json');
     writeJson(foreignClientConfig, {
@@ -1064,6 +1154,32 @@ async function runWindowsFixtures() {
       fs.readFileSync(path.join(path.dirname(legacyCodexConfig), codexBackups[0]), 'utf8'),
       legacyCodexBytes,
       'Codex migration backup did not preserve the exact preimage'
+    );
+
+    const sourceCodexConfig = path.join(fixtureRoot, 'Codex Source', 'config.toml');
+    fs.mkdirSync(path.dirname(sourceCodexConfig), { recursive: true });
+    fs.writeFileSync(
+      sourceCodexConfig,
+      `[mcp_servers."foundry-mcp"]\n` +
+        `command = "node"\n` +
+        `args = [${JSON.stringify(sourceScript)}]\n`
+    );
+    runNodeScript(
+      configureCodexPath,
+      ['--install-dir', configuredInstall, '--config', sourceCodexConfig],
+      environment
+    );
+    const migratedSourceCodex = read(sourceCodexConfig);
+    assert.ok(
+      migratedSourceCodex.includes(
+        `command = ${JSON.stringify(path.join(configuredInstall, 'FoundryVTT MCP Bridge.exe'))}`
+      ),
+      'verified source Codex entry was not migrated'
+    );
+    assert.equal(
+      read(sourceScript),
+      'console.log("source sentinel");\n',
+      'Codex source migration modified the source checkout'
     );
 
     const foreignCodexConfig = path.join(fixtureRoot, 'Codex Foreign', 'config.toml');

@@ -28,7 +28,7 @@ Enable **Foundry MCP Bridge** in the world. Keep the installed folder name and m
 
 ### Windows release installer
 
-Download **Foundry VTT MCP Bridge Setup** from the [releases page](https://github.com/webmaster94/foundry-vtt-mcp/releases). It installs the application under your per-user Programs folder, registers a single entry in **Apps & features / Programs and Features**, creates Start Menu shortcuts, and can install the Foundry module. It automatically configures detected user-level Claude Desktop, Claude Code, and Codex clients.
+Download **Foundry VTT MCP Bridge Setup** from the [releases page](https://github.com/webmaster94/foundry-vtt-mcp/releases). Its clearly labeled **Install location** page defaults to your per-user Programs folder and lets you browse to another location. Setup registers a single entry in **Apps & features / Programs and Features**, creates Start Menu shortcuts, and can install the Foundry module. It automatically configures detected user-level Claude Desktop, Claude Code, and Codex clients.
 
 The setup program recognizes the older **Foundry MCP Server** installation. It stops only bridge-owned processes, preserves connection profiles and user data, replaces only installer-owned program files, and updates the existing uninstall registration so duplicate Programs and Features entries are not created.
 
@@ -42,7 +42,7 @@ Use the native menu bar to manage the application:
 
 Connection saves are validated for port conflicts and remote-auth requirements, written atomically with a backup, and rolled back if live listener reload fails. Existing authentication tokens are never displayed; the editor can retain, replace, or clear one explicitly.
 
-Restart Claude Desktop, Claude Code, or Codex after setup changes its MCP registration. Installer-managed Windows clients launch the stdio bridge through the desktop executable in background Node mode, so they do not open a Command Prompt window. The installer preserves source/development registrations rather than silently replacing a user-managed command. If you want to replace those preserved entries too, use the repository's copy-pasteable [agent-assisted migration instruction](MIGRATION.md) after installation.
+Restart Claude Desktop, Claude Code, or Codex after setup changes its MCP registration. Installer-managed Windows clients launch the stdio bridge through the desktop executable in background Node mode, so they do not open a Command Prompt window. Setup migrates a source-checkout registration only when the argument path has this project's exact package layout and matching package/module identities. It preserves custom launchers and unverifiable same-name entries; use the repository's copy-pasteable [agent-assisted migration instruction](MIGRATION.md) for those custom cases.
 
 The installed desktop application uses `%APPDATA%\FoundryVTT MCP Bridge\foundry-servers.json` as its canonical profile file. An absolute `FOUNDRY_SERVERS_CONFIG` override remains supported for advanced or portable setups.
 

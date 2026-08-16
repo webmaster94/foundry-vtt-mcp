@@ -23,7 +23,7 @@ Enable **Foundry MCP Bridge** in your world's Module Management. Do not rename t
 On Windows, download **Foundry VTT MCP Bridge Setup** from the
 [latest release](https://github.com/webmaster94/foundry-vtt-mcp/releases/latest). The installer:
 
-- installs the bridge in your per-user Programs folder and registers it in **Apps & features / Programs and Features**;
+- shows an **Install location** page, defaults to your per-user Programs folder, and registers the selected location in **Apps & features / Programs and Features**;
 - adds **Foundry VTT MCP Bridge** and its uninstaller to the Start Menu;
 - upgrades the older Foundry MCP Server installation in place without deleting connection profiles, Foundry worlds, or unrelated MCP-client entries;
 - installs the Foundry module when selected and automatically configures detected user-level Claude Desktop, Claude Code, and Codex clients without replacing their other servers.
@@ -32,7 +32,7 @@ Launch **Foundry VTT MCP Bridge** from the Start Menu. Its dashboard shows every
 
 The authentication token for a profile stays masked in the editor. Connection changes are validated, written atomically, and applied live; if a listener cannot be restarted, the prior configuration is restored.
 
-Restart Claude Desktop, Claude Code, or Codex after installation so it loads the installer-managed MCP entry. On Windows that entry runs through the desktop executable in background Node mode, so normal MCP startup does not open a Command Prompt window. Source/development entries are deliberately left untouched because the installer cannot safely claim them. To intentionally replace one of those preserved entries, give an agent the copy-pasteable [agent-assisted migration instruction](MIGRATION.md) after setup finishes.
+Restart Claude Desktop, Claude Code, or Codex after installation so it loads the installer-managed MCP entry. On Windows that entry runs through the desktop executable in background Node mode, so normal MCP startup does not open a Command Prompt window. Setup automatically replaces a source-checkout entry only when its script path and package manifests prove that it is this bridge; custom launchers and unverifiable same-name entries remain untouched. The [agent-assisted migration instruction](MIGRATION.md) covers those custom cases.
 
 Open the Foundry world as a GM; the tools appear without a browser refresh. The connection is self-healing: the server side runs as a persistent background process that survives AI-client restarts and idle periods, native/application heartbeats remove dead transports, the module retries forever, and browser resume/network events wake delayed retries immediately. A freshly started bridge waits for the module rather than failing your first prompt.
 
