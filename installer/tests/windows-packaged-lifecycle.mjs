@@ -70,6 +70,7 @@ function commandResult(command, args, options = {}) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     windowsHide: true,
+    windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
     timeout: options.timeout ?? 120_000,
     env: options.env ?? process.env,
   });
@@ -304,9 +305,14 @@ function verifyRegistrationAndShortcuts(installDir, startMenuDir) {
 }
 
 function runInstaller(installer, installDir, environment) {
-  // NSIS requires /D to be the final argument and accepts the path, including
-  // spaces, as one unquoted argv value.
-  runChecked(installer, ['/S', `/D=${installDir}`], { timeout: 180_000, env: environment });
+  // NSIS parses /D from the raw Windows command line: it must be last and the
+  // value must not be quoted, even when it contains spaces. Node otherwise
+  // quotes this argv entry, causing NSIS to ignore the override.
+  runChecked(installer, ['/S', `/D=${installDir}`], {
+    timeout: 180_000,
+    env: environment,
+    windowsVerbatimArguments: true,
+  });
 }
 
 function verifyForeignCodexConfig(configPath, expectedBytes) {
