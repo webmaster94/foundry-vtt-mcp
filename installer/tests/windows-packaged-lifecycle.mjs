@@ -571,6 +571,12 @@ async function main() {
       timeout: 180_000,
       env: environment,
     });
+    // A normal NSIS uninstaller returns from its launcher after starting a
+    // temporary self-copy. Wait for that copy to finish deleting registered
+    // state and owned payload before making final assertions.
+    await waitFor('silent uninstall completion', async () => {
+      return !registryExists() && !fs.existsSync(startMenuDir) && !fs.existsSync(installDir);
+    });
     assert.ok(!registryExists(), 'Programs & Features registration survived uninstall');
     assertAbsent(startMenuDir, 'bridge Start Menu folder after uninstall');
     assertAbsent(installDir, 'program directory after uninstall');
