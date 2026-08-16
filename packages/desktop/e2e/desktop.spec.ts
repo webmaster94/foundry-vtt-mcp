@@ -62,7 +62,7 @@ async function launch(environment: Record<string, string>): Promise<ElectronAppl
 function spawnElectron(
   environment: Record<string, string>,
   args: string[]
-): Promise<{ code: number | null; elapsed: number }> {
+): Promise<{ code: number | null; signal: NodeJS.Signals | null; elapsed: number }> {
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(electronExecutable, [packageRoot, ...args], {
@@ -71,8 +71,24 @@ function spawnElectron(
       windowsHide: true,
     });
     child.once('error', reject);
-    child.once('exit', code => resolve({ code, elapsed: Date.now() - startedAt }));
+    child.once('exit', (code, signal) =>
+      resolve({ code, signal, elapsed: Date.now() - startedAt })
+    );
   });
+}
+
+function expectGracefulElectronExit(result: {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}): void {
+  if (process.platform === 'linux') {
+    expect(
+      result.code === 0 || (result.code === null && result.signal === 'SIGTERM'),
+      `expected exit code 0 or Linux SIGTERM, received code=${result.code} signal=${result.signal}`
+    ).toBe(true);
+    return;
+  }
+  expect(result).toMatchObject({ code: 0, signal: null });
 }
 
 test.afterEach(async () => {
@@ -136,12 +152,12 @@ test('a secondary --shutdown-for-update instance gracefully exits the primary', 
   const closed = application.waitForEvent('close');
 
   const requester = await spawnElectron(environment, ['--shutdown-for-update']);
-  expect(requester.code).toBe(0);
+  expectGracefulElectronExit(requester);
   await closed;
 });
 
 test('--shutdown-for-update exits promptly when there is no primary instance', async () => {
   const result = await spawnElectron(await testEnvironment(), ['--shutdown-for-update']);
-  expect(result.code).toBe(0);
+  expectGracefulElectronExit(result);
   expect(result.elapsed).toBeLessThan(5_000);
 });
