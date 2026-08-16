@@ -45,6 +45,24 @@ function assertBefore(contents, guard, mutation) {
   assert.ok(guardIndex < mutationIndex, `${guard} must precede ${mutation}`);
 }
 
+function canonicalPathForComparison(value) {
+  let existing = path.resolve(value);
+  const missingSegments = [];
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    missingSegments.unshift(path.basename(existing));
+    existing = parent;
+  }
+  const canonicalBase = fs.existsSync(existing) ? fs.realpathSync.native(existing) : existing;
+  const canonical = path.join(canonicalBase, ...missingSegments);
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+}
+
+function assertSamePath(actual, expected, message) {
+  assert.equal(canonicalPathForComparison(actual), canonicalPathForComparison(expected), message);
+}
+
 function runStaticChecks() {
   const nsis = read(nsisPath);
   const migration = read(migrationPath);
@@ -764,13 +782,13 @@ async function runWindowsFixtures() {
       environment
     );
     const migratedClientEntries = JSON.parse(read(legacyClientConfig)).mcpServers;
-    assert.equal(
+    assertSamePath(
       migratedClientEntries['foundry-mcp'].command,
       path.join(configuredInstall, 'FoundryVTT MCP Bridge.exe')
     );
     assert.equal(migratedClientEntries['foundry-mcp'].env.ELECTRON_RUN_AS_NODE, '1');
     assert.equal(migratedClientEntries['foundry-mcp'].env.FOUNDRY_MCP_MANAGED_BY, productId);
-    assert.equal(
+    assertSamePath(
       migratedClientEntries['foundry-mcp'].env.FOUNDRY_SERVERS_CONFIG,
       path.join(appData, 'FoundryVTT MCP Bridge', 'foundry-servers.json')
     );
@@ -811,7 +829,7 @@ async function runWindowsFixtures() {
       environment
     );
     const migratedClaudeCode = JSON.parse(read(claudeCodeConfig)).mcpServers;
-    assert.equal(
+    assertSamePath(
       migratedClaudeCode['foundry-mcp'].command,
       path.join(configuredInstall, 'FoundryVTT MCP Bridge.exe')
     );
