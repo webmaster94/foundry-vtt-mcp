@@ -65,7 +65,12 @@ function spawnElectron(
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null; elapsed: number }> {
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
-    const child = spawn(electronExecutable, [packageRoot, ...args], {
+    const electronArguments = [
+      ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
+      packageRoot,
+      ...args,
+    ];
+    const child = spawn(electronExecutable, electronArguments, {
       env: environment,
       stdio: 'ignore',
       windowsHide: true,
@@ -81,13 +86,6 @@ function expectGracefulElectronExit(result: {
   code: number | null;
   signal: NodeJS.Signals | null;
 }): void {
-  if (process.platform === 'linux') {
-    expect(
-      result.code === 0 || (result.code === null && result.signal === 'SIGTERM'),
-      `expected exit code 0 or Linux SIGTERM, received code=${result.code} signal=${result.signal}`
-    ).toBe(true);
-    return;
-  }
   expect(result).toMatchObject({ code: 0, signal: null });
 }
 
