@@ -18,11 +18,23 @@ export function resolveBackendBundle(paths: BackendProcessPaths): string {
 }
 
 export function sameResolvedPath(left: string, right: string): boolean {
-  const leftPath = path.resolve(left);
-  const rightPath = path.resolve(right);
-  return process.platform === 'win32'
-    ? leftPath.toLowerCase() === rightPath.toLowerCase()
-    : leftPath === rightPath;
+  const resolvedPath = (value: string): string => {
+    const resolved = path.resolve(value);
+    if (process.platform !== 'win32') return resolved;
+
+    let existing = resolved;
+    const missingSegments: string[] = [];
+    while (!fs.existsSync(existing)) {
+      const parent = path.dirname(existing);
+      if (parent === existing) break;
+      missingSegments.unshift(path.basename(existing));
+      existing = parent;
+    }
+    const canonicalBase = fs.existsSync(existing) ? fs.realpathSync.native(existing) : existing;
+    return path.join(canonicalBase, ...missingSegments).toLowerCase();
+  };
+
+  return resolvedPath(left) === resolvedPath(right);
 }
 
 export function backendIdentityMatches(
