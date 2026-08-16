@@ -34,95 +34,15 @@ The authentication token for a profile stays masked in the editor. Connection ch
 
 Restart Claude Desktop, Claude Code, or Codex after installation so it loads the installer-managed MCP entry. On Windows that entry runs through the desktop executable in background Node mode, so normal MCP startup does not open a Command Prompt window. Source/development entries are deliberately left untouched because the installer cannot safely claim them. To intentionally replace one of those preserved entries, give an agent the copy-pasteable [agent-assisted migration instruction](MIGRATION.md) after setup finishes.
 
-### Source installation
-
-Full monorepo or desktop development requires Node.js 22.12 or later and git. The prebuilt standalone/headless MCP server remains compatible with Node.js 18 or later; `npm run setup` builds only the shared and server workspaces when that server output is missing.
-
-Navigate to the folder you wish to run your agent from.
-
-Then it's three commands:
-
-```bash
-git clone https://github.com/webmaster94/foundry-vtt-mcp.git
-cd foundry-vtt-mcp
-npm install && npm run setup
-```
-
-`npm run setup` builds the headless server and **automatically registers it with every AI client it finds on your machine**:
-
-| Client             | How it's configured                                                     |
-| ------------------ | ----------------------------------------------------------------------- |
-| **Claude Desktop** | adds `foundry-mcp` to `claude_desktop_config.json` (backup saved first) |
-| **Claude Code**    | `claude mcp add` at user scope — works from any folder                  |
-| **Codex CLI**      | `codex mcp add` (or `~/.codex/config.toml` on older versions)           |
-
-Restart your AI client and open the Foundry world as a GM; the tools appear without a browser refresh. The connection is self-healing: the server side runs as a persistent background process that survives AI-client restarts and idle periods, native/application heartbeats remove dead transports, the module retries forever, and browser resume/network events wake delayed retries immediately. A freshly started server waits for the module rather than failing your first prompt. Re-running setup is safe — existing entries are updated in place, and a `foundry-servers.json` (see below) is picked up automatically. `npm run stop` shuts the background process down if you ever need to.
-
-The desktop application is a secure controller for this same singleton backend; it does not create a second bridge or replace the stdio MCP endpoint. Headless source installs and existing MCP-client configurations therefore continue to work.
+Open the Foundry world as a GM; the tools appear without a browser refresh. The connection is self-healing: the server side runs as a persistent background process that survives AI-client restarts and idle periods, native/application heartbeats remove dead transports, the module retries forever, and browser resume/network events wake delayed retries immediately. A freshly started bridge waits for the module rather than failing your first prompt.
 
 An ordinary Foundry module cannot execute world APIs with no client loaded. Keep one authenticated GM browser or desktop-client world open. A normal inactive tab remains connected, but a browser-frozen or discarded tab cannot execute JavaScript until the browser resumes it; the bridge reconnects automatically on resume.
 
-Options: `node scripts/install.mjs --clients claude-desktop,codex` to configure specific clients only, `--list` to preview without changing anything.
-
 > The module and server versions must match. Version mismatches produce a clear `VERSION_MISMATCH` error instead of silently invoking an incompatible handler.
-
-<details>
-<summary><strong>Manual configuration</strong> (if you prefer, or for other MCP clients)</summary>
-
-The server entry point is `packages/mcp-server/dist/index.js`; any MCP client that can run a stdio server works.
-
-**Claude Desktop** — `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\`, macOS: `~/Library/Application Support/Claude/`, Linux: `~/.config/Claude/`):
-
-```json
-{
-  "mcpServers": {
-    "foundry-mcp": {
-      "command": "node",
-      "args": ["/absolute/path/to/foundry-vtt-mcp/packages/mcp-server/dist/index.js"]
-    }
-  }
-}
-```
-
-**Claude Code:**
-
-```bash
-claude mcp add foundry-mcp --scope user -- node /absolute/path/to/foundry-vtt-mcp/packages/mcp-server/dist/index.js
-```
-
-**Codex CLI** — `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.foundry-mcp]
-command = "node"
-args = ["/absolute/path/to/foundry-vtt-mcp/packages/mcp-server/dist/index.js"]
-```
-
-Optional environment variables: `FOUNDRY_HOST` / `FOUNDRY_PORT` (default `localhost:31415`), `FOUNDRY_SERVERS_CONFIG` (path to a multi-server profile file).
-
-</details>
 
 ## Multiple Foundry Servers
 
-The MCP server can hold connections to several Foundry instances at once (e.g. a live Forge campaign and a local test world). Define friendly-named profiles in `foundry-servers.json` (see [`foundry-servers.example.json`](foundry-servers.example.json)) next to the server, or point `FOUNDRY_SERVERS_CONFIG` at the file:
-
-```json
-{
-  "defaultServer": "forge",
-  "servers": {
-    "forge": {
-      "label": "My Forge Campaign",
-      "port": 31415,
-      "connectionType": "webrtc",
-      "remoteMode": false,
-      "authToken": "replace-with-a-long-random-shared-secret"
-    },
-    "local": { "label": "Local dev world", "port": 31417, "connectionType": "websocket" }
-  }
-}
-```
-
-With the desktop installation, this configuration lives at `%APPDATA%\FoundryVTT MCP Bridge\foundry-servers.json`. Use **Edit → Server Connections…** instead of editing it by hand; the application still uses the same JSON schema and keeps a backup beside the file.
+The bridge can hold connections to several Foundry instances at once, such as a Forge campaign and a local test world. In **Foundry VTT MCP Bridge**, choose **Edit → Server Connections…** to add, remove, validate, and select the default profile. The application stores the configuration at `%APPDATA%\FoundryVTT MCP Bridge\foundry-servers.json`, masks authentication tokens, keeps backups, and applies listener changes live.
 
 Each profile listens on its own port; point each world's module settings at its profile's port (WebRTC signaling uses `port + 1`). Forge still uses `remoteMode: false` when the Forge browser and MCP server run on the same workstation: the HTTPS page connects to that workstation's loopback interface. Chrome may show a Local Network Access prompt; allow it for the Forge site. Use `remoteMode: true` only when a browser on another machine must reach the listener, set the module's **Bridge Server Host** to that server's private IP or `.local` name, and protect the exposure with an auth token and host firewall. Then:
 
@@ -186,7 +106,7 @@ npm run smoke        # 27-step LIVE integration suite — needs a running,
                      # connected world; run before every release
 ```
 
-Version tags (`vX.Y.Z`) run the complete release pipeline, which verifies the live-tested source gates and attaches the Windows Setup executable, Foundry `module.json`/`module.zip`, standalone server bundles, and available macOS packages to the GitHub release ([workflow](.github/workflows/build-complete-release.yml)). The stable Foundry manifest URL remains `releases/latest/download/module.json`.
+Version tags (`vX.Y.Z`) run the complete release pipeline, which verifies the source gates and attaches the direct Windows Setup executable and available macOS package to the GitHub release ([workflow](.github/workflows/build-complete-release.yml)). The Foundry-only workflow also attaches the required `module.json`/`module.zip` assets for module installation and updates. Windows users should download the Setup `.exe`, not GitHub's automatically generated Source code ZIP. The stable Foundry manifest URL remains `releases/latest/download/module.json`.
 
 Agent-oriented contributor documentation (architecture map, conventions, gotchas, how to add a tool end to end) lives in [AGENTS.md](AGENTS.md).
 

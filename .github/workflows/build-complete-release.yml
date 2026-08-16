@@ -177,98 +177,6 @@ jobs:
           npm run test:windows-packaged-lifecycle --
           --installer "installer\build\FoundryVTT-MCP-Bridge-Setup-${{ env.PACKAGE_VERSION }}.exe"
 
-      - name: Create Foundry Module ZIP
-        run: |
-          Write-Host "📦 Creating Foundry module ZIP for registry..."
-          cd packages/foundry-module
-
-          # Create ZIP excluding hidden files and node_modules
-          $compress = @{
-            Path = Get-ChildItem -Path "." -Exclude ".*", "node_modules"
-            DestinationPath = "..\..\foundry-vtt-mcp.zip"
-            CompressionLevel = "Optimal"
-          }
-          Compress-Archive @compress -Force
-
-          # Verify ZIP was created
-          if (Test-Path "..\..\foundry-vtt-mcp.zip") {
-            $size = (Get-Item "..\..\foundry-vtt-mcp.zip").Length / 1KB
-            Write-Host "✓ Foundry module ZIP created ($([math]::Round($size, 1)) KB)"
-          } else {
-            Write-Host "❌ Foundry module ZIP creation failed"
-            exit 1
-          }
-
-      - name: Create Standalone MCP Server ZIP
-        run: |
-          Write-Host "📦 Creating standalone MCP server ZIP for manual installation..."
-
-          # Create a temporary directory for the standalone package
-          $standalonePath = "standalone-mcp-server"
-          New-Item -ItemType Directory -Force -Path $standalonePath
-
-          # Copy MCP server bundle
-          Copy-Item "packages\mcp-server\dist\index.bundle.cjs" "$standalonePath\index.js"
-          Copy-Item "packages\mcp-server\dist\backend.bundle.cjs" "$standalonePath\backend.bundle.cjs"
-
-          # Create package.json for standalone
-          $standalonePackage = @{
-            name = "foundry-mcp-server"
-            version = "${{ env.PACKAGE_VERSION }}".TrimStart('v')
-            description = "Foundry VTT MCP Server - Standalone Installation"
-            main = "index.js"
-            scripts = @{
-              start = "node index.js"
-            }
-            engines = @{
-              node = ">=18.0.0"
-            }
-          } | ConvertTo-Json -Depth 3
-
-          $standalonePackage | Out-File -FilePath "$standalonePath\package.json" -Encoding UTF8
-
-          # Create README for standalone
-          $readmeLines = @(
-            "# Foundry MCP Server - Manual Installation",
-            "",
-            "This package contains the standalone MCP server for manual installation on any platform.",
-            "",
-            "## Requirements",
-            "- Node.js 18.0.0 or later",
-            "- Foundry VTT with MCP Bridge module installed",
-            "",
-            "## Installation",
-            "1. Extract this ZIP to your desired location",
-            "2. Run: npm start or node index.js",
-            "3. Configure Claude Desktop to connect to this server",
-            "4. Install the MCP Bridge module in Foundry VTT",
-            "",
-            "For full documentation visit: https://github.com/webmaster94/foundry-vtt-mcp",
-            "",
-            "Version: ${{ env.PACKAGE_VERSION }}"
-          )
-          $readmeLines | Out-File -FilePath "$standalonePath\README.md" -Encoding UTF8
-
-          # Create the ZIP
-          $compress = @{
-            Path = $standalonePath
-            DestinationPath = "foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip"
-            CompressionLevel = "Optimal"
-          }
-          Compress-Archive @compress -Force
-
-          # Verify and clean up
-          if (Test-Path "foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip") {
-            $size = (Get-Item "foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip").Length / 1KB
-            Write-Host "✓ Standalone MCP server ZIP created ($([math]::Round($size, 1)) KB)"
-          } else {
-            Write-Host "❌ Standalone MCP server ZIP creation failed"
-            exit 1
-          }
-
-          # Clean up temporary directory
-          Remove-Item -Recurse -Force $standalonePath
-
       - name: Verify installer package
         run: |
           cd installer/build
@@ -434,18 +342,6 @@ jobs:
           echo "PACKAGE_VERSION=v$PACKAGE_VERSION" >> $GITHUB_ENV
           echo "version=v$PACKAGE_VERSION" >> $GITHUB_OUTPUT
 
-      - name: Install workspace dependencies
-        run: npm ci --workspaces --include-workspace-root
-
-      - name: Build shared types
-        run: npm run build --workspace=shared
-
-      - name: Build MCP Server (Bundled)
-        run: npm run build:bundle --workspace=packages/mcp-server
-
-      - name: Build Foundry Module
-        run: npm run build --workspace=packages/foundry-module
-
       - name: Download Windows installer artifact
         uses: actions/download-artifact@v6
         with:
@@ -457,62 +353,6 @@ jobs:
         with:
           name: foundry-mcp-server-dmg-${{ env.PACKAGE_VERSION }}
           path: installer/build/
-
-      - name: Create Foundry Module ZIP
-        run: |
-          cd packages/foundry-module
-          zip -r ../../foundry-vtt-mcp.zip . -x ".*" -x "node_modules/*"
-          cd ../..
-          ls -lh foundry-vtt-mcp.zip
-
-      - name: Create Standalone MCP Server ZIP
-        run: |
-          mkdir -p standalone-mcp-server
-          cp packages/mcp-server/dist/index.bundle.cjs standalone-mcp-server/index.js
-          cp packages/mcp-server/dist/backend.bundle.cjs standalone-mcp-server/backend.bundle.cjs
-          VERSION_NO_V="${{ env.PACKAGE_VERSION }}"
-          VERSION_NO_V="${VERSION_NO_V#v}"
-
-          # Create package.json
-          cat > standalone-mcp-server/package.json << EOF
-          {
-            "name": "foundry-mcp-server",
-            "version": "$VERSION_NO_V",
-            "description": "Foundry VTT MCP Server - Standalone Installation",
-            "main": "index.js",
-            "scripts": {
-              "start": "node index.js"
-            },
-            "engines": {
-              "node": ">=18.0.0"
-            }
-          }
-          EOF
-
-          # Create README
-          cat > standalone-mcp-server/README.md << EOF
-          # Foundry MCP Server - Manual Installation
-
-          This package contains the standalone MCP server for manual installation on any platform.
-
-          ## Requirements
-          - Node.js 18.0.0 or later
-          - Foundry VTT with MCP Bridge module installed
-
-          ## Installation
-          1. Extract this ZIP to your desired location
-          2. Run: npm start or node index.js
-          3. Configure Claude Desktop to connect to this server
-          4. Install the MCP Bridge module in Foundry VTT
-
-          For full documentation visit: https://github.com/webmaster94/foundry-vtt-mcp
-
-          Version: ${{ env.PACKAGE_VERSION }}
-          EOF
-
-          zip -r foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip standalone-mcp-server
-          rm -rf standalone-mcp-server
-          ls -lh foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -530,8 +370,9 @@ jobs:
 
             **Windows Users:**
             - Download `FoundryVTT-MCP-Bridge-Setup-${{ github.ref_name }}.exe`
+            - Do not download GitHub's automatically generated Source code ZIP
             - Run installer (no admin rights required)
-            - Automatic Claude Desktop configuration
+            - Automatic Claude Desktop, Claude Code, and Codex configuration
 
             **Mac Users:**
             - Download `FoundryMCPServer-${{ github.ref_name }}.dmg`
@@ -540,17 +381,12 @@ jobs:
             - Automatic Claude Desktop configuration
             - To uninstall: Double-click `Uninstall.tool` from the DMG
 
-            **Manual Installation (All Platforms):**
-            - Download `foundry-mcp-server-${{ github.ref_name }}.zip`
-            - Extract and run with Node.js 18+
-            - Manual Claude Desktop configuration required
-
             **Foundry VTT Users:**
             - Install directly from Foundry's module browser
             - Or use manifest: `https://github.com/webmaster94/foundry-vtt-mcp/releases/latest/download/module.json`
 
             ### Quick Start
-            1. Choose your installation method above
+            1. Download and run the installer for your platform
             2. Install MCP Bridge module in Foundry VTT
             3. Restart Claude Desktop
             4. Start managing the connected Foundry world from your MCP client
@@ -571,9 +407,6 @@ jobs:
           files: |
             installer/build/FoundryVTT-MCP-Bridge-Setup-${{ env.PACKAGE_VERSION }}.exe
             installer/build/FoundryMCPServer-${{ env.PACKAGE_VERSION }}.dmg
-            foundry-vtt-mcp.zip
-            foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip
-            packages/foundry-module/module.json
           generate_release_notes: true
           draft: false
           prerelease: false

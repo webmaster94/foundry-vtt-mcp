@@ -75,7 +75,7 @@ then reload the Foundry world. `execute-foundry-script` with `window.location.re
 
 1. `npm run build && npm test && npm run smoke` (smoke against a live world).
 2. Bump versions (root, server, module, desktop, shared, `module.json`) — keep all six identical. Release workflows reject a mismatched tag/manual version.
-3. Commit, push, then publish a GitHub release tagged `vX.Y.Z` (target branch can be the feature branch). The complete release workflow builds and attaches the Windows Setup executable, `module.json` + `module.zip`, standalone server bundles, and available macOS packages. The stable Foundry install URL is `releases/latest/download/module.json`.
+3. Commit, push, then publish a GitHub release tagged `vX.Y.Z` (target branch can be the feature branch). The complete release workflow attaches the direct Windows Setup executable and available macOS package; the Foundry release workflow attaches its required `module.json` + `module.zip`. Do not publish a standalone/manual server ZIP. The stable Foundry install URL is `releases/latest/download/module.json`.
 4. Users update the module in Foundry and reload their world; the MCP server side is picked up by restarting the backend process (or the MCP client connection).
 
 ## Repo layout quick reference

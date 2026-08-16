@@ -11,7 +11,6 @@ The two parts must use the same release version.
 
 - Foundry VTT v13 or v14
 - Windows 10 or later for the desktop installer
-- Node.js 22.12 or later for full monorepo or desktop development. The prebuilt standalone/headless server remains compatible with Node.js 18.
 - A supported MCP client
 - A GM account in the world you want to control
 
@@ -44,44 +43,6 @@ Use the native menu bar to manage the application:
 Connection saves are validated for port conflicts and remote-auth requirements, written atomically with a backup, and rolled back if live listener reload fails. Existing authentication tokens are never displayed; the editor can retain, replace, or clear one explicitly.
 
 Restart Claude Desktop, Claude Code, or Codex after setup changes its MCP registration. Installer-managed Windows clients launch the stdio bridge through the desktop executable in background Node mode, so they do not open a Command Prompt window. The installer preserves source/development registrations rather than silently replacing a user-managed command. If you want to replace those preserved entries too, use the repository's copy-pasteable [agent-assisted migration instruction](MIGRATION.md) after installation.
-
-### Repository setup
-
-```bash
-git clone https://github.com/webmaster94/foundry-vtt-mcp.git
-cd foundry-vtt-mcp
-npm install
-npm run setup
-```
-
-`npm run setup` builds the workspaces and registers the server with supported clients it finds. Restart the MCP client after setup. Use `node scripts/install.mjs --list` to preview detected clients or `--clients claude-desktop,codex` to limit configuration.
-
-To build and run the desktop application from source:
-
-```bash
-npm install
-npm run bundle:server
-npm run dev:desktop
-```
-
-The desktop controller and stdio wrappers share one singleton backend, so launching the UI does not create duplicate Foundry listeners.
-
-### Manual MCP client configuration
-
-Build first with `npm install && npm run build`, then point the client at the absolute path to `packages/mcp-server/dist/index.js`:
-
-```json
-{
-  "mcpServers": {
-    "foundry-mcp": {
-      "command": "node",
-      "args": ["C:/absolute/path/foundry-vtt-mcp/packages/mcp-server/dist/index.js"]
-    }
-  }
-}
-```
-
-The default listener is `localhost:31415`. Optional variables include `FOUNDRY_HOST`, `FOUNDRY_PORT`, and `FOUNDRY_SERVERS_CONFIG`.
 
 The installed desktop application uses `%APPDATA%\FoundryVTT MCP Bridge\foundry-servers.json` as its canonical profile file. An absolute `FOUNDRY_SERVERS_CONFIG` override remains supported for advanced or portable setups.
 
@@ -117,7 +78,6 @@ If the ports match but the bridge does not reconnect, verify that exactly one wo
 
 - Windows: use **Apps & features / Programs and Features → Foundry VTT MCP Bridge**, or the Start Menu uninstall shortcut.
 - macOS: run `Uninstall.tool` from the disk image.
-- Manual install: run `npm run stop`, remove the repository, remove the `foundry-mcp` client entry, and uninstall the Foundry module.
 
 The Windows uninstaller stops bridge-owned processes and removes the installed application, shortcuts, and registration. It preserves `%APPDATA%\FoundryVTT MCP Bridge` by default so profiles survive reinstallations. Owned MCP-client cleanup must succeed before it deletes the registered runtime; on a cleanup conflict, interactive uninstall offers retry/cancel and silent uninstall exits non-zero with the application payload intact. The supplied uninstallers remove only bridge-owned application/module files and MCP entries that still point at this installation; they do not remove worlds, user-created content left by older releases, replacement MCP entries, or unrelated software.
 
