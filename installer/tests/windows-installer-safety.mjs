@@ -134,6 +134,9 @@ function runStaticChecks() {
     '/SD IDCANCEL IDRETRY client_config_cleanup_retry IDCANCEL client_config_cleanup_abort'
   );
   assertIncludes(uninstallSection, 'SetErrorLevel 2');
+  assertIncludes(uninstallSection, 'IfSilent client_config_cleanup_quit');
+  assertIncludes(uninstallSection, 'client_config_cleanup_quit:');
+  assertIncludes(uninstallSection, 'Quit');
   assertIncludes(nsis, 'StrCmp $2 "0" client_config_cleanup_done', 'client cleanup success gate');
   assertBefore(
     nsis,
