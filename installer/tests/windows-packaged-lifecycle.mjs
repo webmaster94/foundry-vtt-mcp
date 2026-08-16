@@ -373,12 +373,11 @@ async function main() {
   const userProfile = process.env.USERPROFILE;
   if (!appData || !localAppData || !userProfile) fail('Windows user profile paths are unavailable');
 
-  const canonicalRoot = path.join(appData, 'FoundryVTT MCP Bridge');
-  const canonicalConfig = path.join(canonicalRoot, 'foundry-servers.json');
-  const claudeRoot = path.join(appData, 'Claude');
-  const claudeCodeConfig = path.join(userProfile, '.claude.json');
-  const codexConfig = path.join(userProfile, '.codex', 'config.toml');
-  const startMenuDir = path.join(
+  const existingCanonicalRoot = path.join(appData, 'FoundryVTT MCP Bridge');
+  const existingClaudeRoot = path.join(appData, 'Claude');
+  const existingClaudeCodeConfig = path.join(userProfile, '.claude.json');
+  const existingCodexConfig = path.join(userProfile, '.codex', 'config.toml');
+  const existingStartMenuDir = path.join(
     appData,
     'Microsoft',
     'Windows',
@@ -397,11 +396,11 @@ async function main() {
 
   if (registryExists()) fail('An existing Programs & Features registration is present');
   for (const [target, label] of [
-    [canonicalRoot, 'canonical bridge settings'],
-    [claudeRoot, 'Claude Desktop settings'],
-    [claudeCodeConfig, 'Claude Code settings'],
-    [codexConfig, 'Codex settings'],
-    [startMenuDir, 'bridge Start Menu folder'],
+    [existingCanonicalRoot, 'canonical bridge settings'],
+    [existingClaudeRoot, 'Claude Desktop settings'],
+    [existingClaudeCodeConfig, 'Claude Code settings'],
+    [existingCodexConfig, 'Codex settings'],
+    [existingStartMenuDir, 'bridge Start Menu folder'],
     [legacyInstall, 'legacy bridge installation'],
     [currentDefaultInstall, 'default desktop bridge installation'],
   ]) {
@@ -425,6 +424,19 @@ async function main() {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-mcp-packaged-lifecycle-'));
   const installDir = path.join(fixtureRoot, 'Install With Spaces', productName);
   const isolatedUserProfile = path.join(fixtureRoot, 'Isolated User Profile');
+  const isolatedAppData = path.join(isolatedUserProfile, 'AppData', 'Roaming');
+  const isolatedLocalAppData = path.join(isolatedUserProfile, 'AppData', 'Local');
+  const canonicalRoot = path.join(isolatedAppData, 'FoundryVTT MCP Bridge');
+  const canonicalConfig = path.join(canonicalRoot, 'foundry-servers.json');
+  const claudeRoot = path.join(isolatedAppData, 'Claude');
+  const startMenuDir = path.join(
+    isolatedAppData,
+    'Microsoft',
+    'Windows',
+    'Start Menu',
+    'Programs',
+    productName
+  );
   const foreignCodexConfig = path.join(isolatedUserProfile, '.codex', 'config.toml');
   const foreignCodexBytes = Buffer.from(
     `[mcp_servers.foundry-mcp]\r\n` +
@@ -456,6 +468,8 @@ async function main() {
     ...process.env,
     USERPROFILE: isolatedUserProfile,
     HOME: isolatedUserProfile,
+    APPDATA: isolatedAppData,
+    LOCALAPPDATA: isolatedLocalAppData,
   };
   delete environment.ELECTRON_RUN_AS_NODE;
   let application = null;
