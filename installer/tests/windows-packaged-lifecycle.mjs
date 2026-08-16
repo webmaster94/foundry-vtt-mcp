@@ -542,9 +542,13 @@ async function main() {
     installedClaudeHelper = path.join(installDir, 'resources', 'installer', 'configure-claude.ps1');
     heldClaudeHelper = `${installedClaudeHelper}.lifecycle-hold`;
     fs.renameSync(installedClaudeHelper, heldClaudeHelper);
-    const blockedUninstall = commandResult(uninstaller, ['/S'], {
+    // NSIS normally launches a temporary copy of an uninstaller, so the outer
+    // process cannot report the script's SetErrorLevel. _?= runs this deliberate
+    // non-mutating failure case in place and must remain the final raw argument.
+    const blockedUninstall = commandResult(uninstaller, ['/S', `_?=${installDir}`], {
       timeout: 60_000,
       env: environment,
+      windowsVerbatimArguments: true,
     });
     assert.equal(
       blockedUninstall.status,
