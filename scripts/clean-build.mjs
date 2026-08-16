@@ -8,6 +8,11 @@ const repoRoot = path.resolve(scriptsDir, '..');
 const TARGETS = {
   module: ['packages/foundry-module/dist'],
   server: ['packages/mcp-server/dist', 'packages/mcp-server/tsconfig.tsbuildinfo'],
+  desktop: [
+    'packages/desktop/dist',
+    'packages/desktop/release',
+    'packages/desktop/tsconfig.tsbuildinfo',
+  ],
   shared: ['shared/dist', 'shared/tsconfig.tsbuildinfo'],
 };
 

@@ -5,8 +5,13 @@ import * as os from 'os';
 import * as path from 'path';
 
 import * as net from 'net';
+import { randomUUID } from 'crypto';
 
-import { evaluateLockFile } from './lock.js';
+import {
+  acquireBackendLockFile,
+  parseBackendLockIdentity,
+  type BackendLockIdentity,
+} from './lock.js';
 
 import { config } from './config.js';
 
@@ -53,78 +58,39 @@ import { DSA5CharacterCreator } from './systems/dsa5/character-creator.js';
 import { DnD5eAddFeatureTool } from './tools/dnd5e/add-feature.js';
 import { DnD5eNpcTools } from './tools/dnd5e/npc.js';
 import { DnD5eFeaturesFromCompendiumTools } from './tools/dnd5e/features.js';
-
-const CONTROL_HOST = '127.0.0.1';
-
-const CONTROL_PORT = 31414;
+import { CONTROL_HOST, CONTROL_PORT, type BackendPingResult } from './control-protocol.js';
+import { DesktopControlService, isDesktopControlMethod } from './desktop-control-service.js';
 
 const LOCK_FILE = path.join(os.tmpdir(), 'foundry-mcp-backend.lock');
 
+const backendStartedAt = new Date().toISOString();
+const backendInstanceId = randomUUID();
+const backendEntryPath = path.resolve(process.argv[1] || '');
+let backendEntrySig = '';
+try {
+  const entryStat = fs.statSync(backendEntryPath);
+  backendEntrySig = `${entryStat.size}:${Math.round(entryStat.mtimeMs)}`;
+} catch {
+  // A missing signature only disables build-freshness comparison.
+}
+
+const backendIdentity: BackendLockIdentity = {
+  pid: process.pid,
+  instanceId: backendInstanceId,
+  startedAt: backendStartedAt,
+  entryPath: backendEntryPath,
+};
+
 let lockFd: number | null = null;
 
-function acquireLock(): boolean {
+async function acquireLock(): Promise<boolean> {
   try {
-    try {
-      lockFd = fs.openSync(LOCK_FILE, 'wx');
-    } catch (err: any) {
-      if (err && err.code === 'EEXIST') {
-        try {
-          const lockData = fs.readFileSync(LOCK_FILE, 'utf8');
-
-          const lockPid = parseInt(lockData.trim(), 10);
-
-          try {
-            process.kill(lockPid, 0);
-
-            // A process with this PID is alive. Validate it is actually our
-            // backend (node.exe / node) and that the lock file is not stale.
-            // PID reuse by unrelated OS processes (e.g. GameInputRedistService
-            // on Windows) would otherwise cause a false "already running" exit.
-            if (evaluateLockFile(lockPid, LOCK_FILE) === 'orphaned') {
-              console.error(
-                `Removing orphaned backend lock for PID ${lockPid} ` +
-                  `(process is not node.exe or lock file is stale)`
-              );
-              try {
-                fs.unlinkSync(LOCK_FILE);
-              } catch {}
-              lockFd = fs.openSync(LOCK_FILE, 'wx');
-            } else {
-              // Backend is genuinely running — exit gracefully
-              return false;
-            }
-          } catch {
-            console.error(`Removing stale backend lock for PID ${lockPid}`);
-
-            try {
-              fs.unlinkSync(LOCK_FILE);
-            } catch {}
-
-            lockFd = fs.openSync(LOCK_FILE, 'wx');
-          }
-        } catch (readErr) {
-          console.error('Corrupt backend lock file, removing:', readErr);
-
-          try {
-            fs.unlinkSync(LOCK_FILE);
-          } catch {}
-
-          lockFd = fs.openSync(LOCK_FILE, 'wx');
-        }
-      } else {
-        console.error('Failed to open backend lock file:', err);
-
-        return false;
-      }
+    const acquisition = await acquireBackendLockFile(LOCK_FILE, backendIdentity);
+    if (!acquisition.acquired) {
+      console.error(`Backend already running with PID ${acquisition.existing.pid}`);
+      return false;
     }
-
-    if (lockFd === null) return false;
-
-    fs.writeFileSync(lockFd, String(process.pid));
-
-    try {
-      fs.fsyncSync(lockFd);
-    } catch {}
+    lockFd = acquisition.fd;
 
     console.error(`Acquired backend lock with PID ${process.pid}`);
 
@@ -147,7 +113,10 @@ function releaseLock(): void {
 
     if (fs.existsSync(LOCK_FILE)) {
       try {
-        fs.unlinkSync(LOCK_FILE);
+        const current = parseBackendLockIdentity(fs.readFileSync(LOCK_FILE, 'utf8'));
+        if (current?.pid === process.pid && current.instanceId === backendInstanceId) {
+          fs.unlinkSync(LOCK_FILE);
+        }
       } catch {}
     }
   } catch (error) {
@@ -170,18 +139,6 @@ async function startBackend(): Promise<void> {
     filePath: path.join(os.tmpdir(), 'foundry-mcp-server', 'mcp-server.log'),
   });
 
-  // Identity for the wrapper's staleness check: signature of the entry file
-  // this process was started from. A rebuilt dist changes the signature and
-  // the next wrapper session restarts the daemon automatically.
-  const backendStartedAt = new Date().toISOString();
-  let backendEntrySig = '';
-  try {
-    const entryStat = fs.statSync(process.argv[1] || '');
-    backendEntrySig = `${entryStat.size}:${Math.round(entryStat.mtimeMs)}`;
-  } catch {
-    // stat failure just disables staleness detection
-  }
-
   logger.info('Starting Foundry MCP Backend', {
     version: config.server.version,
 
@@ -201,6 +158,18 @@ async function startBackend(): Promise<void> {
   const foundryClient = serverRegistry.routingClient;
 
   const serverManagementTools = new ServerManagementTools({ registry: serverRegistry, logger });
+
+  const getPingResult = (): BackendPingResult => ({
+    ok: true,
+    pid: process.pid,
+    version: config.server.version,
+    startedAt: backendStartedAt,
+    entrySig: backendEntrySig,
+    instanceId: backendInstanceId,
+    entryPath: backendEntryPath,
+  });
+
+  const desktopControl = new DesktopControlService(serverRegistry, config, logger, getPingResult);
 
   const recipeTools = new RecipeTools({ logger });
 
@@ -352,6 +321,9 @@ async function startBackend(): Promise<void> {
   // Start Foundry connectors for every configured server profile
 
   await serverRegistry.connectAll();
+  serverRegistry.refreshCapabilityCaches();
+  const capabilityRefreshTimer = setInterval(() => serverRegistry.refreshCapabilityCaches(), 5_000);
+  capabilityRefreshTimer.unref?.();
 
   let shutdownPromise: Promise<void> | null = null;
   const shutdownBackend = (reason: string, exitCode = 0): Promise<void> => {
@@ -359,6 +331,7 @@ async function startBackend(): Promise<void> {
 
     shutdownPromise = (async () => {
       logger.info('Shutting down Foundry MCP backend', { reason });
+      clearInterval(capabilityRefreshTimer);
       let forced = false;
       await Promise.race([
         serverRegistry.disconnectAll(),
@@ -397,22 +370,25 @@ async function startBackend(): Promise<void> {
 
         if (!line) continue;
 
+        let requestId: string | undefined;
         try {
           const msg = JSON.parse(line) as { id: string; method: string; params?: any };
+          requestId = typeof msg.id === 'string' ? msg.id : undefined;
 
           if (msg.method === 'ping') {
             socket.write(
               JSON.stringify({
                 id: msg.id,
-                result: {
-                  ok: true,
-                  pid: process.pid,
-                  startedAt: backendStartedAt,
-                  entrySig: backendEntrySig,
-                },
+                result: getPingResult(),
               }) + '\n'
             );
 
+            continue;
+          }
+
+          if (isDesktopControlMethod(msg.method)) {
+            const result = await desktopControl.handle(msg.method, msg.params);
+            socket.write(JSON.stringify({ id: msg.id, result }) + '\n');
             continue;
           }
 
@@ -752,7 +728,10 @@ async function startBackend(): Promise<void> {
         } catch (e: any) {
           try {
             socket.write(
-              JSON.stringify({ error: { message: e?.message || 'Bad request' } }) + '\n'
+              JSON.stringify({
+                ...(requestId ? { id: requestId } : {}),
+                error: { message: e?.message || 'Bad request' },
+              }) + '\n'
             );
           } catch {}
         }
@@ -777,16 +756,14 @@ async function startBackend(): Promise<void> {
   process.on('SIGTERM', () => void shutdownBackend('SIGTERM'));
 }
 
-// Check lock BEFORE any async operations
-// If another instance is running, wait forever silently (don't exit)
-// This prevents Claude Desktop from seeing a "server closed" error
-const hasLock = acquireLock();
-
+// The backend is a detached daemon entry, not the stdio MCP wrapper. If a
+// verified singleton already owns the lock, this duplicate can exit cleanly;
+// wrappers remain alive and connect to the existing control endpoint.
 (async function main() {
+  // Lock acquisition is the first asynchronous operation. It briefly waits
+  // for a simultaneous creator to finish writing its lock identity.
+  const hasLock = await acquireLock();
   if (!hasLock) {
-    // Another backend is running - wait forever without doing anything
-    // This keeps the process alive so Claude doesn't see an error
-    await new Promise(() => {}); // Never resolves
     return;
   }
 

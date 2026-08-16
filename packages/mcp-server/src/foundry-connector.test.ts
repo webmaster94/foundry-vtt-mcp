@@ -98,6 +98,18 @@ describe('FoundryConnector WebSocket lifecycle', () => {
     owner.send(JSON.stringify({ type: 'bridge-event', event: { type: 'actor.created' } }));
     await waitUntil(() => eventHandler.mock.calls.length === 1);
     expect(eventHandler).toHaveBeenCalledWith({ type: 'actor.created' });
+    expect(connector.getConnectionInfo()).toMatchObject({
+      started: true,
+      connected: true,
+      connectionType: 'websocket',
+      connectionGeneration: 1,
+      liveness: {
+        connectedAt: expect.any(Number),
+        lastConnectedAt: expect.any(Number),
+        lastApplicationSeenAt: expect.any(Number),
+        lastDisconnectedAt: null,
+      },
+    });
 
     const duplicate = new WebSocket(url);
     sockets.push(duplicate);
@@ -112,7 +124,14 @@ describe('FoundryConnector WebSocket lifecycle', () => {
     const ownerClosed = waitForClose(owner);
     owner.close();
     await ownerClosed;
-    await waitUntil(() => !connector.isConnected());
+    await waitUntil(
+      () =>
+        !connector.isConnected() &&
+        connector.getConnectionInfo().liveness.lastDisconnectedAt !== null
+    );
+    expect(connector.getConnectionInfo().liveness.lastDisconnectedAt).toEqual(expect.any(Number));
+    expect(connector.getConnectionInfo().liveness.connectedAt).toBeNull();
+    expect(connector.getConnectionInfo().liveness.lastConnectedAt).toEqual(expect.any(Number));
 
     const replacement = new WebSocket(url);
     sockets.push(replacement);

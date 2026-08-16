@@ -16,6 +16,7 @@ const FILES = [
   'package.json',
   'packages/mcp-server/package.json',
   'packages/foundry-module/package.json',
+  'packages/desktop/package.json',
   'shared/package.json',
   'packages/foundry-module/module.json',
 ];

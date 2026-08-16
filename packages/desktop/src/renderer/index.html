@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Foundry VTT MCP Bridge</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="renderer.js"></script>
+  </head>
+  <body>
+    <main>
+      <section id="overview-view" aria-labelledby="overview-title">
+        <div class="overview-heading">
+          <div>
+            <p class="eyebrow">Foundry worlds</p>
+            <h1 id="overview-title">Server connections</h1>
+          </div>
+          <div class="overview-actions">
+            <button id="refresh-status" type="button" class="button-secondary">Refresh</button>
+            <button id="edit-connections" type="button">Edit connections</button>
+          </div>
+        </div>
+
+        <div id="backend-alert" class="alert alert-error hidden" role="status">
+          <strong>Connections are temporarily unavailable.</strong>
+          <p id="backend-alert-message">The bridge service could not be reached.</p>
+        </div>
+        <div id="connections" class="connections" aria-live="polite"></div>
+      </section>
+
+      <section id="connections-view" class="hidden" aria-labelledby="connections-title">
+        <div class="editor-heading">
+          <div>
+            <p class="eyebrow">Configuration</p>
+            <h2 id="connections-title">Server connections</h2>
+            <p>Manage the profiles used by the bridge without exposing saved tokens.</p>
+          </div>
+          <button id="back-to-overview" type="button" class="button-secondary">Back</button>
+        </div>
+
+        <div id="invalid-config-alert" class="alert alert-error hidden" role="alert">
+          <strong>The configuration file could not be loaded.</strong>
+          <p id="invalid-config-error"></p>
+          <p>
+            A safe default is loaded below for repair. Saving it will back up the invalid file
+            before replacing it.
+          </p>
+        </div>
+
+        <div class="config-location">
+          <div>
+            <span>Configuration file</span>
+            <code id="config-path"></code>
+          </div>
+          <button id="open-config-folder" type="button" class="button-secondary">
+            Open folder
+          </button>
+        </div>
+
+        <div class="settings-layout">
+          <aside class="profile-sidebar" aria-label="Connection profiles">
+            <div class="profile-sidebar__heading">
+              <span>Profiles</span>
+              <button id="add-profile" type="button" class="icon-button" title="Add profile">
+                +
+              </button>
+            </div>
+            <div id="profile-list" class="profile-list"></div>
+            <div class="profile-actions">
+              <button id="duplicate-profile" type="button" class="button-quiet">Duplicate</button>
+              <button id="delete-profile" type="button" class="button-danger">Delete</button>
+            </div>
+          </aside>
+
+          <div class="profile-editor">
+            <div class="profile-editor__heading">
+              <div>
+                <p class="eyebrow">Selected profile</p>
+                <h3 id="selected-profile-name">—</h3>
+              </div>
+              <button id="set-default-profile" type="button" class="button-secondary">
+                Set as default
+              </button>
+            </div>
+
+            <fieldset>
+              <legend>Connection</legend>
+              <div class="form-grid">
+                <label>
+                  <span>Display label</span>
+                  <input id="profile-label" data-profile-field="label" type="text" />
+                </label>
+                <label>
+                  <span>Host</span>
+                  <input
+                    id="profile-host"
+                    data-profile-field="host"
+                    type="text"
+                    placeholder="localhost"
+                    autocomplete="off"
+                  />
+                </label>
+                <label>
+                  <span>Port</span>
+                  <input
+                    id="profile-port"
+                    data-profile-field="port"
+                    data-value-type="number"
+                    type="number"
+                    min="1024"
+                    max="65535"
+                    placeholder="31415"
+                  />
+                </label>
+                <label>
+                  <span>Transport</span>
+                  <select id="profile-transport" data-profile-field="connectionType">
+                    <option value="">Use bridge default</option>
+                    <option value="auto">Automatic</option>
+                    <option value="websocket">WebSocket</option>
+                    <option value="webrtc">WebRTC</option>
+                  </select>
+                </label>
+                <label>
+                  <span>WebSocket protocol</span>
+                  <select id="profile-protocol" data-profile-field="protocol">
+                    <option value="">Use bridge default</option>
+                    <option value="ws">ws</option>
+                    <option value="wss">wss</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Namespace</span>
+                  <input
+                    id="profile-namespace"
+                    data-profile-field="namespace"
+                    type="text"
+                    placeholder="foundry-mcp"
+                  />
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Remote access</legend>
+              <label class="switch-row">
+                <span>
+                  <strong>Listen beyond this computer</strong>
+                  <small>Requires a shared secret of at least 16 characters.</small>
+                </span>
+                <input id="profile-remote" data-profile-field="remoteMode" type="checkbox" />
+              </label>
+              <label class="switch-row">
+                <span>
+                  <strong>Verify TLS certificates</strong>
+                  <small>Recommended whenever wss is used.</small>
+                </span>
+                <input
+                  id="profile-reject-unauthorized"
+                  data-profile-field="rejectUnauthorized"
+                  type="checkbox"
+                />
+              </label>
+              <div class="token-editor">
+                <label>
+                  <span>Saved shared secret</span>
+                  <select id="token-action">
+                    <option value="keep">Keep existing secret</option>
+                    <option value="replace">Replace secret</option>
+                    <option value="clear">Clear secret</option>
+                  </select>
+                </label>
+                <label id="replacement-token-row" class="hidden">
+                  <span>New shared secret</span>
+                  <input
+                    id="replacement-token"
+                    type="password"
+                    minlength="16"
+                    autocomplete="new-password"
+                    placeholder="At least 16 characters"
+                  />
+                </label>
+                <p id="token-state" class="field-help"></p>
+              </div>
+            </fieldset>
+
+            <details class="advanced-settings">
+              <summary>Advanced retry and timeout settings</summary>
+              <div class="form-grid">
+                <label>
+                  <span>Reconnect attempts</span>
+                  <input
+                    data-profile-field="reconnectAttempts"
+                    data-value-type="number"
+                    type="number"
+                    min="1"
+                    max="20"
+                    placeholder="Bridge default"
+                  />
+                </label>
+                <label>
+                  <span>Reconnect delay (ms)</span>
+                  <input
+                    data-profile-field="reconnectDelay"
+                    data-value-type="number"
+                    type="number"
+                    min="100"
+                    max="30000"
+                    placeholder="Bridge default"
+                  />
+                </label>
+                <label>
+                  <span>Connection timeout (ms)</span>
+                  <input
+                    data-profile-field="connectionTimeout"
+                    data-value-type="number"
+                    type="number"
+                    min="1000"
+                    max="60000"
+                    placeholder="Bridge default"
+                  />
+                </label>
+              </div>
+            </details>
+
+            <details class="json-preview">
+              <summary>Redacted JSON preview</summary>
+              <p>Saved secrets are never sent to this window and are shown only as hidden.</p>
+              <pre id="config-preview"></pre>
+            </details>
+          </div>
+        </div>
+
+        <div class="editor-actions">
+          <p id="editor-message" role="status"></p>
+          <button id="save-config" type="button">Save and reload connections</button>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="add-profile-dialog">
+      <div class="dialog-content">
+        <p class="eyebrow">New connection</p>
+        <h2>Add a server profile</h2>
+        <label for="new-profile-name">
+          <span>Unique profile name</span>
+          <input id="new-profile-name" type="text" autocomplete="off" placeholder="forge" />
+        </label>
+        <p id="new-profile-error" class="dialog-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="cancel-add-profile" type="button" class="button-secondary">Cancel</button>
+          <button id="confirm-add-profile" type="button">Add profile</button>
+        </div>
+      </div>
+    </dialog>
+  </body>
+</html>

@@ -68,10 +68,12 @@ console.log(`Server entry: ${serverEntry}`);
 
 if (!fs.existsSync(serverEntry)) {
   if (listOnly) {
-    console.log('  (not built yet — setup would run "npm run build")');
+    console.log('  (not built yet — setup would run "npm run build:server")');
   } else {
     console.log('\nBuilding the server (first run)...');
-    const build = run('npm', ['run', 'build'], { cwd: repoRoot, stdio: 'inherit' });
+    // Keep headless setup independent from the Node 22-only Electron workspace.
+    // The server workspace build already builds its shared dependency first.
+    const build = run('npm', ['run', 'build:server'], { cwd: repoRoot, stdio: 'inherit' });
     if (build.status !== 0) {
       console.error('\nBuild failed. Run "npm install" first, then re-run "npm run setup".');
       process.exit(1);

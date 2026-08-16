@@ -45,14 +45,21 @@ export interface ModuleCapabilities {
   handlers: string[];
 }
 
+export interface ListenerErrorInfo {
+  message: string;
+  at: number;
+}
+
 export class FoundryClient {
   private logger: Logger;
   private config: Config['foundry'];
   private connector: FoundryConnector;
   private capabilities: ModuleCapabilities | null = null;
   private capabilitiesGeneration: number | null = null;
+  private capabilitiesRequest: Promise<ModuleCapabilities | null> | null = null;
   private listenerStartedAt: number | null = null;
   private listenerStarting = false;
+  private lastListenerError: ListenerErrorInfo | null = null;
 
   constructor(config: Config['foundry'], logger: Logger) {
     this.config = config;
@@ -73,10 +80,12 @@ export class FoundryClient {
       // Start the socket.io server that Foundry will connect to
       await this.connector.start();
       this.listenerStartedAt = Date.now();
+      this.lastListenerError = null;
       this.logger.info('Foundry connector started, waiting for module connection...');
     } catch (error) {
       this.listenerStartedAt = null;
       const errorMessage = error instanceof Error ? error.message : 'Unknown connection error';
+      this.lastListenerError = { message: errorMessage, at: Date.now() };
       this.logger.error('Failed to start Foundry connector', { error: errorMessage });
       throw new Error(`Failed to start Foundry connector: ${errorMessage}`);
     } finally {
@@ -95,6 +104,7 @@ export class FoundryClient {
       this.listenerStartedAt = null;
       this.capabilities = null;
       this.capabilitiesGeneration = null;
+      this.capabilitiesRequest = null;
     }
   }
 
@@ -206,25 +216,51 @@ export class FoundryClient {
     if (!this.connector.isConnected()) {
       this.capabilities = null;
       this.capabilitiesGeneration = null;
+      this.capabilitiesRequest = null;
       return null;
     }
     const connectionGeneration = this.connector.getConnectionGeneration();
     if (this.capabilities && this.capabilitiesGeneration === connectionGeneration && !force) {
       return this.capabilities;
     }
-    try {
-      const result = await this.connector.query('foundry-mcp-bridge.getCapabilities', {});
-      if (result?.moduleVersion) {
-        // Never attach world A's response to a replacement transport for B.
-        if (this.connector.getConnectionGeneration() !== connectionGeneration) return null;
-        this.capabilities = result as ModuleCapabilities;
-        this.capabilitiesGeneration = connectionGeneration;
-        return this.capabilities;
+    if (this.capabilitiesRequest && !force) return this.capabilitiesRequest;
+
+    const request = (async (): Promise<ModuleCapabilities | null> => {
+      try {
+        const result = await this.connector.query('foundry-mcp-bridge.getCapabilities', {});
+        if (result?.moduleVersion) {
+          // Never attach world A's response to a replacement transport for B.
+          if (this.connector.getConnectionGeneration() !== connectionGeneration) return null;
+          this.capabilities = result as ModuleCapabilities;
+          this.capabilitiesGeneration = connectionGeneration;
+          return this.capabilities;
+        }
+        return null;
+      } catch {
+        return null; // old module without the handler
       }
-      return null;
-    } catch {
-      return null; // old module without the handler
+    })();
+    this.capabilitiesRequest = request;
+    try {
+      return await request;
+    } finally {
+      if (this.capabilitiesRequest === request) this.capabilitiesRequest = null;
     }
+  }
+
+  /** Read the current connection's cache without ever sending a transport query. */
+  getCachedCapabilities(): ModuleCapabilities | null {
+    if (!this.connector.isConnected()) return null;
+    if (this.capabilitiesGeneration !== this.connector.getConnectionGeneration()) return null;
+    return this.capabilities;
+  }
+
+  /** Start one best-effort cache fill while allowing status callers to return immediately. */
+  refreshCapabilitiesInBackground(): void {
+    if (!this.connector.isConnected() || this.getCachedCapabilities() || this.capabilitiesRequest) {
+      return;
+    }
+    void this.getCapabilities().catch(() => null);
   }
 
   ping(): Promise<any> {
@@ -232,7 +268,14 @@ export class FoundryClient {
   }
 
   getConnectionInfo(): any {
-    return this.connector.getConnectionInfo();
+    return {
+      ...this.connector.getConnectionInfo(),
+      listener: {
+        starting: this.listenerStarting,
+        startedAt: this.listenerStartedAt,
+        lastError: this.lastListenerError,
+      },
+    };
   }
 
   getConnectionState(): string {

@@ -39,6 +39,9 @@
       "path": "./packages/foundry-module"
     },
     {
+      "path": "./packages/desktop"
+    },
+    {
       "path": "./shared"
     }
   ]

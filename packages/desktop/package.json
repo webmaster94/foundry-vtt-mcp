@@ -1,0 +1,67 @@
+{
+  "name": "@foundry-mcp/desktop",
+  "version": "0.13.0",
+  "description": "Desktop control panel and notification-area host for FoundryVTT MCP Bridge",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "prebuild": "node ../../scripts/check-desktop-icons.mjs && node ../../scripts/clean-build.mjs desktop",
+    "build": "node scripts/build.mjs",
+    "predev": "npm run build --workspace=@foundry-mcp/server",
+    "dev": "npm run build && electron .",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "test:e2e": "npm run build && playwright test --config playwright.config.ts",
+    "pack:win": "npm run build && electron-builder --win dir --publish never",
+    "pack:mac": "npm run build && electron-builder --mac dir --publish never"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "^22.0.0",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "^0.25.12",
+    "sharp": "0.35.3",
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.7"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "build": {
+    "appId": "io.github.webmaster94.foundry-vtt-mcp",
+    "productName": "FoundryVTT MCP Bridge",
+    "asar": true,
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "extraResources": [
+      {
+        "from": "../mcp-server/dist/index.bundle.cjs",
+        "to": "server/index.bundle.cjs"
+      },
+      {
+        "from": "../mcp-server/dist/backend.bundle.cjs",
+        "to": "server/backend.bundle.cjs"
+      }
+    ],
+    "win": {
+      "target": "dir",
+      "icon": "assets/app-icon.ico"
+    },
+    "mac": {
+      "target": "dir",
+      "category": "public.app-category.utilities",
+      "icon": "assets/app-icon.png"
+    }
+  }
+}

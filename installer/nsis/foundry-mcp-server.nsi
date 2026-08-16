@@ -1,53 +1,59 @@
-; Foundry MCP Server Windows installer
+; Foundry VTT MCP Bridge - guarded per-user Windows installer
 
+Unicode true
 !include "MUI2.nsh"
-!include "Sections.nsh"
-!include "nsDialogs.nsh"
 !include "FileFunc.nsh"
-
-Name "Foundry MCP Server"
-!ifndef OUTFILE
-  !define OUTFILE "FoundryMCPServer-Setup.exe"
-!endif
-OutFile "${OUTFILE}"
-Unicode True
-InstallDir "$LOCALAPPDATA\FoundryMCPServer"
-RequestExecutionLevel user
+!include "Sections.nsh"
 
 !ifndef VERSION
-  !define VERSION "v0.5.5"
+  !define VERSION "0.0.0"
 !endif
-!searchparse /noerrors "${VERSION}" "v" STRIPPED_VERSION
-!ifndef STRIPPED_VERSION
-  !define STRIPPED_VERSION "${VERSION}"
+!ifndef PRODUCT_VERSION
+  !define PRODUCT_VERSION "0.0.0.0"
 !endif
-!searchparse /noerrors "${STRIPPED_VERSION}" "" VERSION_BASE "-"
-!ifndef VERSION_BASE
-  !define VERSION_BASE "${STRIPPED_VERSION}"
+!ifndef ESTIMATED_SIZE_KB
+  !define ESTIMATED_SIZE_KB 1
+!endif
+!ifndef OUTFILE
+  !define OUTFILE "FoundryVTT-MCP-Bridge-Setup.exe"
 !endif
 
-VIProductVersion "${VERSION_BASE}.0"
-VIAddVersionKey "ProductName" "Foundry MCP Server"
-VIAddVersionKey "CompanyName" "Foundry MCP Bridge"
-VIAddVersionKey "FileDescription" "MCP bridge for Foundry VTT"
-VIAddVersionKey "FileVersion" "${VERSION_BASE}.0"
-VIAddVersionKey "LegalCopyright" "© 2024 Foundry MCP Bridge"
+!define PRODUCT_NAME "Foundry VTT MCP Bridge"
+!define PRODUCT_EXE "FoundryVTT MCP Bridge.exe"
+!define PRODUCT_PUBLISHER "webmaster94"
+!define PRODUCT_URL "https://github.com/webmaster94/foundry-vtt-mcp"
+!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer"
+!define START_MENU_FOLDER "Foundry VTT MCP Bridge"
+!define LEGACY_START_MENU_FOLDER "Foundry MCP Server"
+!define STAGE_DIR "${__FILEDIR__}\..\build\installer-files"
+
+Name "${PRODUCT_NAME}"
+OutFile "${OUTFILE}"
+InstallDir "$LOCALAPPDATA\Programs\Foundry VTT MCP Bridge"
+InstallDirRegKey HKCU "${UNINSTALL_KEY}" "InstallLocation"
+RequestExecutionLevel user
+SetCompressor /SOLID lzma
+ShowInstDetails show
+ShowUninstDetails show
+
+VIProductVersion "${PRODUCT_VERSION}"
+VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
+VIAddVersionKey "CompanyName" "${PRODUCT_PUBLISHER}"
+VIAddVersionKey "FileDescription" "${PRODUCT_NAME} Setup"
+VIAddVersionKey "FileVersion" "${PRODUCT_VERSION}"
+VIAddVersionKey "ProductVersion" "${VERSION}"
+VIAddVersionKey "LegalCopyright" "MIT licensed; Foundry VTT trademarks belong to Foundry Gaming LLC"
 
 !define MUI_ABORTWARNING
-!define MUI_ICON "icon.ico"
-!define MUI_UNICON "icon.ico"
-!define MUI_WELCOMEPAGE_TITLE "Foundry MCP Server Setup"
-!define MUI_WELCOMEPAGE_TEXT "This wizard installs the Foundry MCP Server and can also install the Foundry MCP Bridge module.$\r$\n$\r$\nThe server connects MCP clients with Foundry VTT. Click Next to continue."
-!define MUI_COMPONENTSPAGE_TEXT_TOP "Select the components you want to install:"
-!define MUI_FINISHPAGE_TITLE "Installation Complete"
-!define MUI_FINISHPAGE_TEXT_NOREBOOTSUPPORT
-!define MUI_FINISHPAGE_TEXT "Foundry MCP Server is installed.$\r$\n$\r$\nRestart Claude Desktop, launch Foundry VTT, enable Foundry MCP Bridge, and configure the module connection.$\r$\n$\r$\nFor support and documentation, visit the GitHub repository."
-!define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "Open Foundry VTT MCP GitHub"
-!define MUI_FINISHPAGE_RUN_FUNCTION "OpenGitHub"
+!define MUI_ICON "${STAGE_DIR}\icon.ico"
+!define MUI_UNICON "${STAGE_DIR}\icon.ico"
+!define MUI_FINISHPAGE_TITLE "${PRODUCT_NAME} is ready"
+!define MUI_FINISHPAGE_TEXT "The bridge can stay in the notification area and keep its backend available to MCP clients. Your server profiles are stored separately from the application and survive upgrades and uninstall."
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXE}"
+!define MUI_FINISHPAGE_RUN_TEXT "Open ${PRODUCT_NAME}"
 
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "LICENSE.txt"
+!insertmacro MUI_PAGE_LICENSE "${STAGE_DIR}\LICENSE.txt"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
@@ -58,15 +64,182 @@ VIAddVersionKey "LegalCopyright" "© 2024 Foundry MCP Bridge"
 
 Var FoundryPath
 Var FoundryDataPath
+Var PreviousInstallDir
+Var UpgradeFromLegacy
+Var CanonicalConfigPath
+Var MigrationStatePath
+Var ClientConfigMigrationSafe
 Var un.FoundryPath
 Var un.FoundryDataPath
+Var un.CanonicalConfigPath
 
 Function .onInit
-  !insertmacro SelectSection SecFoundryModule
+  StrCpy $CanonicalConfigPath "$APPDATA\FoundryVTT MCP Bridge\foundry-servers.json"
+  StrCpy $UpgradeFromLegacy "0"
+
+  ; Remember the exact previous location before this release writes the same
+  ; legacy uninstall key. Never execute the old uninstaller.
+  ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "DisplayName"
+  StrCmp $0 "Foundry MCP Server" legacy_registration
+  StrCmp $0 "${PRODUCT_NAME}" registration_recognized registration_missing
+
+  legacy_registration:
+  StrCpy $UpgradeFromLegacy "1"
+
+  registration_recognized:
+  ReadRegStr $PreviousInstallDir HKCU "${UNINSTALL_KEY}" "InstallLocation"
+  StrCmp $PreviousInstallDir "" derive_previous_location previous_location_ready
+
+  derive_previous_location:
+  ReadRegStr $1 HKCU "${UNINSTALL_KEY}" "UninstallString"
+  StrCmp $1 "" registration_missing
+  StrCpy $2 $1 1
+  StrCmp $2 "$\"" 0 previous_command_unquoted
+  StrCpy $1 $1 "" 1
+  StrLen $2 $1
+  IntOp $2 $2 - 1
+  StrCpy $1 $1 $2
+
+  previous_command_unquoted:
+  ${GetParent} "$1" $PreviousInstallDir
+
+  previous_location_ready:
+  GetFullPathName $PreviousInstallDir "$PreviousInstallDir"
+  ; Do not let InstallDirRegKey strand a legacy product in its old ad-hoc
+  ; folder. Current-product upgrades retain the user's selected location.
+  StrCmp $UpgradeFromLegacy "1" 0 previous_location_found
+  StrCpy $INSTDIR "$LOCALAPPDATA\Programs\Foundry VTT MCP Bridge"
+  Goto previous_location_found
+
+  registration_missing:
+  StrCpy $PreviousInstallDir "$LOCALAPPDATA\FoundryMCPServer"
+  IfFileExists "$PreviousInstallDir\node.exe" 0 try_current_default
+  IfFileExists "$PreviousInstallDir\Uninstall.exe" 0 try_current_default
+  IfFileExists "$PreviousInstallDir\foundry-mcp-server\packages\mcp-server\dist\index.cjs" previous_location_found try_current_default
+
+  try_current_default:
+  StrCpy $PreviousInstallDir "$LOCALAPPDATA\Programs\Foundry VTT MCP Bridge"
+  IfFileExists "$PreviousInstallDir\foundry-vtt-mcp-bridge.install-id" previous_location_found no_previous_location
+
+  no_previous_location:
+  StrCpy $PreviousInstallDir ""
+
+  previous_location_found:
 FunctionEnd
 
-Function OpenGitHub
-  ExecShell "open" "https://github.com/webmaster94/foundry-vtt-mcp"
+Function ExtractInstallerHelpers
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\stop-bridge.ps1 "${STAGE_DIR}\payload\resources\installer\stop-bridge.ps1"
+  File /oname=$PLUGINSDIR\install-migration.ps1 "${STAGE_DIR}\payload\resources\installer\install-migration.ps1"
+  File /oname=$PLUGINSDIR\foundry-module-cleanup.ps1 "${STAGE_DIR}\payload\resources\installer\foundry-module-cleanup.ps1"
+FunctionEnd
+
+Function StopPreviousBridge
+  StrCmp $PreviousInstallDir "" stop_complete
+
+  stop_retry:
+  ; The legacy escape hatch is accepted only after the full legacy ownership
+  ; fingerprint is present. The helper itself verifies current backend paths.
+  StrCpy $3 ""
+  IfFileExists "$PreviousInstallDir\node.exe" 0 stop_current_identity
+  IfFileExists "$PreviousInstallDir\Uninstall.exe" 0 stop_current_identity
+  IfFileExists "$PreviousInstallDir\foundry-mcp-server\packages\mcp-server\dist\index.cjs" 0 stop_current_identity
+  StrCpy $3 "-AllowLegacyIdentity"
+
+  stop_current_identity:
+  nsExec::ExecToStack 'powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\stop-bridge.ps1" -InstallDir "$PreviousInstallDir" $3'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" stop_complete
+  DetailPrint "$1"
+  MessageBox MB_RETRYCANCEL|MB_ICONSTOP|MB_DEFBUTTON2 "${PRODUCT_NAME} could not be stopped safely.$\r$\n$\r$\nClose the bridge from its notification-area menu, then retry. Setup will not replace running files or terminate unrelated Node.js processes." /SD IDCANCEL IDRETRY stop_retry IDCANCEL stop_cancel
+
+  stop_cancel:
+  Abort
+
+  stop_complete:
+FunctionEnd
+
+Function RunMigrationPrepare
+  StrCpy $MigrationStatePath "$PLUGINSDIR\foundry-mcp-migration-state.json"
+  nsExec::ExecToStack 'powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\install-migration.ps1" -Phase Prepare -NewInstallDir "$INSTDIR" -CanonicalConfigPath "$CanonicalConfigPath" -PreviousInstallDir "$PreviousInstallDir" -StateFile "$MigrationStatePath"'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" migration_prepare_done
+  DetailPrint "$1"
+  MessageBox MB_ICONSTOP "Setup refused the selected location or could not preserve the server profile configuration.$\r$\n$\r$\n$1" /SD IDOK
+  Abort
+
+  migration_prepare_done:
+FunctionEnd
+
+Function RunMigrationFinalize
+  StrCmp $ClientConfigMigrationSafe "1" 0 migration_finalize_skipped
+  nsExec::ExecToStack 'powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\installer\install-migration.ps1" -Phase Finalize -NewInstallDir "$INSTDIR" -CanonicalConfigPath "$CanonicalConfigPath" -StateFile "$MigrationStatePath"'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" migration_finalize_done
+  DetailPrint "$1"
+  MessageBox MB_ICONSTOP "The new bridge was installed, but guarded cleanup of the previous installation could not finish.$\r$\n$\r$\nNo unknown files were removed.$\r$\n$\r$\n$1" /SD IDOK
+  Abort
+
+  migration_finalize_done:
+  Return
+
+  migration_finalize_skipped:
+  DetailPrint "Previous bridge payload was preserved because an owned MCP client registration could not be migrated safely."
+FunctionEnd
+
+Function UpdateClaudeConfig
+  StrCpy $ClientConfigMigrationSafe "1"
+  DetailPrint "Registering the MCP wrapper with Claude Desktop and Claude Code..."
+  nsExec::ExecToStack 'powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\installer\configure-claude.ps1" -InstallDir "$INSTDIR"'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" claude_config_done
+
+  DetailPrint "Direct configuration failed; trying the installed wrapper."
+  nsExec::ExecToStack '"$INSTDIR\resources\installer\configure-claude-wrapper.bat" "$INSTDIR"'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" claude_config_done claude_config_failed
+
+  claude_config_failed:
+  DetailPrint "$1"
+  StrCpy $ClientConfigMigrationSafe "0"
+
+  claude_config_done:
+  DetailPrint "Migrating the owned Codex MCP registration..."
+  IfFileExists "$INSTDIR\runtime\node.exe" 0 codex_config_failed
+  IfFileExists "$INSTDIR\resources\installer\configure-codex.mjs" 0 codex_config_failed
+  nsExec::ExecToStack '"$INSTDIR\runtime\node.exe" "$INSTDIR\resources\installer\configure-codex.mjs" --install-dir "$INSTDIR"'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" client_config_checked
+  DetailPrint "$1"
+
+  codex_config_failed:
+  StrCpy $ClientConfigMigrationSafe "0"
+
+  client_config_checked:
+  StrCmp $ClientConfigMigrationSafe "1" config_done
+  MessageBox MB_ICONEXCLAMATION "One or more MCP client registrations could not be migrated automatically. Existing unrelated entries were left unchanged, and the previous bridge payload was preserved so no owned registration points to a deleted executable.$\r$\n$\r$\nSee the project documentation for manual client setup, then remove the previous installation after confirming your clients use the new path." /SD IDOK
+
+  config_done:
+FunctionEnd
+
+Function CleanFoundryModulePayload
+  StrCpy $7 "0"
+  nsExec::ExecToStack 'powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\foundry-module-cleanup.ps1" -ModuleRoot "$FoundryPath\foundry-mcp-bridge" -Mode Replace'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" module_cleanup_done
+  DetailPrint "$1"
+  MessageBox MB_ICONEXCLAMATION "The previous Foundry module payload contains a linked, reparsed, or unexpected owned path. Module replacement was skipped before deleting any module code.$\r$\n$\r$\n$1" /SD IDOK
+  Return
+
+  module_cleanup_done:
+  StrCpy $7 "1"
 FunctionEnd
 
 Function ValidateFoundryModulesPath
@@ -93,9 +266,8 @@ Function ValidateFoundryModulesPath
 FunctionEnd
 
 Function DetectFoundryInstallation
-  ; Prefer the exact path selected by a previous installer run.
-  ReadRegStr $FoundryPath HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "FoundryModulesPath"
-  ReadRegStr $2 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "FoundryDataPath"
+  ReadRegStr $FoundryPath HKCU "${UNINSTALL_KEY}" "FoundryModulesPath"
+  ReadRegStr $2 HKCU "${UNINSTALL_KEY}" "FoundryDataPath"
   Call ValidateFoundryModulesPath
   StrCmp $FoundryPath "" persisted_path_invalid
   StrCmp $2 "" persisted_path_invalid
@@ -105,20 +277,15 @@ Function DetectFoundryInstallation
   persisted_path_invalid:
   StrCpy $FoundryPath ""
   StrCpy $FoundryDataPath ""
-
-  ; Foundry development/preview installs use a separate data root.
   StrCpy $FoundryPath "$LOCALAPPDATA\FoundryVTT_Next\Data\modules"
   Call ValidateFoundryModulesPath
   StrCmp $FoundryPath "" 0 foundry_found
-
   StrCpy $FoundryPath "$APPDATA\FoundryVTT_Next\Data\modules"
   Call ValidateFoundryModulesPath
   StrCmp $FoundryPath "" 0 foundry_found
-
   StrCpy $FoundryPath "$LOCALAPPDATA\FoundryVTT\Data\modules"
   Call ValidateFoundryModulesPath
   StrCmp $FoundryPath "" 0 foundry_found
-
   StrCpy $FoundryPath "$APPDATA\FoundryVTT\Data\modules"
   Call ValidateFoundryModulesPath
   StrCmp $FoundryPath "" 0 foundry_found
@@ -133,14 +300,11 @@ Function DetectFoundryInstallation
   StrCmp $FoundryPath "" 0 foundry_found
 
   browse_for_foundry:
-  MessageBox MB_YESNO "Foundry VTT was not detected automatically.$\r$\n$\r$\nBrowse for the Foundry User Data folder?" IDYES select_foundry_folder IDNO skip_module
-
+  MessageBox MB_YESNO "Foundry VTT was not detected automatically.$\r$\n$\r$\nBrowse for the Foundry User Data folder?" /SD IDNO IDYES select_foundry_folder IDNO skip_module
   select_foundry_folder:
   nsDialogs::SelectFolderDialog "Select Foundry VTT User Data Folder" "$LOCALAPPDATA"
   Pop $2
   StrCmp $2 "CANCEL" skip_module
-
-  ; Accept the Data folder, its parent, or the modules folder itself.
   StrCpy $FoundryPath "$2\modules"
   Call ValidateFoundryModulesPath
   StrCmp $FoundryPath "" 0 foundry_found
@@ -150,7 +314,7 @@ Function DetectFoundryInstallation
   StrCpy $FoundryPath "$2"
   Call ValidateFoundryModulesPath
   StrCmp $FoundryPath "" 0 foundry_found
-  MessageBox MB_ICONSTOP "The selected folder does not contain a Foundry VTT modules directory. Module installation will be skipped."
+  MessageBox MB_ICONSTOP "The selected folder does not contain a Foundry VTT modules directory. Module installation will be skipped." /SD IDOK
 
   skip_module:
   StrCpy $FoundryPath ""
@@ -163,235 +327,254 @@ Function DetectFoundryInstallation
 FunctionEnd
 
 Function RemoveLegacyCreatureIndexCaches
-  ; Validate again immediately before touching world data. Only the retired,
-  ; exact cache filename is deleted; generated maps and all other files remain.
   Call ValidateFoundryModulesPath
   StrCmp $FoundryDataPath "" cleanup_done
   IfFileExists "$FoundryDataPath\worlds\." 0 cleanup_done
-
   FindFirst $0 $1 "$FoundryDataPath\worlds\*"
   cleanup_loop:
   StrCmp $1 "" cleanup_close
   StrCmp $1 "." cleanup_next
   StrCmp $1 ".." cleanup_next
   IfFileExists "$FoundryDataPath\worlds\$1\." 0 cleanup_next
-  ; Skip junctions and directory symlinks so cleanup cannot leave the worlds directory.
   StrCpy $3 "$FoundryDataPath\worlds\$1"
   System::Call 'kernel32::GetFileAttributes(t r3) i .r2'
   IntOp $2 $2 & 0x400
   IntCmp $2 0 0 cleanup_next cleanup_next
-  IfFileExists "$FoundryDataPath\worlds\$1\enhanced-creature-index.json" 0 cleanup_next
   Delete "$FoundryDataPath\worlds\$1\enhanced-creature-index.json"
   IfErrors 0 cleanup_removed
-  DetailPrint "Could not remove legacy cache from world '$1'; leaving it unchanged."
+  DetailPrint "Could not remove the retired cache from world '$1'; leaving it unchanged."
   Goto cleanup_next
-
   cleanup_removed:
   DetailPrint "Removed retired Enhanced Creature Index cache from world '$1'."
-
   cleanup_next:
   FindNext $0 $1
   Goto cleanup_loop
-
   cleanup_close:
   FindClose $0
-
   cleanup_done:
 FunctionEnd
 
 Function IsFoundryModuleTargetSafe
-  ; A missing target is safe to create. Existing targets must be ordinary
-  ; directories; files, junctions, and symlinks are never followed or replaced.
   StrCpy $4 "$FoundryPath\foundry-mcp-bridge"
   System::Call 'kernel32::GetFileAttributes(t r4) i .r5'
   IntCmp $5 -1 module_target_safe module_target_unsafe module_target_attributes
-
   module_target_attributes:
   IntOp $6 $5 & 0x400
   IntCmp $6 0 0 module_target_unsafe module_target_unsafe
   IntOp $6 $5 & 0x10
   IntCmp $6 0 module_target_unsafe module_target_unsafe module_target_safe
-
   module_target_safe:
   StrCpy $6 "1"
   Return
-
   module_target_unsafe:
   StrCpy $6 "0"
 FunctionEnd
 
-Function UpdateClaudeConfig
-  DetailPrint "Configuring Claude Desktop..."
-  nsExec::ExecToStack 'powershell.exe -inputformat none -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\configure-claude.ps1" -InstallDir "$INSTDIR"'
-  Pop $0
-  Pop $1
-  StrCmp $0 "0" config_done
-
-  DetailPrint "Direct configuration failed; trying the batch wrapper."
-  nsExec::ExecToStack '"$INSTDIR\configure-claude-wrapper.bat" "$INSTDIR"'
-  Pop $0
-  Pop $1
-  StrCmp $0 "0" config_done config_failed
-
-  config_failed:
-  DetailPrint "Claude Desktop configuration failed: $1"
-  MessageBox MB_ICONEXCLAMATION "The server was installed, but Claude Desktop could not be configured automatically.$\r$\n$\r$\nSee README.txt for manual setup instructions."
-
-  config_done:
-FunctionEnd
-
-Section "Foundry MCP Server" SecMain
+Section "${PRODUCT_NAME}" SecMain
   SectionIn RO
-  SectionSetSize ${SecMain} 32768
+  SectionSetSize ${SecMain} ${ESTIMATED_SIZE_KB}
+  StrCpy $CanonicalConfigPath "$APPDATA\FoundryVTT MCP Bridge\foundry-servers.json"
+  Call ExtractInstallerHelpers
+  Call StopPreviousBridge
+  Call RunMigrationPrepare
 
   SetOutPath "$INSTDIR"
-  File /r "node\"
-  File "node.exe"
-
-  SetOutPath "$INSTDIR\foundry-mcp-server"
-  File /r "foundry-mcp-server\*"
-  SetOutPath "$INSTDIR"
-  File "README.txt"
-  File "LICENSE.txt"
-  File "icon.ico"
-  File "configure-claude.ps1"
-  File "configure-claude-wrapper.bat"
-
+  SetOverwrite on
+  File /r "${STAGE_DIR}\payload\*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  CreateDirectory "$SMPROGRAMS\Foundry MCP Server"
-  CreateShortcut "$SMPROGRAMS\Foundry MCP Server\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
 
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "DisplayName" "Foundry MCP Server"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "UninstallString" "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "DisplayIcon" "$INSTDIR\icon.ico"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "Publisher" "Foundry MCP Bridge"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "DisplayVersion" "0.5.5"
-  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "NoModify" 1
-  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "NoRepair" 1
+  SetShellVarContext current
+  Delete "$SMPROGRAMS\${LEGACY_START_MENU_FOLDER}\Uninstall.lnk"
+  RMDir "$SMPROGRAMS\${LEGACY_START_MENU_FOLDER}"
+  CreateDirectory "$SMPROGRAMS\${START_MENU_FOLDER}"
+  CreateShortcut "$SMPROGRAMS\${START_MENU_FOLDER}\${PRODUCT_NAME}.lnk" "$INSTDIR\${PRODUCT_EXE}" "" "$INSTDIR\${PRODUCT_EXE}" 0
+  CreateShortcut "$SMPROGRAMS\${START_MENU_FOLDER}\Uninstall ${PRODUCT_NAME}.lnk" "$INSTDIR\Uninstall.exe"
 
-  FileOpen $0 "$INSTDIR\start-server.bat" w
-  FileWrite $0 '@echo off$\r$\n'
-  FileWrite $0 'cd /d "$INSTDIR"$\r$\n'
-  FileWrite $0 '"$INSTDIR\node.exe" "$INSTDIR\foundry-mcp-server\packages\mcp-server\dist\index.cjs"$\r$\n'
-  FileWrite $0 'pause$\r$\n'
-  FileClose $0
-
-  FileOpen $0 "$INSTDIR\test-connection.bat" w
-  FileWrite $0 '@echo off$\r$\n'
-  FileWrite $0 '"$INSTDIR\node.exe" --version$\r$\n'
-  FileWrite $0 'if exist "$INSTDIR\foundry-mcp-server\packages\mcp-server\dist\index.cjs" (echo MCP server files found) else (echo MCP server files missing)$\r$\n'
-  FileWrite $0 'pause$\r$\n'
-  FileClose $0
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${PRODUCT_NAME}"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" "$\"$INSTDIR\Uninstall.exe$\" /S"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$\"$INSTDIR\${PRODUCT_EXE}$\",0"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "URLInfoAbout" "${PRODUCT_URL}"
+  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" ${ESTIMATED_SIZE_KB}
+  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
+  WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
 
   Call UpdateClaudeConfig
+  Call RunMigrationFinalize
 SectionEnd
 
-Section "Foundry MCP Bridge" SecFoundryModule
+Section "Foundry VTT module (recommended)" SecFoundryModule
   SectionSetSize ${SecFoundryModule} 5120
   Call DetectFoundryInstallation
   StrCmp $FoundryPath "" module_done
   Call IsFoundryModuleTargetSafe
   StrCmp $6 "1" 0 unsafe_module_target
+  Call CleanFoundryModulePayload
+  StrCmp $7 "1" 0 module_done
 
-  ; Persist the validated, exact paths for upgrades and the uninstaller. This
-  ; avoids guessing between stable, preview (FoundryVTT_Next), and custom roots.
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "FoundryDataPath" "$FoundryDataPath"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "FoundryModulesPath" "$FoundryPath"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "FoundryDataPath" "$FoundryDataPath"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "FoundryModulesPath" "$FoundryPath"
   Call RemoveLegacyCreatureIndexCaches
-
   CreateDirectory "$FoundryPath\foundry-mcp-bridge"
-  ; Replace module-owned code and assets, preserving user-created content from
-  ; older releases (including generated maps).
-  RMDir /r "$FoundryPath\foundry-mcp-bridge\dist"
-  RMDir /r "$FoundryPath\foundry-mcp-bridge\lang"
-  RMDir /r "$FoundryPath\foundry-mcp-bridge\scripts"
-  RMDir /r "$FoundryPath\foundry-mcp-bridge\styles"
-  RMDir /r "$FoundryPath\foundry-mcp-bridge\templates"
-  Delete "$FoundryPath\foundry-mcp-bridge\module.json"
   SetOutPath "$FoundryPath\foundry-mcp-bridge"
   SetOverwrite on
-  File /r "foundry-module\*"
+  File /r "${STAGE_DIR}\foundry-module\*"
   DetailPrint "Foundry MCP Bridge installed to $FoundryPath\foundry-mcp-bridge"
   Goto module_done
 
   unsafe_module_target:
-  DetailPrint "Refusing to replace reparse-point or non-directory module target: $FoundryPath\foundry-mcp-bridge"
-  MessageBox MB_ICONEXCLAMATION "The Foundry MCP Bridge module target is a symlink, junction, reparse point, or non-directory. Module installation was skipped to protect the target data."
-
+  DetailPrint "Refusing to replace a reparse-point or non-directory module target."
+  MessageBox MB_ICONEXCLAMATION "The Foundry MCP Bridge module target is a symlink, junction, reparse point, or non-directory. Module installation was skipped to protect target data." /SD IDOK
   module_done:
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Core MCP server, bundled Node.js runtime, and Claude Desktop configuration (required)."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecFoundryModule} "Foundry VTT bridge module (recommended)."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Desktop dashboard, notification-area host, persistent backend, MCP wrapper, and guarded profile migration (required)."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecFoundryModule} "Foundry VTT bridge module. Existing generated maps and other user-created module content are preserved."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "Uninstall"
-  ; Resolve and validate the exact persisted Foundry path before any removal.
+  StrCpy $un.CanonicalConfigPath "$APPDATA\FoundryVTT MCP Bridge\foundry-servers.json"
+  Call un.StopInstalledBridge
+
+  ; Client cleanup must finish before any shortcuts, registration, module code,
+  ; or executable payload is removed. Otherwise a CAS, permission, or reparse
+  ; refusal could leave an owned MCP entry pointing at a deleted wrapper.
+  MessageBox MB_YESNO|MB_ICONQUESTION "Remove this installer's bridge entries from Claude Desktop, Claude Code, and Codex before uninstalling?$\r$\n$\r$\nUnrelated and unowned MCP entries are always preserved. Choosing No cancels uninstall so no registered runtime is orphaned." /SD IDYES IDYES client_config_cleanup_retry IDNO client_config_cleanup_abort
+
+  client_config_cleanup_abort:
+  DetailPrint "Uninstall cancelled before removing application files because MCP client cleanup was not confirmed."
+  SetErrorLevel 2
+  Abort
+
+  client_config_cleanup_retry:
+  Call un.RemoveClaudeConfig
+  StrCmp $2 "0" client_config_cleanup_done
+  MessageBox MB_RETRYCANCEL|MB_ICONSTOP|MB_DEFBUTTON2 "MCP client cleanup could not finish. The installed wrapper and application payload remain in place so no owned registration points to a deleted executable.$\r$\n$\r$\nClose the affected MCP clients or correct the reported configuration-file problem, then retry." /SD IDCANCEL IDRETRY client_config_cleanup_retry IDCANCEL client_config_cleanup_abort
+
+  client_config_cleanup_done:
   Call un.DetectFoundryInstallation
   StrCmp $un.FoundryPath "" skip_legacy_cache_removal
   Call un.RemoveLegacyCreatureIndexCaches
 
   skip_legacy_cache_removal:
-  MessageBox MB_YESNO "Remove the Foundry MCP Bridge module code from Foundry VTT? User-created module content and generated maps are preserved; only the retired Enhanced Creature Index cache is removed from worlds." IDYES remove_module IDNO skip_module_removal
-
+  MessageBox MB_YESNO "Remove the Foundry MCP Bridge module code from Foundry VTT?$\r$\n$\r$\nGenerated maps, unknown files, and other user-created content remain in place." /SD IDNO IDYES remove_module IDNO skip_module_removal
   remove_module:
   StrCmp $un.FoundryPath "" skip_module_removal
   Call un.IsFoundryModuleTargetSafe
   StrCmp $6 "1" 0 unsafe_uninstall_module_target
-  RMDir /r "$un.FoundryPath\foundry-mcp-bridge\dist"
-  RMDir /r "$un.FoundryPath\foundry-mcp-bridge\lang"
-  RMDir /r "$un.FoundryPath\foundry-mcp-bridge\scripts"
-  RMDir /r "$un.FoundryPath\foundry-mcp-bridge\styles"
-  RMDir /r "$un.FoundryPath\foundry-mcp-bridge\templates"
-  Delete "$un.FoundryPath\foundry-mcp-bridge\module.json"
-  RMDir "$un.FoundryPath\foundry-mcp-bridge"
+  Call un.CleanFoundryModulePayload
   Goto skip_module_removal
-
   unsafe_uninstall_module_target:
-  DetailPrint "Refusing to remove reparse-point or non-directory module target: $un.FoundryPath\foundry-mcp-bridge"
-  MessageBox MB_ICONEXCLAMATION "The Foundry MCP Bridge module target is a symlink, junction, reparse point, or non-directory. Module removal was skipped to protect the target data."
+  MessageBox MB_ICONEXCLAMATION "The Foundry MCP Bridge module target is a symlink, junction, reparse point, or non-directory. Module removal was skipped to protect target data." /SD IDOK
 
   skip_module_removal:
-  MessageBox MB_YESNO "Remove the Foundry MCP Server entry from Claude Desktop configuration? Other MCP server entries will be preserved." IDYES remove_claude_config IDNO skip_claude_config
+  SetShellVarContext current
+  Delete "$SMPROGRAMS\${START_MENU_FOLDER}\${PRODUCT_NAME}.lnk"
+  Delete "$SMPROGRAMS\${START_MENU_FOLDER}\Uninstall ${PRODUCT_NAME}.lnk"
+  RMDir "$SMPROGRAMS\${START_MENU_FOLDER}"
+  Delete "$SMPROGRAMS\${LEGACY_START_MENU_FOLDER}\Uninstall.lnk"
+  RMDir "$SMPROGRAMS\${LEGACY_START_MENU_FOLDER}"
 
-  remove_claude_config:
-  Call un.RemoveClaudeConfig
-
-  skip_claude_config:
-  RMDir /r "$SMPROGRAMS\Foundry MCP Server"
-  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer"
-
-  ; Remove only payloads owned by this installer. Do not recursively delete the
-  ; user-selectable installation directory itself.
-  Delete "$INSTDIR\node.exe"
-  RMDir /r "$INSTDIR\node"
-  RMDir /r "$INSTDIR\foundry-mcp-server"
-  Delete "$INSTDIR\README.txt"
-  Delete "$INSTDIR\LICENSE.txt"
-  Delete "$INSTDIR\icon.ico"
-  Delete "$INSTDIR\configure-claude.ps1"
-  Delete "$INSTDIR\configure-claude-wrapper.bat"
-  Delete "$INSTDIR\start-server.bat"
-  Delete "$INSTDIR\test-connection.bat"
-
-  ; Remove uniquely named legacy bridge launchers/notices. Legacy model folders
-  ; are deliberately left alone because a custom $INSTDIR makes ownership
-  ; ambiguous; uninstalling must never remove a user's separate installation.
-  Delete "$INSTDIR\start-comfyui.bat"
-  Delete "$INSTDIR\test-comfyui.bat"
-  Delete "$INSTDIR\THIRD_PARTY_NOTICES.txt"
-
+  Call un.RemoveOwnedPayload
+  DeleteRegKey HKCU "${UNINSTALL_KEY}"
   Delete "$INSTDIR\Uninstall.exe"
+  RMDir "$INSTDIR\resources\installer"
+  RMDir "$INSTDIR\resources\server"
+  RMDir "$INSTDIR\resources"
+  RMDir "$INSTDIR\runtime"
   RMDir "$INSTDIR"
+  DetailPrint "Application settings were preserved at $un.CanonicalConfigPath"
 SectionEnd
+
+Function un.StopInstalledBridge
+  IfFileExists "$INSTDIR\resources\installer\stop-bridge.ps1" 0 stop_helper_missing
+  stop_retry:
+  nsExec::ExecToStack 'powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\installer\stop-bridge.ps1" -InstallDir "$INSTDIR"'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" stop_done
+  DetailPrint "$1"
+  MessageBox MB_RETRYCANCEL|MB_ICONSTOP|MB_DEFBUTTON2 "${PRODUCT_NAME} could not be stopped safely. Close it from the notification-area menu, then retry." /SD IDCANCEL IDRETRY stop_retry IDCANCEL stop_abort
+  stop_abort:
+  Abort
+  stop_helper_missing:
+  MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "The guarded shutdown helper is missing. Close ${PRODUCT_NAME} from the notification area before continuing." /SD IDCANCEL IDOK stop_done IDCANCEL stop_abort
+  stop_done:
+FunctionEnd
+
+Function un.RemoveOwnedPayload
+  IfFileExists "$INSTDIR\resources\installer\install-migration.ps1" 0 migration_helper_missing
+  nsExec::ExecToStack 'powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\installer\install-migration.ps1" -Phase Uninstall -NewInstallDir "$INSTDIR" -CanonicalConfigPath "$un.CanonicalConfigPath"'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" migration_done
+  DetailPrint "$1"
+  MessageBox MB_ICONSTOP "Uninstall refused to remove an unrecognized, linked, or malformed payload. Unknown files and settings were left untouched.$\r$\n$\r$\n$1" /SD IDOK
+  Abort
+  migration_helper_missing:
+  MessageBox MB_ICONSTOP "The owned-file cleanup helper is missing. Uninstall stopped without recursively deleting the application directory." /SD IDOK
+  Abort
+  migration_done:
+FunctionEnd
+
+Function un.RemoveClaudeConfig
+  StrCpy $2 "0"
+  IfFileExists "$INSTDIR\resources\installer\configure-claude.ps1" 0 claude_config_script_missing
+  nsExec::ExecToStack 'powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\installer\configure-claude.ps1" -InstallDir "$INSTDIR" -Remove'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" codex_config_cleanup
+  DetailPrint "$1"
+  StrCpy $2 "1"
+  Goto codex_config_cleanup
+
+  claude_config_script_missing:
+  StrCpy $2 "1"
+
+  codex_config_cleanup:
+  IfFileExists "$INSTDIR\runtime\node.exe" 0 codex_config_script_missing
+  IfFileExists "$INSTDIR\resources\installer\configure-codex.mjs" 0 codex_config_script_missing
+  nsExec::ExecToStack '"$INSTDIR\runtime\node.exe" "$INSTDIR\resources\installer\configure-codex.mjs" --install-dir "$INSTDIR" --remove'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" config_cleanup_checked
+  DetailPrint "$1"
+  StrCpy $2 "1"
+  Goto config_cleanup_checked
+
+  codex_config_script_missing:
+  StrCpy $2 "1"
+
+  config_cleanup_checked:
+  ; Return $2 to the uninstall section. It gates all subsequent mutation and
+  ; offers an interactive retry; silent mode conservatively aborts.
+FunctionEnd
+
+Function un.CleanFoundryModulePayload
+  IfFileExists "$INSTDIR\resources\installer\foundry-module-cleanup.ps1" 0 module_cleanup_missing
+  nsExec::ExecToStack 'powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\installer\foundry-module-cleanup.ps1" -ModuleRoot "$un.FoundryPath\foundry-mcp-bridge" -Mode Uninstall'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" module_cleanup_done
+  DetailPrint "$1"
+  MessageBox MB_ICONEXCLAMATION "Foundry module cleanup was skipped before deleting any module code because an owned path is linked, reparsed, or unexpected.$\r$\n$\r$\n$1" /SD IDOK
+  Return
+
+  module_cleanup_missing:
+  MessageBox MB_ICONEXCLAMATION "The guarded Foundry module cleanup helper is missing. No module code was removed." /SD IDOK
+
+  module_cleanup_done:
+FunctionEnd
 
 Function un.ValidateFoundryModulesPath
   StrCpy $un.FoundryDataPath ""
   StrCmp $un.FoundryPath "" invalid_foundry_path
   GetFullPathName $un.FoundryPath "$un.FoundryPath"
   IfFileExists "$un.FoundryPath\." 0 invalid_foundry_path
-
   ${GetFileName} "$un.FoundryPath" $0
   StrCmp $0 "modules" 0 invalid_foundry_path
   ${GetParent} "$un.FoundryPath" $un.FoundryDataPath
@@ -401,52 +584,40 @@ Function un.ValidateFoundryModulesPath
   IfFileExists "$un.FoundryDataPath\modules\." 0 invalid_foundry_path
   GetFullPathName $1 "$un.FoundryDataPath\modules"
   StrCmp $1 $un.FoundryPath valid_foundry_path invalid_foundry_path
-
   invalid_foundry_path:
   StrCpy $un.FoundryPath ""
   StrCpy $un.FoundryDataPath ""
-
   valid_foundry_path:
 FunctionEnd
 
 Function un.DetectFoundryInstallation
-  ; New installations persist the user's exact, validated choice.
-  ReadRegStr $un.FoundryPath HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "FoundryModulesPath"
-  ReadRegStr $2 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FoundryMCPServer" "FoundryDataPath"
+  ReadRegStr $un.FoundryPath HKCU "${UNINSTALL_KEY}" "FoundryModulesPath"
+  ReadRegStr $2 HKCU "${UNINSTALL_KEY}" "FoundryDataPath"
   Call un.ValidateFoundryModulesPath
   StrCmp $un.FoundryPath "" persisted_path_invalid
   StrCmp $2 "" persisted_path_invalid
   GetFullPathName $2 "$2"
   StrCmp $2 $un.FoundryDataPath foundry_installation_found
-
   persisted_path_invalid:
-  StrCpy $un.FoundryPath ""
-  StrCpy $un.FoundryDataPath ""
-
-  ; Safe fallbacks support uninstalling releases that predate path persistence.
   StrCpy $un.FoundryPath "$LOCALAPPDATA\FoundryVTT_Next\Data\modules"
   Call un.ValidateFoundryModulesPath
   StrCmp $un.FoundryPath "" next_appdata_preview
   IfFileExists "$un.FoundryPath\foundry-mcp-bridge\module.json" foundry_installation_found
-
   next_appdata_preview:
   StrCpy $un.FoundryPath "$APPDATA\FoundryVTT_Next\Data\modules"
   Call un.ValidateFoundryModulesPath
   StrCmp $un.FoundryPath "" next_local_stable
   IfFileExists "$un.FoundryPath\foundry-mcp-bridge\module.json" foundry_installation_found
-
   next_local_stable:
   StrCpy $un.FoundryPath "$LOCALAPPDATA\FoundryVTT\Data\modules"
   Call un.ValidateFoundryModulesPath
   StrCmp $un.FoundryPath "" next_appdata_stable
   IfFileExists "$un.FoundryPath\foundry-mcp-bridge\module.json" foundry_installation_found
-
   next_appdata_stable:
   StrCpy $un.FoundryPath "$APPDATA\FoundryVTT\Data\modules"
   Call un.ValidateFoundryModulesPath
   StrCmp $un.FoundryPath "" next_environment_path
   IfFileExists "$un.FoundryPath\foundry-mcp-bridge\module.json" foundry_installation_found
-
   next_environment_path:
   ReadEnvStr $2 "FOUNDRY_VTT_DATA_PATH"
   StrCmp $2 "" foundry_installation_missing
@@ -454,91 +625,59 @@ Function un.DetectFoundryInstallation
   Call un.ValidateFoundryModulesPath
   StrCmp $un.FoundryPath "" next_environment_parent
   IfFileExists "$un.FoundryPath\foundry-mcp-bridge\module.json" foundry_installation_found
-
   next_environment_parent:
   StrCpy $un.FoundryPath "$2\Data\modules"
   Call un.ValidateFoundryModulesPath
   StrCmp $un.FoundryPath "" foundry_installation_missing
   IfFileExists "$un.FoundryPath\foundry-mcp-bridge\module.json" foundry_installation_found
-
   foundry_installation_missing:
   StrCpy $un.FoundryPath ""
   StrCpy $un.FoundryDataPath ""
   Return
-
   foundry_installation_found:
   DetailPrint "Using validated Foundry VTT data directory: $un.FoundryDataPath"
 FunctionEnd
 
 Function un.RemoveLegacyCreatureIndexCaches
-  ; Revalidate immediately before removing the exact retired cache filename.
   Call un.ValidateFoundryModulesPath
   StrCmp $un.FoundryDataPath "" cleanup_done
   IfFileExists "$un.FoundryDataPath\worlds\." 0 cleanup_done
-
   FindFirst $0 $1 "$un.FoundryDataPath\worlds\*"
   cleanup_loop:
   StrCmp $1 "" cleanup_close
   StrCmp $1 "." cleanup_next
   StrCmp $1 ".." cleanup_next
   IfFileExists "$un.FoundryDataPath\worlds\$1\." 0 cleanup_next
-  ; Skip junctions and directory symlinks so cleanup cannot leave the worlds directory.
   StrCpy $3 "$un.FoundryDataPath\worlds\$1"
   System::Call 'kernel32::GetFileAttributes(t r3) i .r2'
   IntOp $2 $2 & 0x400
   IntCmp $2 0 0 cleanup_next cleanup_next
-  IfFileExists "$un.FoundryDataPath\worlds\$1\enhanced-creature-index.json" 0 cleanup_next
   Delete "$un.FoundryDataPath\worlds\$1\enhanced-creature-index.json"
   IfErrors 0 cleanup_removed
-  DetailPrint "Could not remove legacy cache from world '$1'; leaving it unchanged."
+  DetailPrint "Could not remove the retired cache from world '$1'; leaving it unchanged."
   Goto cleanup_next
-
   cleanup_removed:
   DetailPrint "Removed retired Enhanced Creature Index cache from world '$1'."
-
   cleanup_next:
   FindNext $0 $1
   Goto cleanup_loop
-
   cleanup_close:
   FindClose $0
-
   cleanup_done:
 FunctionEnd
 
 Function un.IsFoundryModuleTargetSafe
-  ; A missing target needs no removal. Existing targets must be ordinary
-  ; directories; files, junctions, and symlinks are never followed or removed.
   StrCpy $4 "$un.FoundryPath\foundry-mcp-bridge"
   System::Call 'kernel32::GetFileAttributes(t r4) i .r5'
   IntCmp $5 -1 module_target_safe module_target_unsafe module_target_attributes
-
   module_target_attributes:
   IntOp $6 $5 & 0x400
   IntCmp $6 0 0 module_target_unsafe module_target_unsafe
   IntOp $6 $5 & 0x10
   IntCmp $6 0 module_target_unsafe module_target_unsafe module_target_safe
-
   module_target_safe:
   StrCpy $6 "1"
   Return
-
   module_target_unsafe:
   StrCpy $6 "0"
-FunctionEnd
-
-Function un.RemoveClaudeConfig
-  IfFileExists "$INSTDIR\configure-claude.ps1" 0 config_script_missing
-  nsExec::ExecToStack 'powershell.exe -inputformat none -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\configure-claude.ps1" -Remove'
-  Pop $0
-  Pop $1
-  StrCmp $0 "0" config_done
-  DetailPrint "Claude Desktop configuration cleanup failed: $1"
-  MessageBox MB_ICONEXCLAMATION "One or more Claude Desktop configuration files could not be updated. They were left unchanged; any successfully updated file has a timestamped backup beside it.$\r$\n$\r$\nSee $TEMP\foundry-mcp-claude-config.log for details."
-  Return
-
-  config_script_missing:
-  MessageBox MB_ICONEXCLAMATION "The configuration helper is missing. Remove only the 'foundry-mcp' or legacy 'foundry-vtt-mcp' entry from Claude Desktop manually."
-
-  config_done:
 FunctionEnd

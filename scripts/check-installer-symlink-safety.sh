@@ -48,11 +48,15 @@ assert_before "$MAC_UNINSTALL" 'if [ -L "$MODULE_PATH" ]; then' 'if [ -f "$MODUL
 assert_before "$MAC_UNINSTALL" 'if [ -L "$MODULE_PATH" ]; then' 'rm -f -- "$WORLD_DIR/enhanced-creature-index.json"'
 assert_before "$MAC_UNINSTALL" 'if [ -L "$MODULE_PATH" ]; then' 'rm -rf "$MODULE_PATH/dist"'
 assert_before "$WINDOWS_NSIS" 'Call IsFoundryModuleTargetSafe' 'CreateDirectory "$FoundryPath\foundry-mcp-bridge"'
-assert_before "$WINDOWS_NSIS" 'Call IsFoundryModuleTargetSafe' 'RMDir /r "$FoundryPath\foundry-mcp-bridge\dist"'
-assert_before "$WINDOWS_NSIS" 'Call IsFoundryModuleTargetSafe' 'Delete "$FoundryPath\foundry-mcp-bridge\module.json"'
+assert_before "$WINDOWS_NSIS" 'Call CleanFoundryModulePayload' 'CreateDirectory "$FoundryPath\foundry-mcp-bridge"'
 assert_before "$WINDOWS_NSIS" 'Call IsFoundryModuleTargetSafe' 'SetOutPath "$FoundryPath\foundry-mcp-bridge"'
-assert_before "$WINDOWS_NSIS" 'Call un.IsFoundryModuleTargetSafe' 'RMDir /r "$un.FoundryPath\foundry-mcp-bridge\dist"'
-assert_before "$WINDOWS_NSIS" 'Call un.IsFoundryModuleTargetSafe' 'Delete "$un.FoundryPath\foundry-mcp-bridge\module.json"'
+
+if grep -Fq 'RMDir /r "$FoundryPath\foundry-mcp-bridge' "$WINDOWS_NSIS" ||
+  grep -Fq 'RMDir /r "$un.FoundryPath\foundry-mcp-bridge' "$WINDOWS_NSIS"; then
+  fail 'Windows installer must delegate recursive module cleanup to its no-follow helper'
+fi
+grep -Fq 'Call un.CleanFoundryModulePayload' "$WINDOWS_NSIS" ||
+  fail 'Windows uninstall must use guarded module cleanup'
 
 reparse_checks=$(grep -Fc 'IntOp $6 $5 & 0x400' "$WINDOWS_NSIS" || true)
 [ "$reparse_checks" -ge 2 ] || fail 'Windows install and uninstall both need reparse-point checks'

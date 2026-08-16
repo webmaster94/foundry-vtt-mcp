@@ -18,6 +18,22 @@ export interface FoundryConnectorOptions {
   webrtcSignalingPortOverride?: number;
 }
 
+export interface FoundryConnectionInfo {
+  started: boolean;
+  connected: boolean;
+  connectionType: 'websocket' | 'webrtc' | null;
+  readyState: number | 'CLOSED';
+  connectionGeneration: number;
+  config: { port: number; namespace: string };
+  liveness: {
+    connectedAt: number | null;
+    lastConnectedAt: number | null;
+    lastApplicationSeenAt: number | null;
+    lastWebSocketProtocolSeenAt: number | null;
+    lastDisconnectedAt: number | null;
+  };
+}
+
 interface PendingQuery {
   method: string;
   sendAttempted: boolean;
@@ -78,6 +94,8 @@ export class FoundryConnector {
   private heartbeatGeneration = 0;
   private lastApplicationSeenAt = 0;
   private lastWebSocketProtocolSeenAt = 0;
+  private connectedAt: number | null = null;
+  private lastConnectedAt: number | null = null;
   private webSocketPongReceived = true;
   private heartbeatId = 0;
   private webrtcOfferStartedAt = 0;
@@ -258,8 +276,11 @@ export class FoundryConnector {
       this.foundrySocket = ws;
       this.activeConnectionType = 'websocket';
       this.connectionGeneration += 1;
-      this.lastApplicationSeenAt = Date.now();
-      this.lastWebSocketProtocolSeenAt = Date.now();
+      const connectedAt = Date.now();
+      this.connectedAt = connectedAt;
+      this.lastConnectedAt = connectedAt;
+      this.lastApplicationSeenAt = connectedAt;
+      this.lastWebSocketProtocolSeenAt = connectedAt;
       this.webSocketPongReceived = true;
       this.logger.info('Foundry module registered via WebSocket');
 
@@ -279,6 +300,7 @@ export class FoundryConnector {
           this.logger.info('Active Foundry WebSocket disconnected');
           this.foundrySocket = null;
           if (this.activeConnectionType === 'websocket') this.activeConnectionType = null;
+          this.connectedAt = null;
           this.lastDisconnectedAt = Date.now();
           this.rejectPendingQueries(new Error('Connection closed'), true);
         }
@@ -360,7 +382,9 @@ export class FoundryConnector {
     this.isStarted = false;
     this.rejectPendingQueries(new Error('Server shutting down'), true);
 
+    if (this.connectedAt !== null) this.lastDisconnectedAt = Date.now();
     this.activeConnectionType = null;
+    this.connectedAt = null;
     this.foundrySocket = null;
     this.disposeWebRTCPeer();
 
@@ -634,7 +658,10 @@ export class FoundryConnector {
 
       this.activeConnectionType = 'webrtc';
       this.connectionGeneration += 1;
-      this.lastApplicationSeenAt = Date.now();
+      const connectedAt = Date.now();
+      this.connectedAt = connectedAt;
+      this.lastConnectedAt = connectedAt;
+      this.lastApplicationSeenAt = connectedAt;
       this.logger.info('Foundry module registered via open WebRTC data channel');
       return;
     }
@@ -644,6 +671,7 @@ export class FoundryConnector {
       this.webrtcPeer = null;
       this.webrtcTransitionSocket = null;
       this.webrtcOfferStartedAt = 0;
+      this.connectedAt = null;
       this.lastDisconnectedAt = Date.now();
       peer.disconnect();
       this.rejectPendingQueries(new Error('WebRTC data channel closed'), true);
@@ -679,6 +707,7 @@ export class FoundryConnector {
       }
       this.foundrySocket = null;
       if (this.activeConnectionType === 'websocket') this.activeConnectionType = null;
+      this.connectedAt = null;
     }
 
     if (this.webrtcPeer && !this.webrtcPeer.getIsConnected()) {
@@ -801,6 +830,7 @@ export class FoundryConnector {
       }
     }
     this.disposeWebRTCPeer();
+    this.connectedAt = null;
     this.lastDisconnectedAt = Date.now();
     this.rejectPendingQueries(new Error(reason), true);
   }
@@ -933,20 +963,24 @@ export class FoundryConnector {
     return false;
   }
 
-  getConnectionInfo(): any {
+  getConnectionInfo(): FoundryConnectionInfo {
     const address = this.httpServer?.address();
     return {
       started: this.isStarted,
       connected: this.isConnected(),
       connectionType: this.activeConnectionType,
-      readyState: this.foundrySocket?.readyState || 'CLOSED',
+      readyState: this.foundrySocket?.readyState ?? 'CLOSED',
+      connectionGeneration: this.connectionGeneration,
       config: {
         port: typeof address === 'object' && address ? address.port : this.config.port,
         namespace: this.config.namespace,
       },
       liveness: {
+        connectedAt: this.connectedAt,
+        lastConnectedAt: this.lastConnectedAt,
         lastApplicationSeenAt: this.lastApplicationSeenAt || null,
         lastWebSocketProtocolSeenAt: this.lastWebSocketProtocolSeenAt || null,
+        lastDisconnectedAt: this.lastDisconnectedAt,
       },
     };
   }

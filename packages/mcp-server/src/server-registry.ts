@@ -38,7 +38,7 @@ export function runWithServer<T>(serverName: string, fn: () => Promise<T>): Prom
  * environment configuration — identical to previous behavior.
  */
 
-const ServerProfileSchema = z.object({
+export const ServerProfileSchema = z.object({
   label: z.string().optional(),
   host: z.string().optional(),
   port: z.number().int().min(1024).max(65535).optional(),
@@ -53,7 +53,7 @@ const ServerProfileSchema = z.object({
   authToken: z.string().optional(),
 });
 
-const ServersFileSchema = z.object({
+export const ServersFileSchema = z.object({
   defaultServer: z.string().optional(),
   servers: z.record(z.string(), ServerProfileSchema),
 });
@@ -65,6 +65,33 @@ export interface RegisteredServer {
   label: string;
   foundryConfig: Config['foundry'];
   client: FoundryClient;
+}
+
+export interface ServerRegistryStatus {
+  config: {
+    path: string | null;
+    exists: boolean;
+    source: 'file' | 'environment';
+  };
+  activeServer: string;
+  servers: Array<{
+    name: string;
+    label: string;
+    host: string;
+    port: number;
+    connectionType: string;
+    remoteMode: boolean;
+    active: boolean;
+    connected: boolean;
+    connectionInfo: unknown;
+    cachedCapabilities: {
+      moduleId: string;
+      moduleVersion: string;
+      foundryVersion: string;
+      system: { id: string; version: string };
+      world: { id: string; title: string };
+    } | null;
+  }>;
 }
 
 export interface BufferedEvent {
@@ -133,6 +160,8 @@ export class ServerRegistry {
   private configuredDefaultName: string;
   private logger: Logger;
   private lifecycleTail: Promise<void> = Promise.resolve();
+  private selectedConfigPath: string | null = null;
+  private readonly configFileOverride: string | null;
   public readonly routingClient: RoutingFoundryClient;
 
   // Game-event ring buffer (all profiles share one sequence for simple cursors)
@@ -141,6 +170,7 @@ export class ServerRegistry {
 
   constructor(config: Config, logger: Logger, configFileOverride?: string) {
     this.logger = logger.child({ component: 'ServerRegistry' });
+    this.configFileOverride = configFileOverride ? path.resolve(configFileOverride) : null;
 
     const file = this.loadServersFile(configFileOverride);
     const profiles: Record<string, ServerProfile> = file?.servers ?? {
@@ -209,8 +239,10 @@ export class ServerRegistry {
     candidates.push(path.join(process.cwd(), 'foundry-servers.json'));
 
     const visited = new Set<string>();
+    let firstCandidate: string | null = null;
     for (const candidate of candidates) {
       const resolvedCandidate = path.resolve(candidate);
+      firstCandidate ??= resolvedCandidate;
       if (visited.has(resolvedCandidate)) continue;
       visited.add(resolvedCandidate);
       if (!fs.existsSync(resolvedCandidate)) continue;
@@ -218,6 +250,7 @@ export class ServerRegistry {
       try {
         const raw = JSON.parse(fs.readFileSync(resolvedCandidate, 'utf8'));
         const parsed = ServersFileSchema.parse(raw);
+        this.selectedConfigPath = resolvedCandidate;
         this.logger.info('Loaded Foundry servers config', {
           path: resolvedCandidate,
           servers: Object.keys(parsed.servers),
@@ -235,7 +268,60 @@ export class ServerRegistry {
         throw new Error(`Invalid Foundry servers config at "${resolvedCandidate}": ${message}`);
       }
     }
+    // Report the exact file a desktop editor should create when an explicit
+    // override/environment path was configured, even before it exists.
+    this.selectedConfigPath = firstCandidate;
     return null;
+  }
+
+  getConfigFilePath(): string | null {
+    return this.selectedConfigPath;
+  }
+
+  getStatus(): ServerRegistryStatus {
+    const servers = [...this.servers.values()].map(server => {
+      const cached = server.client.getCachedCapabilities();
+      return {
+        name: server.name,
+        label: server.label,
+        host: server.foundryConfig.host,
+        port: server.foundryConfig.port,
+        connectionType: server.foundryConfig.connectionType,
+        remoteMode: server.foundryConfig.remoteMode,
+        active: server.name === this.activeName,
+        connected: server.client.isConnected(),
+        connectionInfo: server.client.getConnectionInfo(),
+        cachedCapabilities: cached
+          ? {
+              moduleId: cached.moduleId,
+              moduleVersion: cached.moduleVersion,
+              foundryVersion: cached.foundryVersion,
+              system: { id: cached.system.id, version: cached.system.version },
+              world: { id: cached.world.id, title: cached.world.title },
+            }
+          : null,
+      };
+    });
+
+    return {
+      config: {
+        path: this.selectedConfigPath,
+        exists: this.selectedConfigPath !== null && fs.existsSync(this.selectedConfigPath),
+        source:
+          this.selectedConfigPath !== null && fs.existsSync(this.selectedConfigPath)
+            ? 'file'
+            : 'environment',
+      },
+      activeServer: this.activeName,
+      servers,
+    };
+  }
+
+  /** Populate caches independently of status polling; callers never await transport work. */
+  refreshCapabilityCaches(): void {
+    for (const server of this.servers.values()) {
+      server.client.refreshCapabilitiesInBackground();
+    }
   }
 
   list(): Array<{
@@ -391,7 +477,11 @@ export class ServerRegistry {
     config: Config,
     logger: Logger
   ): Promise<{ added: string[]; removed: string[]; changed: string[]; unchanged: string[] }> {
-    const file = this.loadServersFile();
+    // Keep reloading the same authoritative path selected at startup. This is
+    // essential for desktop editing and also fixes constructor overrides being
+    // forgotten after the initial load.
+    const preferredPath = this.configFileOverride ?? this.selectedConfigPath ?? undefined;
+    const file = this.loadServersFile(preferredPath);
     const profiles: Record<string, ServerProfile> = file?.servers ?? {
       default: { label: 'Default (from environment)' },
     };

@@ -1,34 +1,11 @@
 @echo off
-REM Batch wrapper for PowerShell Claude Desktop configuration
-REM This script provides a more reliable way to execute PowerShell from NSIS
+setlocal
+set "BRIDGE_INSTALL_DIR=%~1"
+set "BRIDGE_HELPER_DIR=%~dp0"
 
-echo [INFO] Starting Claude Desktop configuration...
-echo [INFO] Install directory: %1
+if "%BRIDGE_INSTALL_DIR%"=="" exit /b 2
+if not exist "%BRIDGE_HELPER_DIR%configure-claude.ps1" exit /b 3
 
-REM Change to the installation directory
-cd /d "%~1"
-if errorlevel 1 (
-    echo [ERROR] Failed to change to installation directory: %~1
-    exit /b 1
-)
-
-REM Verify PowerShell script exists
-if not exist "configure-claude.ps1" (
-    echo [ERROR] PowerShell script not found: configure-claude.ps1
-    exit /b 2
-)
-
-REM Execute PowerShell script with proper error handling
-echo [INFO] Executing PowerShell configuration script...
-powershell.exe -inputformat none -NoProfile -ExecutionPolicy Bypass -File "configure-claude.ps1" -InstallDir "%~1"
-
-REM Capture PowerShell exit code
-set PS_EXIT_CODE=%errorlevel%
-
-if %PS_EXIT_CODE% equ 0 (
-    echo [SUCCESS] Claude Desktop configuration completed successfully
-    exit /b 0
-) else (
-    echo [ERROR] PowerShell script failed with exit code: %PS_EXIT_CODE%
-    exit /b %PS_EXIT_CODE%
-)
+powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass ^
+  -File "%BRIDGE_HELPER_DIR%configure-claude.ps1" -InstallDir "%BRIDGE_INSTALL_DIR%"
+exit /b %errorlevel%

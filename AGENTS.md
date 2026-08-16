@@ -4,10 +4,11 @@ Guidance for AI coding agents (and humans) working in this repository.
 
 ## What this is
 
-A two-component bridge between Foundry VTT and MCP clients:
+A bridge between Foundry VTT and MCP clients, with an optional desktop controller:
 
 - **`packages/mcp-server`** — Node MCP server. `index.ts` is a thin stdio wrapper that talks JSON-lines over TCP (`127.0.0.1:31414`) to a singleton **backend** process (`backend.ts`) which owns all tools and Foundry connections. Killing the backend is safe: the wrapper respawns it on the next tool call.
 - **`packages/foundry-module`** — the Foundry VTT module (id `foundry-mcp-bridge`, never rename). Registers query handlers on `CONFIG.queries` under the `foundry-mcp-bridge.` prefix and connects OUT to the MCP server (WebSocket, or WebRTC for remote instances; signaling on `port + 1`).
+- **`packages/desktop`** — secure Electron control panel and notification-area host. It supervises and talks to the same singleton backend; it is not a second MCP endpoint or connection owner. Renderer code has no Node access and reaches only narrow, validated main-process IPC methods.
 - **`shared`** — zod schemas used by both sides.
 
 Request path: MCP client → stdio wrapper → backend (tool dispatch) → `FoundryClient.query('foundry-mcp-bridge.<handler>')` → module handler in the GM's browser → Foundry API.
@@ -16,7 +17,8 @@ Request path: MCP client → stdio wrapper → backend (tool dispatch) → `Foun
 
 ```bash
 npm run build            # all workspaces; tsc is strict (exactOptionalPropertyTypes)
-npm test                 # vitest unit tests (server + Foundry module workspaces)
+npm test                 # vitest unit tests (server + module + desktop workspaces)
+npm run pack:desktop:win # bundle backend + produce Electron win-unpacked payload
 npm run test:fork-contract # baseline tools/handlers retained except approved removals
 npm run smoke            # LIVE 27-step integration suite over the control channel.
                          # Requires the backend running AND a world connected.
@@ -39,7 +41,7 @@ then reload the Foundry world. `execute-foundry-script` with `window.location.re
 2. **Shared schema** — add request schema to `shared/src/schemas.ts` if the payload is non-trivial.
 3. **Server tool** — add the tool definition + dispatch in the matching `packages/mcp-server/src/tools/*.ts` class; wire new tool classes into `backend.ts` (`allTools` + `additionalToolHandlers`).
 4. **Tests** — unit test the tool class (see `tools/*.test.ts` for the mocking pattern) and add a step to `scripts/bridge-smoke-test.mjs`.
-5. Version-bump both `package.json`s + `packages/foundry-module/module.json` together — the capability handshake surfaces mismatches to users as `VERSION_MISMATCH`.
+5. Version-bump root, server, module, desktop, shared, and `packages/foundry-module/module.json` together — the capability handshake surfaces mismatches to users as `VERSION_MISMATCH`.
 
 ## Conventions
 
@@ -48,6 +50,7 @@ then reload the Foundry world. `execute-foundry-script` with `window.location.re
 - All write paths must: check permissions (`permissionManager` / `assertGM`), audit (`auditService.record`), and where feasible support `dryRun` and record an `inverse`.
 - Multi-server: tools never hold a `FoundryClient` for a specific profile — they get the `RoutingFoundryClient` facade. Per-call `server` args are handled centrally in `backend.ts` via `runWithServer` (AsyncLocalStorage); do not add per-tool routing.
 - Keep tool output bounded: projection (`fields`), `maxBytes` caps, and limits. Unbounded dumps of compendium entries or schemas are regressions.
+- Desktop configuration saves must validate the entire profile set, write atomically, preserve a backup, apply with the registry's transactional reload, and restore/reload the prior file if application fails. Never send an existing `authToken` to the renderer; expose only whether it is set and use explicit keep/replace/clear semantics in Electron main.
 
 ## Gotchas learned the hard way
 
@@ -57,6 +60,7 @@ then reload the Foundry world. `execute-foundry-script` with `window.location.re
 - Only one Foundry connection per connector: two worlds pointed at the same profile port will fight. Distinct ports per profile; duplicate ports are rejected at registry load.
 - The module retries forever (30s cadence after fast retries), and browser online/pageshow/visibility events wake a delayed retry immediately. Backend restarts, duplicate-tab ownership changes, and transient ICE loss self-heal without a refresh. A persistent failure usually means ports, auth tokens, Local Network Access permission, or the GM client are wrong.
 - The backend is a PERSISTENT DAEMON: wrappers spawn it orphaned (via `cmd start /b` on Windows) and never kill it, so the module's connection survives AI-client session ends and idle periods. It restarts itself when a wrapper detects a newer build on disk (entry-file signature in the control-channel ping), or via `npm run stop`. Queries during the first 90s of a listener's life wait up to 45s for the module to reconnect instead of failing (startup grace).
+- The desktop app and stdio wrappers share the loopback control channel at `127.0.0.1:31414`. Status polling must be nonblocking and secret-free; it may read cached capabilities but must never issue a 45-second Foundry query on each UI refresh. The installed canonical profile path is `%APPDATA%\FoundryVTT MCP Bridge\foundry-servers.json` unless `FOUNDRY_SERVERS_CONFIG` explicitly overrides it.
 - The module only exists while a GM browser/desktop client has the world open — `users: 0` on Foundry's `/api/status` means nothing can reconnect, no matter how patient the server is. A normal inactive tab works; a browser-frozen/discarded tab cannot run queries until resume.
 - Node owns authoritative liveness: WebSocket protocol pings tolerate paused background JavaScript; WebRTC uses ICE/data-channel state plus a suspension-tolerant application heartbeat. Never add a competing browser reconnect owner.
 - A write whose response times out or is lost after transport send is `UNKNOWN_OUTCOME`. It may already have committed; inspect current state before retrying.
@@ -70,8 +74,8 @@ then reload the Foundry world. `execute-foundry-script` with `window.location.re
 ## Release process
 
 1. `npm run build && npm test && npm run smoke` (smoke against a live world).
-2. Bump versions (root, both packages, shared, `module.json`) — keep all five identical. Release workflows reject a mismatched tag/manual version.
-3. Commit, push, then publish a GitHub release tagged `vX.Y.Z` (target branch can be the feature branch). CI (`.github/workflows/module-release.yml`, League-of-Foundry-Developers pattern) builds and attaches `module.json` + `module.zip`; the stable install URL is `releases/latest/download/module.json`.
+2. Bump versions (root, server, module, desktop, shared, `module.json`) — keep all six identical. Release workflows reject a mismatched tag/manual version.
+3. Commit, push, then publish a GitHub release tagged `vX.Y.Z` (target branch can be the feature branch). The complete release workflow attaches the direct Windows Setup executable and available macOS package; the Foundry release workflow attaches its required `module.json` + `module.zip`. Do not publish a standalone/manual server ZIP. The stable Foundry install URL is `releases/latest/download/module.json`.
 4. Users update the module in Foundry and reload their world; the MCP server side is picked up by restarting the backend process (or the MCP client connection).
 
 ## Repo layout quick reference
@@ -93,6 +97,11 @@ packages/mcp-server/src/
   foundry-client.ts     query transport + BridgeError codes + capabilities cache
   foundry-connector.ts  WebSocket/WebRTC listeners
   tools/*.ts            one class per tool family
+packages/desktop/src/
+  main/                 Electron lifecycle, tray/menu/window, backend supervision, config store
+  preload.ts            narrow contextBridge API (never expose ipcRenderer or filesystem)
+  renderer/             sandboxed dashboard and structured connection editor
+packages/desktop/assets/ application/tray icon sources and generated assets
 scripts/bridge-smoke-test.mjs   live integration suite (npm run smoke)
 scripts/install.mjs             client setup: npm run setup — builds and registers
                                 the server with Claude Desktop / Claude Code / Codex

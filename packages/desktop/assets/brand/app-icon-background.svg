@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Foundry VTT MCP Bridge icon background</title>
+  <desc id="description">A dark rounded-square plate with restrained orange and steel accents.</desc>
+  <defs>
+    <linearGradient id="plate" x1="128" y1="96" x2="896" y2="944" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#263746"/>
+      <stop offset="0.48" stop-color="#14212C"/>
+      <stop offset="1" stop-color="#091117"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="180" y1="100" x2="850" y2="930" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#536A7C"/>
+      <stop offset="0.52" stop-color="#283946"/>
+      <stop offset="1" stop-color="#FF6A2A"/>
+    </linearGradient>
+    <radialGradient id="warmth" cx="0" cy="0" r="1" gradientTransform="translate(740 820) rotate(-132) scale(540)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D64D22" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#D64D22" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="212" fill="url(#plate)"/>
+  <rect x="61" y="61" width="902" height="902" rx="199" fill="none" stroke="url(#edge)" stroke-width="13"/>
+  <rect x="80" y="80" width="864" height="864" rx="180" fill="url(#warmth)"/>
+  <path d="M176 746C280 852 404 902 548 896" fill="none" stroke="#8EA2B0" stroke-opacity="0.12" stroke-width="18" stroke-linecap="round"/>
+  <path d="M162 708C280 820 414 868 568 850" fill="none" stroke="#FF6A2A" stroke-opacity="0.16" stroke-width="8" stroke-linecap="round"/>
+</svg>
