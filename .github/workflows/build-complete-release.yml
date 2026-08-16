@@ -1,8 +1,11 @@
 name: Build Complete Release
 
-# Fork note: installer builds are manual-only here. Module releases are
-# handled by module-release.yml on published releases.
+# Tag pushes build the complete desktop/installer release. Manual dispatch is
+# retained for dry runs and artifact-only validation from a branch.
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
@@ -16,333 +19,394 @@ on:
         type: boolean
 
 jobs:
-  build-nsis:
-    runs-on: windows-latest
-    
+  quality:
+    runs-on: ubuntu-latest
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-      
-    - name: Setup Node.js
-      uses: actions/setup-node@v6
-      with:
-        node-version: '20.12.2'
-        
-    - name: Set Package Version
-      id: version
-      run: |
-        try {
-          if ("${{ github.event.inputs.version }}" -ne "") {
-            $version = "${{ github.event.inputs.version }}"
-            Write-Host "✓ Using manual input version: $version"
-            
-            # Validate version format
-            if ($version -notmatch '^v?\d+\.\d+\.\d+') {
-              throw "Invalid version format: '$version'. Expected format: v0.0.0 or 0.0.0"
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.12.0'
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: npm ci --workspaces --include-workspace-root
+
+      - name: Check manifest versions
+        run: npm run version:check
+
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Strict typecheck
+        run: npm run typecheck
+
+      - name: Desktop lint
+        run: npm run lint:desktop
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Desktop Electron lifecycle tests
+        run: xvfb-run --auto-servernum npm run test:desktop:e2e
+
+      - name: MCP schema and catalog checks
+        run: npm run test:mcp:schema
+
+      - name: Fork feature preservation contract
+        run: npm run test:fork-contract
+
+      - name: Removed-feature regression check
+        run: npm run test:removed-features
+
+      - name: Installer path safety regression check
+        run: npm run test:installer-safety
+
+      - name: Check patch whitespace
+        run: git diff --check
+
+  build-nsis:
+    needs: quality
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.12.0'
+
+      - name: Set Package Version
+        id: version
+        run: |
+          try {
+            if ("${{ github.event.inputs.version }}" -ne "") {
+              $version = "${{ github.event.inputs.version }}"
+              Write-Host "✓ Using manual input version: $version"
+
+              # Validate version format
+              if ($version -notmatch '^v?\d+\.\d+\.\d+') {
+                throw "Invalid version format: '$version'. Expected format: v0.0.0 or 0.0.0"
+              }
+            } elseif ("${{ github.ref_type }}" -eq "tag") {
+              $version = "${{ github.ref_name }}"
+              Write-Host "✓ Using tag version: $version"
+
+              # Validate tag version format
+              if ($version -notmatch '^v?\d+\.\d+\.\d+') {
+                throw "Invalid tag version format: '$version'. Expected format: v0.0.0"
+              }
+            } else {
+              Write-Host "📋 Reading version from package.json..."
+
+              # Check if package.json exists
+              if (-not (Test-Path "package.json")) {
+                throw "package.json not found in repository root"
+              }
+
+              # Read and parse package.json
+              $packageJson = Get-Content package.json -Raw | ConvertFrom-Json
+
+              # Validate version field exists
+              if (-not $packageJson.version) {
+                throw "No 'version' field found in package.json"
+              }
+
+              $packageVersion = $packageJson.version
+              Write-Host "📦 Found package.json version: $packageVersion"
+
+              # Validate version format
+              if ($packageVersion -notmatch '^\d+\.\d+\.\d+') {
+                throw "Invalid package.json version format: '$packageVersion'. Expected format: 0.0.0"
+              }
+
+              $version = "v$packageVersion"
+              Write-Host "✓ Using package.json version: $version"
             }
-          } elseif ("${{ github.ref_type }}" -eq "tag") {
-            $version = "${{ github.ref_name }}"
-            Write-Host "✓ Using tag version: $version"
-            
-            # Validate tag version format
-            if ($version -notmatch '^v?\d+\.\d+\.\d+') {
-              throw "Invalid tag version format: '$version'. Expected format: v0.0.0"
+
+            # Final validation - ensure no invalid characters for filename
+            if ($version -match '[<>:"/\\|?*]') {
+              throw "Version contains invalid filename characters: '$version'"
             }
+
+            & node scripts/check-version-consistency.mjs --expected $version
+            if ($LASTEXITCODE -ne 0) {
+              throw "Selected package version '$version' does not match the repository manifests"
+            }
+
+            Write-Host "🎯 Final PACKAGE_VERSION: $version"
+            echo "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
+            echo "version=$version" >> $env:GITHUB_OUTPUT
+
+          } catch {
+            Write-Error "❌ Failed to determine package version: $($_.Exception.Message)"
+            Write-Error "📋 Context: github.event.inputs.version='${{ github.event.inputs.version }}', github.ref_type='${{ github.ref_type }}', github.ref_name='${{ github.ref_name }}'"
+            exit 1
+          }
+
+      - name: Install workspace dependencies (CI)
+        run: npm ci --workspaces --include-workspace-root
+
+      - name: Run isolated Windows installer safety fixtures
+        run: npm run test:windows-installer-safety
+
+      - name: Build shared types
+        run: npm run build --workspace=shared
+
+      - name: Build MCP Server (Bundled)
+        run: npm run build:bundle --workspace=packages/mcp-server
+
+      - name: Setup NSIS
+        run: choco install nsis -y
+
+      - name: Build NSIS Installer
+        run: |
+          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          cd installer
+          node build-nsis.js --version $env:PACKAGE_VERSION
+
+      - name: Exercise packaged Windows lifecycle
+        env:
+          FOUNDRY_MCP_ALLOW_PACKAGED_LIFECYCLE_TEST: '1'
+        run: >-
+          npm run test:windows-packaged-lifecycle --
+          --installer "installer\build\FoundryVTT-MCP-Bridge-Setup-${{ env.PACKAGE_VERSION }}.exe"
+
+      - name: Create Foundry Module ZIP
+        run: |
+          Write-Host "📦 Creating Foundry module ZIP for registry..."
+          cd packages/foundry-module
+
+          # Create ZIP excluding hidden files and node_modules
+          $compress = @{
+            Path = Get-ChildItem -Path "." -Exclude ".*", "node_modules"
+            DestinationPath = "..\..\foundry-vtt-mcp.zip"
+            CompressionLevel = "Optimal"
+          }
+          Compress-Archive @compress -Force
+
+          # Verify ZIP was created
+          if (Test-Path "..\..\foundry-vtt-mcp.zip") {
+            $size = (Get-Item "..\..\foundry-vtt-mcp.zip").Length / 1KB
+            Write-Host "✓ Foundry module ZIP created ($([math]::Round($size, 1)) KB)"
           } else {
-            Write-Host "📋 Reading version from package.json..."
-            
-            # Check if package.json exists
-            if (-not (Test-Path "package.json")) {
-              throw "package.json not found in repository root"
-            }
-            
-            # Read and parse package.json
-            $packageJson = Get-Content package.json -Raw | ConvertFrom-Json
-            
-            # Validate version field exists
-            if (-not $packageJson.version) {
-              throw "No 'version' field found in package.json"
-            }
-            
-            $packageVersion = $packageJson.version
-            Write-Host "📦 Found package.json version: $packageVersion"
-            
-            # Validate version format
-            if ($packageVersion -notmatch '^\d+\.\d+\.\d+') {
-              throw "Invalid package.json version format: '$packageVersion'. Expected format: 0.0.0"
-            }
-            
-            $version = "v$packageVersion"
-            Write-Host "✓ Using package.json version: $version"
-          }
-          
-          # Final validation - ensure no invalid characters for filename
-          if ($version -match '[<>:"/\\|?*]') {
-            throw "Version contains invalid filename characters: '$version'"
+            Write-Host "❌ Foundry module ZIP creation failed"
+            exit 1
           }
 
-          & node scripts/check-version-consistency.mjs --expected $version
-          if ($LASTEXITCODE -ne 0) {
-            throw "Selected package version '$version' does not match the repository manifests"
-          }
-          
-          Write-Host "🎯 Final PACKAGE_VERSION: $version"
-          echo "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
-          echo "version=$version" >> $env:GITHUB_OUTPUT
-          
-        } catch {
-          Write-Error "❌ Failed to determine package version: $($_.Exception.Message)"
-          Write-Error "📋 Context: github.event.inputs.version='${{ github.event.inputs.version }}', github.ref_type='${{ github.ref_type }}', github.ref_name='${{ github.ref_name }}'"
-          exit 1
-        }
-        
-    - name: Install workspace dependencies (CI)
-      run: npm ci --workspaces --include-workspace-root
-      
-    - name: Build shared types
-      run: npm run build --workspace=shared
-        
-    - name: Build MCP Server (Bundled)
-      run: npm run build:bundle --workspace=packages/mcp-server
-        
-    - name: Setup NSIS
-      run: choco install nsis -y
+      - name: Create Standalone MCP Server ZIP
+        run: |
+          Write-Host "📦 Creating standalone MCP server ZIP for manual installation..."
 
-    - name: Build NSIS Installer
-      run: |
-        $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-        cd installer
-        node build-nsis.js --version $env:PACKAGE_VERSION
-        
-    - name: Create Foundry Module ZIP
-      run: |
-        Write-Host "📦 Creating Foundry module ZIP for registry..."
-        cd packages/foundry-module
-        
-        # Create ZIP excluding hidden files and node_modules
-        $compress = @{
-          Path = Get-ChildItem -Path "." -Exclude ".*", "node_modules"
-          DestinationPath = "..\..\foundry-vtt-mcp.zip"
-          CompressionLevel = "Optimal"
-        }
-        Compress-Archive @compress -Force
-        
-        # Verify ZIP was created
-        if (Test-Path "..\..\foundry-vtt-mcp.zip") {
-          $size = (Get-Item "..\..\foundry-vtt-mcp.zip").Length / 1KB
-          Write-Host "✓ Foundry module ZIP created ($([math]::Round($size, 1)) KB)"
-        } else {
-          Write-Host "❌ Foundry module ZIP creation failed"
-          exit 1
-        }
-        
-    - name: Create Standalone MCP Server ZIP
-      run: |
-        Write-Host "📦 Creating standalone MCP server ZIP for manual installation..."
-        
-        # Create a temporary directory for the standalone package
-        $standalonePath = "standalone-mcp-server"
-        New-Item -ItemType Directory -Force -Path $standalonePath
-        
-        # Copy MCP server bundle
-        Copy-Item "packages\mcp-server\dist\index.bundle.cjs" "$standalonePath\index.js"
-        Copy-Item "packages\mcp-server\dist\backend.bundle.cjs" "$standalonePath\backend.bundle.cjs"
-        
-        # Create package.json for standalone
-        $standalonePackage = @{
-          name = "foundry-mcp-server"
-          version = "${{ env.PACKAGE_VERSION }}".TrimStart('v')
-          description = "Foundry VTT MCP Server - Standalone Installation"
-          main = "index.js"
-          scripts = @{
-            start = "node index.js"
-          }
-          engines = @{
-            node = ">=18.0.0"
-          }
-        } | ConvertTo-Json -Depth 3
-        
-        $standalonePackage | Out-File -FilePath "$standalonePath\package.json" -Encoding UTF8
-        
-        # Create README for standalone
-        $readmeLines = @(
-          "# Foundry MCP Server - Manual Installation",
-          "",
-          "This package contains the standalone MCP server for manual installation on any platform.",
-          "",
-          "## Requirements",
-          "- Node.js 18.0.0 or later",
-          "- Foundry VTT with MCP Bridge module installed",
-          "",
-          "## Installation",
-          "1. Extract this ZIP to your desired location",
-          "2. Run: npm start or node index.js",
-          "3. Configure Claude Desktop to connect to this server",
-          "4. Install the MCP Bridge module in Foundry VTT",
-          "",
-          "For full documentation visit: https://github.com/webmaster94/foundry-vtt-mcp",
-          "",
-          "Version: ${{ env.PACKAGE_VERSION }}"
-        )
-        $readmeLines | Out-File -FilePath "$standalonePath\README.md" -Encoding UTF8
-        
-        # Create the ZIP
-        $compress = @{
-          Path = $standalonePath
-          DestinationPath = "foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip"
-          CompressionLevel = "Optimal"
-        }
-        Compress-Archive @compress -Force
-        
-        # Verify and clean up
-        if (Test-Path "foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip") {
-          $size = (Get-Item "foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip").Length / 1KB
-          Write-Host "✓ Standalone MCP server ZIP created ($([math]::Round($size, 1)) KB)"
-        } else {
-          Write-Host "❌ Standalone MCP server ZIP creation failed"
-          exit 1
-        }
-        
-        # Clean up temporary directory
-        Remove-Item -Recurse -Force $standalonePath
+          # Create a temporary directory for the standalone package
+          $standalonePath = "standalone-mcp-server"
+          New-Item -ItemType Directory -Force -Path $standalonePath
 
-    - name: Verify installer package
-      run: |
-        cd installer/build
-        dir
-        if (Test-Path "FoundryMCPServer-Setup-$env:PACKAGE_VERSION.exe") {
-          Write-Host "✓ NSIS installer found"
-          $size = (Get-Item "FoundryMCPServer-Setup-$env:PACKAGE_VERSION.exe").Length / 1MB
-          Write-Host "📊 Installer size: $([math]::Round($size, 1)) MB"
-        } else {
-          Write-Host "❌ NSIS installer not found"
-          exit 1
-        }
-        
-    - name: Upload installer as artifact
-      uses: actions/upload-artifact@v6
-      with:
-        name: foundry-mcp-server-installer-${{ env.PACKAGE_VERSION }}
-        path: installer/build/FoundryMCPServer-Setup-${{ env.PACKAGE_VERSION }}.exe
-        retention-days: 30
+          # Copy MCP server bundle
+          Copy-Item "packages\mcp-server\dist\index.bundle.cjs" "$standalonePath\index.js"
+          Copy-Item "packages\mcp-server\dist\backend.bundle.cjs" "$standalonePath\backend.bundle.cjs"
+
+          # Create package.json for standalone
+          $standalonePackage = @{
+            name = "foundry-mcp-server"
+            version = "${{ env.PACKAGE_VERSION }}".TrimStart('v')
+            description = "Foundry VTT MCP Server - Standalone Installation"
+            main = "index.js"
+            scripts = @{
+              start = "node index.js"
+            }
+            engines = @{
+              node = ">=18.0.0"
+            }
+          } | ConvertTo-Json -Depth 3
+
+          $standalonePackage | Out-File -FilePath "$standalonePath\package.json" -Encoding UTF8
+
+          # Create README for standalone
+          $readmeLines = @(
+            "# Foundry MCP Server - Manual Installation",
+            "",
+            "This package contains the standalone MCP server for manual installation on any platform.",
+            "",
+            "## Requirements",
+            "- Node.js 18.0.0 or later",
+            "- Foundry VTT with MCP Bridge module installed",
+            "",
+            "## Installation",
+            "1. Extract this ZIP to your desired location",
+            "2. Run: npm start or node index.js",
+            "3. Configure Claude Desktop to connect to this server",
+            "4. Install the MCP Bridge module in Foundry VTT",
+            "",
+            "For full documentation visit: https://github.com/webmaster94/foundry-vtt-mcp",
+            "",
+            "Version: ${{ env.PACKAGE_VERSION }}"
+          )
+          $readmeLines | Out-File -FilePath "$standalonePath\README.md" -Encoding UTF8
+
+          # Create the ZIP
+          $compress = @{
+            Path = $standalonePath
+            DestinationPath = "foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip"
+            CompressionLevel = "Optimal"
+          }
+          Compress-Archive @compress -Force
+
+          # Verify and clean up
+          if (Test-Path "foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip") {
+            $size = (Get-Item "foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip").Length / 1KB
+            Write-Host "✓ Standalone MCP server ZIP created ($([math]::Round($size, 1)) KB)"
+          } else {
+            Write-Host "❌ Standalone MCP server ZIP creation failed"
+            exit 1
+          }
+
+          # Clean up temporary directory
+          Remove-Item -Recurse -Force $standalonePath
+
+      - name: Verify installer package
+        run: |
+          cd installer/build
+          dir
+          if (Test-Path "FoundryVTT-MCP-Bridge-Setup-$env:PACKAGE_VERSION.exe") {
+            Write-Host "✓ NSIS installer found"
+            $size = (Get-Item "FoundryVTT-MCP-Bridge-Setup-$env:PACKAGE_VERSION.exe").Length / 1MB
+            Write-Host "📊 Installer size: $([math]::Round($size, 1)) MB"
+          } else {
+            Write-Host "❌ NSIS installer not found"
+            exit 1
+          }
+
+      - name: Upload installer as artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: foundry-vtt-mcp-bridge-installer-${{ env.PACKAGE_VERSION }}
+          path: installer/build/FoundryVTT-MCP-Bridge-Setup-${{ env.PACKAGE_VERSION }}.exe
+          retention-days: 30
 
   build-mac-pkg:
+    needs: quality
     runs-on: macos-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
+      - name: Checkout code
+        uses: actions/checkout@v6
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v6
-      with:
-        node-version: '20.12.2'
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.12.0'
 
-    - name: Set Package Version
-      id: version
-      run: |
-        if [ -n "${{ github.event.inputs.version }}" ]; then
-          VERSION="${{ github.event.inputs.version }}"
-          echo "✓ Using manual input version: $VERSION"
+      - name: Set Package Version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            echo "✓ Using manual input version: $VERSION"
 
-          # Validate version format
-          if ! echo "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "❌ Invalid version format: '$VERSION'. Expected format: v0.0.0 or 0.0.0"
+            # Validate version format
+            if ! echo "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+              echo "❌ Invalid version format: '$VERSION'. Expected format: v0.0.0 or 0.0.0"
+              exit 1
+            fi
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${{ github.ref_name }}"
+            echo "✓ Using tag version: $VERSION"
+
+            # Validate tag version format
+            if ! echo "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+              echo "❌ Invalid tag version format: '$VERSION'. Expected format: v0.0.0"
+              exit 1
+            fi
+          else
+            echo "📋 Reading version from package.json..."
+
+            # Check if package.json exists
+            if [ ! -f "package.json" ]; then
+              echo "❌ package.json not found in repository root"
+              exit 1
+            fi
+
+            # Read and parse package.json (using node for JSON parsing)
+            PACKAGE_VERSION=$(node -p "require('./package.json').version")
+
+            # Validate version field exists
+            if [ -z "$PACKAGE_VERSION" ]; then
+              echo "❌ No 'version' field found in package.json"
+              exit 1
+            fi
+
+            echo "📦 Found package.json version: $PACKAGE_VERSION"
+
+            # Validate version format
+            if ! echo "$PACKAGE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+              echo "❌ Invalid package.json version format: '$PACKAGE_VERSION'. Expected format: 0.0.0"
+              exit 1
+            fi
+
+            VERSION="v$PACKAGE_VERSION"
+            echo "✓ Using package.json version: $VERSION"
+          fi
+
+          node scripts/check-version-consistency.mjs --expected "$VERSION"
+
+          echo "🎯 Final PACKAGE_VERSION: $VERSION"
+          echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Install workspace dependencies (CI)
+        run: npm ci --workspaces --include-workspace-root
+
+      - name: Build shared types
+        run: npm run build --workspace=shared
+
+      - name: Build MCP Server (Bundled)
+        run: npm run build:bundle --workspace=packages/mcp-server
+
+      - name: Build Foundry Module
+        run: npm run build --workspace=packages/foundry-module
+
+      - name: Build Mac PKG Installer
+        run: |
+          cd installer
+          VERSION_NO_V="${PACKAGE_VERSION#v}"
+          VERSION="$VERSION_NO_V" node build-mac-pkg.js
+
+      - name: Build Mac DMG Distribution
+        run: |
+          cd installer
+          VERSION_NO_V="${PACKAGE_VERSION#v}"
+          VERSION="$VERSION_NO_V" node build-dmg.js
+
+      - name: Verify Mac DMG
+        run: |
+          cd installer/build
+          ls -lh
+          # Strip 'v' prefix from version for filename check
+          VERSION="${{ env.PACKAGE_VERSION }}"
+          VERSION_NO_V="${VERSION#v}"
+          if [ -f "FoundryMCPServer-${VERSION_NO_V}.dmg" ]; then
+            echo "✓ Mac DMG distribution found"
+            SIZE=$(du -h "FoundryMCPServer-${VERSION_NO_V}.dmg" | cut -f1)
+            echo "📊 DMG size: $SIZE"
+            # Copy with v prefix for artifact upload consistency
+            cp "FoundryMCPServer-${VERSION_NO_V}.dmg" "FoundryMCPServer-${VERSION}.dmg"
+          else
+            echo "❌ Mac DMG not found (expected: FoundryMCPServer-${VERSION_NO_V}.dmg)"
             exit 1
           fi
-        elif [ "${{ github.ref_type }}" = "tag" ]; then
-          VERSION="${{ github.ref_name }}"
-          echo "✓ Using tag version: $VERSION"
 
-          # Validate tag version format
-          if ! echo "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "❌ Invalid tag version format: '$VERSION'. Expected format: v0.0.0"
-            exit 1
-          fi
-        else
-          echo "📋 Reading version from package.json..."
-
-          # Check if package.json exists
-          if [ ! -f "package.json" ]; then
-            echo "❌ package.json not found in repository root"
-            exit 1
-          fi
-
-          # Read and parse package.json (using node for JSON parsing)
-          PACKAGE_VERSION=$(node -p "require('./package.json').version")
-
-          # Validate version field exists
-          if [ -z "$PACKAGE_VERSION" ]; then
-            echo "❌ No 'version' field found in package.json"
-            exit 1
-          fi
-
-          echo "📦 Found package.json version: $PACKAGE_VERSION"
-
-          # Validate version format
-          if ! echo "$PACKAGE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "❌ Invalid package.json version format: '$PACKAGE_VERSION'. Expected format: 0.0.0"
-            exit 1
-          fi
-
-          VERSION="v$PACKAGE_VERSION"
-          echo "✓ Using package.json version: $VERSION"
-        fi
-
-        node scripts/check-version-consistency.mjs --expected "$VERSION"
-
-        echo "🎯 Final PACKAGE_VERSION: $VERSION"
-        echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-    - name: Install workspace dependencies (CI)
-      run: npm ci --workspaces --include-workspace-root
-
-    - name: Build shared types
-      run: npm run build --workspace=shared
-
-    - name: Build MCP Server (Bundled)
-      run: npm run build:bundle --workspace=packages/mcp-server
-
-    - name: Build Foundry Module
-      run: npm run build --workspace=packages/foundry-module
-
-    - name: Build Mac PKG Installer
-      run: |
-        cd installer
-        VERSION_NO_V="${PACKAGE_VERSION#v}"
-        VERSION="$VERSION_NO_V" node build-mac-pkg.js
-
-    - name: Build Mac DMG Distribution
-      run: |
-        cd installer
-        VERSION_NO_V="${PACKAGE_VERSION#v}"
-        VERSION="$VERSION_NO_V" node build-dmg.js
-
-    - name: Verify Mac DMG
-      run: |
-        cd installer/build
-        ls -lh
-        # Strip 'v' prefix from version for filename check
-        VERSION="${{ env.PACKAGE_VERSION }}"
-        VERSION_NO_V="${VERSION#v}"
-        if [ -f "FoundryMCPServer-${VERSION_NO_V}.dmg" ]; then
-          echo "✓ Mac DMG distribution found"
-          SIZE=$(du -h "FoundryMCPServer-${VERSION_NO_V}.dmg" | cut -f1)
-          echo "📊 DMG size: $SIZE"
-          # Copy with v prefix for artifact upload consistency
-          cp "FoundryMCPServer-${VERSION_NO_V}.dmg" "FoundryMCPServer-${VERSION}.dmg"
-        else
-          echo "❌ Mac DMG not found (expected: FoundryMCPServer-${VERSION_NO_V}.dmg)"
-          exit 1
-        fi
-
-    - name: Upload Mac DMG as artifact
-      uses: actions/upload-artifact@v6
-      with:
-        name: foundry-mcp-server-dmg-${{ env.PACKAGE_VERSION }}
-        path: installer/build/FoundryMCPServer-${{ env.PACKAGE_VERSION }}.dmg
-        retention-days: 30
+      - name: Upload Mac DMG as artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: foundry-mcp-server-dmg-${{ env.PACKAGE_VERSION }}
+          path: installer/build/FoundryMCPServer-${{ env.PACKAGE_VERSION }}.dmg
+          retention-days: 30
 
   create-release:
     needs: [build-nsis, build-mac-pkg]
@@ -352,228 +416,228 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
+      - name: Checkout code
+        uses: actions/checkout@v6
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v6
-      with:
-        node-version: '20.12.2'
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.12.0'
 
-    - name: Set Package Version
-      id: version
-      run: |
-        VERSION="${{ github.ref_name }}"
-        # Remove 'v' prefix for filenames if present
-        PACKAGE_VERSION="${VERSION#v}"
-        node scripts/check-version-consistency.mjs --expected "$PACKAGE_VERSION"
-        echo "PACKAGE_VERSION=v$PACKAGE_VERSION" >> $GITHUB_ENV
-        echo "version=v$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+      - name: Set Package Version
+        id: version
+        run: |
+          VERSION="${{ github.ref_name }}"
+          # Remove 'v' prefix for filenames if present
+          PACKAGE_VERSION="${VERSION#v}"
+          node scripts/check-version-consistency.mjs --expected "$PACKAGE_VERSION"
+          echo "PACKAGE_VERSION=v$PACKAGE_VERSION" >> $GITHUB_ENV
+          echo "version=v$PACKAGE_VERSION" >> $GITHUB_OUTPUT
 
-    - name: Install workspace dependencies
-      run: npm ci --workspaces --include-workspace-root
+      - name: Install workspace dependencies
+        run: npm ci --workspaces --include-workspace-root
 
-    - name: Build shared types
-      run: npm run build --workspace=shared
+      - name: Build shared types
+        run: npm run build --workspace=shared
 
-    - name: Build MCP Server (Bundled)
-      run: npm run build:bundle --workspace=packages/mcp-server
+      - name: Build MCP Server (Bundled)
+        run: npm run build:bundle --workspace=packages/mcp-server
 
-    - name: Build Foundry Module
-      run: npm run build --workspace=packages/foundry-module
+      - name: Build Foundry Module
+        run: npm run build --workspace=packages/foundry-module
 
-    - name: Download Windows installer artifact
-      uses: actions/download-artifact@v6
-      with:
-        name: foundry-mcp-server-installer-${{ env.PACKAGE_VERSION }}
-        path: installer/build/
+      - name: Download Windows installer artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: foundry-vtt-mcp-bridge-installer-${{ env.PACKAGE_VERSION }}
+          path: installer/build/
 
-    - name: Download Mac DMG artifact
-      uses: actions/download-artifact@v6
-      with:
-        name: foundry-mcp-server-dmg-${{ env.PACKAGE_VERSION }}
-        path: installer/build/
+      - name: Download Mac DMG artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: foundry-mcp-server-dmg-${{ env.PACKAGE_VERSION }}
+          path: installer/build/
 
-    - name: Create Foundry Module ZIP
-      run: |
-        cd packages/foundry-module
-        zip -r ../../foundry-vtt-mcp.zip . -x ".*" -x "node_modules/*"
-        cd ../..
-        ls -lh foundry-vtt-mcp.zip
+      - name: Create Foundry Module ZIP
+        run: |
+          cd packages/foundry-module
+          zip -r ../../foundry-vtt-mcp.zip . -x ".*" -x "node_modules/*"
+          cd ../..
+          ls -lh foundry-vtt-mcp.zip
 
-    - name: Create Standalone MCP Server ZIP
-      run: |
-        mkdir -p standalone-mcp-server
-        cp packages/mcp-server/dist/index.bundle.cjs standalone-mcp-server/index.js
-        cp packages/mcp-server/dist/backend.bundle.cjs standalone-mcp-server/backend.bundle.cjs
-        VERSION_NO_V="${{ env.PACKAGE_VERSION }}"
-        VERSION_NO_V="${VERSION_NO_V#v}"
+      - name: Create Standalone MCP Server ZIP
+        run: |
+          mkdir -p standalone-mcp-server
+          cp packages/mcp-server/dist/index.bundle.cjs standalone-mcp-server/index.js
+          cp packages/mcp-server/dist/backend.bundle.cjs standalone-mcp-server/backend.bundle.cjs
+          VERSION_NO_V="${{ env.PACKAGE_VERSION }}"
+          VERSION_NO_V="${VERSION_NO_V#v}"
 
-        # Create package.json
-        cat > standalone-mcp-server/package.json << EOF
-        {
-          "name": "foundry-mcp-server",
-          "version": "$VERSION_NO_V",
-          "description": "Foundry VTT MCP Server - Standalone Installation",
-          "main": "index.js",
-          "scripts": {
-            "start": "node index.js"
-          },
-          "engines": {
-            "node": ">=18.0.0"
-          }
-        }
-        EOF
-
-        # Create README
-        cat > standalone-mcp-server/README.md << EOF
-        # Foundry MCP Server - Manual Installation
-
-        This package contains the standalone MCP server for manual installation on any platform.
-
-        ## Requirements
-        - Node.js 18.0.0 or later
-        - Foundry VTT with MCP Bridge module installed
-
-        ## Installation
-        1. Extract this ZIP to your desired location
-        2. Run: npm start or node index.js
-        3. Configure Claude Desktop to connect to this server
-        4. Install the MCP Bridge module in Foundry VTT
-
-        For full documentation visit: https://github.com/webmaster94/foundry-vtt-mcp
-
-        Version: ${{ env.PACKAGE_VERSION }}
-        EOF
-
-        zip -r foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip standalone-mcp-server
-        rm -rf standalone-mcp-server
-        ls -lh foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip
-
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ github.ref_name }}
-        name: Foundry MCP Server ${{ github.ref_name }}
-        body: |
-          ## Foundry MCP Server ${{ github.ref_name }}
-
-          Complete multi-platform distribution for connecting MCP clients with Foundry VTT.
-
-          **Compatible with Foundry VTT v13 and v14.**
-
-          ### Installation Options
-
-          **Windows Users:**
-          - Download `FoundryMCPServer-Setup-${{ github.ref_name }}.exe`
-          - Run installer (no admin rights required)
-          - Automatic Claude Desktop configuration
-
-          **Mac Users:**
-          - Download `FoundryMCPServer-${{ github.ref_name }}.dmg`
-          - Open DMG and double-click the PKG installer
-          - Choose components: MCP Server (required) and Foundry Module
-          - Automatic Claude Desktop configuration
-          - To uninstall: Double-click `Uninstall.tool` from the DMG
-
-          **Manual Installation (All Platforms):**
-          - Download `foundry-mcp-server-${{ github.ref_name }}.zip`
-          - Extract and run with Node.js 18+
-          - Manual Claude Desktop configuration required
-
-          **Foundry VTT Users:**
-          - Install directly from Foundry's module browser
-          - Or use manifest: `https://github.com/webmaster94/foundry-vtt-mcp/releases/latest/download/module.json`
-
-          ### Quick Start
-          1. Choose your installation method above
-          2. Install MCP Bridge module in Foundry VTT
-          3. Restart Claude Desktop
-          4. Start managing the connected Foundry world from your MCP client
-
-          ### Features
-          - Generic Foundry document management with dry-run, audit, and undo
-          - Multi-system support: D&D 5e, Pathfinder 2e, DSA5, Cosmere RPG, WFRP4e, and Mongoose Traveller 2e
-          - D&D 5e NPC creation suite: stat blocks, attacks, saves, auras, and spellcasting
-          - Actor creation with natural language processing
-          - Quest management with HTML generation and updates
-          - Campaign system with multi-part structure and progress tracking
-          - Dice roll coordination between Claude and Foundry players
-          - Actor ownership management with bulk operations
-          - Bounded compendium search over live Foundry data
-          - Persistent backend connections, events, and multi-server routing
-
-          For full documentation, visit: https://github.com/webmaster94/foundry-vtt-mcp
-        files: |
-          installer/build/FoundryMCPServer-Setup-${{ env.PACKAGE_VERSION }}.exe
-          installer/build/FoundryMCPServer-${{ env.PACKAGE_VERSION }}.dmg
-          foundry-vtt-mcp.zip
-          foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip
-          packages/foundry-module/module.json
-        generate_release_notes: true
-        draft: false
-        prerelease: false
-
-    - name: Update Foundry VTT Package Registry
-      env:
-        FOUNDRY_PACKAGE_RELEASE_TOKEN: ${{ secrets.FOUNDRY_PACKAGE_RELEASE_TOKEN }}
-      run: |
-        if [ -z "$FOUNDRY_PACKAGE_RELEASE_TOKEN" ]; then
-          echo "::notice::FOUNDRY_PACKAGE_RELEASE_TOKEN is not configured; skipping the optional Foundry package-registry update."
-          exit 0
-        fi
-
-        echo "🔄 Updating Foundry VTT Package Registry..."
-
-        # Extract package information
-        PACKAGE_ID=$(node -p "require('./packages/foundry-module/module.json').id")
-        VERSION="${{ env.PACKAGE_VERSION }}"
-        VERSION="${VERSION#v}"  # Remove v prefix
-        MANIFEST_URL="https://github.com/webmaster94/foundry-vtt-mcp/releases/download/${{ github.ref_name }}/module.json"
-        RELEASE_NOTES_URL="https://github.com/webmaster94/foundry-vtt-mcp/releases/tag/${{ github.ref_name }}"
-
-        MINIMUM=$(node -p "require('./packages/foundry-module/module.json').compatibility.minimum")
-        VERIFIED=$(node -p "require('./packages/foundry-module/module.json').compatibility.verified")
-        MAXIMUM=$(node -p "require('./packages/foundry-module/module.json').compatibility.maximum")
-
-        echo "📦 Package ID: $PACKAGE_ID"
-        echo "📝 Version: $VERSION"
-        echo "📎 Manifest URL: $MANIFEST_URL"
-        echo "📋 Release Notes: $RELEASE_NOTES_URL"
-
-        # Prepare API request body
-        REQUEST_BODY=$(cat <<EOF
-        {
-          "id": "$PACKAGE_ID",
-          "release": {
-            "version": "$VERSION",
-            "manifest": "$MANIFEST_URL",
-            "notes": "$RELEASE_NOTES_URL",
-            "compatibility": {
-              "minimum": "$MINIMUM",
-              "verified": "$VERIFIED",
-              "maximum": "$MAXIMUM"
+          # Create package.json
+          cat > standalone-mcp-server/package.json << EOF
+          {
+            "name": "foundry-mcp-server",
+            "version": "$VERSION_NO_V",
+            "description": "Foundry VTT MCP Server - Standalone Installation",
+            "main": "index.js",
+            "scripts": {
+              "start": "node index.js"
+            },
+            "engines": {
+              "node": ">=18.0.0"
             }
           }
-        }
-        EOF
-        )
+          EOF
 
-        echo "🔧 Request Body:"
-        echo "$REQUEST_BODY"
+          # Create README
+          cat > standalone-mcp-server/README.md << EOF
+          # Foundry MCP Server - Manual Installation
 
-        # Make API call to Foundry VTT Package Registry
-        RESPONSE=$(curl --fail-with-body --silent --show-error -X POST \
-          -H "Content-Type: application/json" \
-          -H "Authorization: $FOUNDRY_PACKAGE_RELEASE_TOKEN" \
-          -d "$REQUEST_BODY" \
-          https://foundryvtt.com/_api/packages/release_version/)
+          This package contains the standalone MCP server for manual installation on any platform.
 
-        if [ $? -eq 0 ]; then
-          echo "✅ Successfully updated Foundry VTT Package Registry"
-          echo "📄 Response: $RESPONSE"
-        else
-          echo "❌ Failed to update Foundry VTT Package Registry"
-          echo "🔍 Error: $RESPONSE"
-          exit 1
-        fi
+          ## Requirements
+          - Node.js 18.0.0 or later
+          - Foundry VTT with MCP Bridge module installed
+
+          ## Installation
+          1. Extract this ZIP to your desired location
+          2. Run: npm start or node index.js
+          3. Configure Claude Desktop to connect to this server
+          4. Install the MCP Bridge module in Foundry VTT
+
+          For full documentation visit: https://github.com/webmaster94/foundry-vtt-mcp
+
+          Version: ${{ env.PACKAGE_VERSION }}
+          EOF
+
+          zip -r foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip standalone-mcp-server
+          rm -rf standalone-mcp-server
+          ls -lh foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Foundry MCP Server ${{ github.ref_name }}
+          body: |
+            ## Foundry MCP Server ${{ github.ref_name }}
+
+            Complete multi-platform distribution for connecting MCP clients with Foundry VTT.
+
+            **Compatible with Foundry VTT v13 and v14.**
+
+            ### Installation Options
+
+            **Windows Users:**
+            - Download `FoundryVTT-MCP-Bridge-Setup-${{ github.ref_name }}.exe`
+            - Run installer (no admin rights required)
+            - Automatic Claude Desktop configuration
+
+            **Mac Users:**
+            - Download `FoundryMCPServer-${{ github.ref_name }}.dmg`
+            - Open DMG and double-click the PKG installer
+            - Choose components: MCP Server (required) and Foundry Module
+            - Automatic Claude Desktop configuration
+            - To uninstall: Double-click `Uninstall.tool` from the DMG
+
+            **Manual Installation (All Platforms):**
+            - Download `foundry-mcp-server-${{ github.ref_name }}.zip`
+            - Extract and run with Node.js 18+
+            - Manual Claude Desktop configuration required
+
+            **Foundry VTT Users:**
+            - Install directly from Foundry's module browser
+            - Or use manifest: `https://github.com/webmaster94/foundry-vtt-mcp/releases/latest/download/module.json`
+
+            ### Quick Start
+            1. Choose your installation method above
+            2. Install MCP Bridge module in Foundry VTT
+            3. Restart Claude Desktop
+            4. Start managing the connected Foundry world from your MCP client
+
+            ### Features
+            - Generic Foundry document management with dry-run, audit, and undo
+            - Multi-system support: D&D 5e, Pathfinder 2e, DSA5, Cosmere RPG, WFRP4e, and Mongoose Traveller 2e
+            - D&D 5e NPC creation suite: stat blocks, attacks, saves, auras, and spellcasting
+            - Actor creation with natural language processing
+            - Quest management with HTML generation and updates
+            - Campaign system with multi-part structure and progress tracking
+            - Dice roll coordination between Claude and Foundry players
+            - Actor ownership management with bulk operations
+            - Bounded compendium search over live Foundry data
+            - Persistent backend connections, events, and multi-server routing
+
+            For full documentation, visit: https://github.com/webmaster94/foundry-vtt-mcp
+          files: |
+            installer/build/FoundryVTT-MCP-Bridge-Setup-${{ env.PACKAGE_VERSION }}.exe
+            installer/build/FoundryMCPServer-${{ env.PACKAGE_VERSION }}.dmg
+            foundry-vtt-mcp.zip
+            foundry-mcp-server-${{ env.PACKAGE_VERSION }}.zip
+            packages/foundry-module/module.json
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+      - name: Update Foundry VTT Package Registry
+        env:
+          FOUNDRY_PACKAGE_RELEASE_TOKEN: ${{ secrets.FOUNDRY_PACKAGE_RELEASE_TOKEN }}
+        run: |
+          if [ -z "$FOUNDRY_PACKAGE_RELEASE_TOKEN" ]; then
+            echo "::notice::FOUNDRY_PACKAGE_RELEASE_TOKEN is not configured; skipping the optional Foundry package-registry update."
+            exit 0
+          fi
+
+          echo "🔄 Updating Foundry VTT Package Registry..."
+
+          # Extract package information
+          PACKAGE_ID=$(node -p "require('./packages/foundry-module/module.json').id")
+          VERSION="${{ env.PACKAGE_VERSION }}"
+          VERSION="${VERSION#v}"  # Remove v prefix
+          MANIFEST_URL="https://github.com/webmaster94/foundry-vtt-mcp/releases/download/${{ github.ref_name }}/module.json"
+          RELEASE_NOTES_URL="https://github.com/webmaster94/foundry-vtt-mcp/releases/tag/${{ github.ref_name }}"
+
+          MINIMUM=$(node -p "require('./packages/foundry-module/module.json').compatibility.minimum")
+          VERIFIED=$(node -p "require('./packages/foundry-module/module.json').compatibility.verified")
+          MAXIMUM=$(node -p "require('./packages/foundry-module/module.json').compatibility.maximum")
+
+          echo "📦 Package ID: $PACKAGE_ID"
+          echo "📝 Version: $VERSION"
+          echo "📎 Manifest URL: $MANIFEST_URL"
+          echo "📋 Release Notes: $RELEASE_NOTES_URL"
+
+          # Prepare API request body
+          REQUEST_BODY=$(cat <<EOF
+          {
+            "id": "$PACKAGE_ID",
+            "release": {
+              "version": "$VERSION",
+              "manifest": "$MANIFEST_URL",
+              "notes": "$RELEASE_NOTES_URL",
+              "compatibility": {
+                "minimum": "$MINIMUM",
+                "verified": "$VERIFIED",
+                "maximum": "$MAXIMUM"
+              }
+            }
+          }
+          EOF
+          )
+
+          echo "🔧 Request Body:"
+          echo "$REQUEST_BODY"
+
+          # Make API call to Foundry VTT Package Registry
+          RESPONSE=$(curl --fail-with-body --silent --show-error -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: $FOUNDRY_PACKAGE_RELEASE_TOKEN" \
+            -d "$REQUEST_BODY" \
+            https://foundryvtt.com/_api/packages/release_version/)
+
+          if [ $? -eq 0 ]; then
+            echo "✅ Successfully updated Foundry VTT Package Registry"
+            echo "📄 Response: $RESPONSE"
+          else
+            echo "❌ Failed to update Foundry VTT Package Registry"
+            echo "🔍 Error: $RESPONSE"
+            exit 1
+          fi

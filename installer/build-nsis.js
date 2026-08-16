@@ -1,570 +1,553 @@
 #!/usr/bin/env node
 
 /**
- * Build NSIS Installer for Foundry MCP Server
+ * Stage and compile the per-user Windows installer.
  *
- * This script prepares files for NSIS installer:
- * - Downloads portable Node.js runtime
- * - Copies built MCP Server files
- * - Prepares NSIS build directory
- * - Calls NSIS to create installer
+ * The installer payload starts with electron-builder's complete
+ * packages/desktop/release/win-unpacked tree. This script then pins the latest
+ * MCP bundles, a standalone Node runtime for MCP clients, and the guarded
+ * migration/configuration helpers into that tree.
  */
 
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const https = require('node:https');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
-// Parse command line arguments
-const args = process.argv.slice(2);
-const packageJson = require('../package.json');
-let version = `v${packageJson.version}`; // default version from package.json
-let skipDownload = false;
-let skipNsis = false;
+const PRODUCT_ID = 'io.github.webmaster94.foundry-vtt-mcp';
+const PRODUCT_EXE = 'FoundryVTT MCP Bridge.exe';
+const NODE_VERSION = '22.12.0';
+const NODE_ARCHIVE = `node-v${NODE_VERSION}-win-x64.zip`;
 
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--version' && i + 1 < args.length) {
-    version = args[i + 1];
-    i++;
-    continue;
-  }
-  if (args[i] === '--skip-download') {
-    skipDownload = true;
-    continue;
-  }
-  if (args[i] === '--skip-nsis') {
-    skipNsis = true;
-    continue;
-  }
+const installerDir = __dirname;
+const repoRoot = path.resolve(installerDir, '..');
+const buildDir = path.join(installerDir, 'build');
+const stagingDir = path.join(buildDir, 'installer-files');
+const payloadDir = path.join(stagingDir, 'payload');
+const moduleStageDir = path.join(stagingDir, 'foundry-module');
+const desktopPayloadDir = path.join(repoRoot, 'packages', 'desktop', 'release', 'win-unpacked');
+const serverDistDir = path.join(repoRoot, 'packages', 'mcp-server', 'dist');
+const moduleSourceDir = path.join(repoRoot, 'packages', 'foundry-module');
+const nsisSourceDir = path.join(installerDir, 'nsis');
+
+function fail(message) {
+  throw new Error(message);
 }
 
-console.log('🚀 Building Foundry MCP Server NSIS Installer\n');
-console.log(`📦 Version: ${version}\n`);
-
-// Configuration
-const rootDir = path.join(__dirname, '..');
-const config = {
-  nodeVersion: 'v20.12.2',
-  nodeArchive: 'node-v20.12.2-win-x64.zip',
-  nodeUrl: 'https://nodejs.org/dist/v20.12.2/node-v20.12.2-win-x64.zip',
-  buildDir: path.join(__dirname, 'build'),
-  nsisDir: path.join(__dirname, 'nsis'),
-  outputDir: path.join(__dirname, 'build', 'installer-files'),
-  tempDir: path.join(__dirname, 'build', 'temp'),
-};
-
-// Helper functions
-function ensureDir(dir) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
-function copyRecursive(src, dest) {
-  const stats = fs.statSync(src);
-  if (stats.isDirectory()) {
-    ensureDir(dest);
-    const items = fs.readdirSync(src);
-    for (const item of items) {
-      copyRecursive(path.join(src, item), path.join(dest, item));
-    }
-  } else {
-    fs.copyFileSync(src, dest);
-  }
-}
-
-function downloadAndExtractNode() {
-  console.log('📦 Preparing Node.js runtime...');
-
-  const nodeZipPath = path.join(config.tempDir, config.nodeArchive);
-  const nodeExtractPath = path.join(config.tempDir, 'node-extracted');
-
-  if (fs.existsSync(nodeZipPath)) {
-    console.log('   ✓ Node.js archive already exists, skipping download');
-  } else {
-    console.log(`   🌐 Downloading: ${config.nodeUrl}`);
-    try {
-      execSync(
-        `powershell -Command "Invoke-WebRequest -Uri '${config.nodeUrl}' -OutFile '${nodeZipPath}'"`,
-        {
-          stdio: 'inherit',
-        }
-      );
-      console.log('   ✓ Node.js download completed');
-    } catch (error) {
-      console.error('   ❌ Failed to download Node.js:', error.message);
-      process.exit(1);
+function parseArguments(argv) {
+  const options = {
+    version: require(path.join(repoRoot, 'package.json')).version,
+    skipDownload: false,
+    skipNsis: false,
+    skipDesktopBuild: false,
+    skipServerBuild: false,
+    desktopPayload: desktopPayloadDir,
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === '--version') {
+      options.version = argv[++index];
+    } else if (argument === '--skip-download') {
+      options.skipDownload = true;
+    } else if (argument === '--skip-nsis') {
+      options.skipNsis = true;
+    } else if (argument === '--skip-desktop-build') {
+      options.skipDesktopBuild = true;
+    } else if (argument === '--skip-server-build') {
+      options.skipServerBuild = true;
+    } else if (argument === '--desktop-payload') {
+      options.desktopPayload = path.resolve(argv[++index]);
+    } else {
+      fail(`Unknown argument: ${argument}`);
     }
   }
+  if (!options.version || !/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(options.version)) {
+    fail(`Invalid installer version: ${options.version}`);
+  }
+  options.versionLabel = options.version;
+  options.version = options.version.replace(/^v/, '');
+  if (options.skipDownload && !options.skipNsis) {
+    fail('--skip-download is staging-only and cannot be used to compile a release installer');
+  }
+  if (options.skipServerBuild && !options.skipNsis) {
+    fail(
+      '--skip-server-build is static-test-only and cannot be used to compile a release installer'
+    );
+  }
+  return options;
+}
 
-  // Extract Node.js
-  console.log('   📂 Extracting Node.js...');
-  ensureDir(nodeExtractPath);
+function ensureDirectory(directory) {
+  fs.mkdirSync(directory, { recursive: true });
+}
 
-  try {
-    execSync(
-      `powershell -Command "Expand-Archive -Path '${nodeZipPath}' -DestinationPath '${nodeExtractPath}' -Force"`,
-      {
-        stdio: 'inherit',
+function assertOrdinarySource(source) {
+  const stat = fs.lstatSync(source);
+  if (stat.isSymbolicLink()) {
+    fail(`Refusing to stage a symbolic link or junction: ${source}`);
+  }
+  if (!stat.isDirectory() && !stat.isFile()) {
+    fail(`Refusing unsupported payload object: ${source}`);
+  }
+  return stat;
+}
+
+function copyTree(source, destination) {
+  const stat = assertOrdinarySource(source);
+  if (stat.isDirectory()) {
+    ensureDirectory(destination);
+    for (const name of fs.readdirSync(source).sort((left, right) => left.localeCompare(right))) {
+      copyTree(path.join(source, name), path.join(destination, name));
+    }
+    return;
+  }
+  ensureDirectory(path.dirname(destination));
+  fs.copyFileSync(source, destination);
+}
+
+function copyRequiredFile(source, destination) {
+  if (!fs.existsSync(source) || !assertOrdinarySource(source).isFile()) {
+    fail(`Required file is missing: ${source}`);
+  }
+  ensureDirectory(path.dirname(destination));
+  fs.copyFileSync(source, destination);
+}
+
+function cleanBuildDirectory() {
+  if (path.dirname(buildDir) !== installerDir || path.basename(buildDir) !== 'build') {
+    fail(`Refusing to clean unexpected build path: ${buildDir}`);
+  }
+  if (fs.existsSync(buildDir)) {
+    const stat = fs.lstatSync(buildDir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      fail(`Refusing to clean linked or non-directory build path: ${buildDir}`);
+    }
+    // Keep the verified root directory in place. On Windows another process may
+    // temporarily use it as its current directory, which blocks deleting the
+    // directory itself even though its build artifacts are not open.
+    for (const name of fs.readdirSync(buildDir)) {
+      const entry = path.join(buildDir, name);
+      const entryStat = fs.lstatSync(entry);
+      if (entryStat.isSymbolicLink()) {
+        fail(`Refusing to clean a linked installer build entry: ${entry}`);
       }
-    );
-
-    const extractedItems = fs.readdirSync(nodeExtractPath);
-    const nodeDir = extractedItems.find(
-      item => item.startsWith('node-') && item.includes('win-x64')
-    );
-
-    if (!nodeDir) {
-      throw new Error('Node.js directory not found after extraction');
+      try {
+        fs.rmSync(entry, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+      } catch (error) {
+        if (name !== 'node-extracted' || error.code !== 'EPERM') throw error;
+        const quarantine = path.join(
+          os.tmpdir(),
+          `foundry-mcp-stale-node-extracted-${process.pid}-${Date.now()}`
+        );
+        if (fs.existsSync(quarantine)) fail(`Unexpected cleanup quarantine exists: ${quarantine}`);
+        fs.renameSync(entry, quarantine);
+        fs.rmSync(quarantine, {
+          recursive: true,
+          force: true,
+          maxRetries: 8,
+          retryDelay: 250,
+        });
+        console.log(`Recovered a locked generated Node extraction through ${quarantine}.`);
+      }
     }
-
-    const sourceNodePath = path.join(nodeExtractPath, nodeDir);
-    const destNodePath = path.join(config.outputDir, 'node');
-
-    copyRecursive(sourceNodePath, destNodePath);
-
-    // Copy node.exe to root for easy access
-    fs.copyFileSync(path.join(destNodePath, 'node.exe'), path.join(config.outputDir, 'node.exe'));
-
-    console.log('   ✓ Node.js runtime prepared');
-  } catch (error) {
-    console.error('   ❌ Failed to extract Node.js:', error.message);
-    process.exit(1);
   }
+  ensureDirectory(stagingDir);
 }
 
-// New implementation that supports backend + shared runtime
-function copyMcpServerFilesV2() {
-  console.log('dY"� Preparing MCP Server files (V2)...');
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd || repoRoot,
+    encoding: 'utf8',
+    stdio: options.capture ? 'pipe' : 'inherit',
+    windowsHide: true,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    const detail = options.capture ? `\n${result.stdout || ''}${result.stderr || ''}` : '';
+    fail(`${command} exited with code ${result.status}${detail}`);
+  }
+  return result.stdout || '';
+}
 
-  const rootDir = path.join(__dirname, '..');
-  const mcpServerSource = path.join(rootDir, 'packages', 'mcp-server');
-  const sharedSource = path.join(rootDir, 'shared');
-  const mcpServerDest = path.join(config.outputDir, 'foundry-mcp-server');
-
-  // Ensure MCP server was built and bundled
-  const builtBundlePath = path.join(mcpServerSource, 'dist', 'index.bundle.cjs');
-  if (!fs.existsSync(builtBundlePath)) {
-    console.error(
-      '   �?O MCP server bundle not found. Run "npm run build:bundle --workspace=packages/mcp-server" first.'
+function runNpm(args) {
+  if (process.platform === 'win32') {
+    const npmCli = path.join(
+      path.dirname(process.execPath),
+      'node_modules',
+      'npm',
+      'bin',
+      'npm-cli.js'
     );
-    process.exit(1);
+    if (!fs.existsSync(npmCli)) {
+      fail(`npm CLI was not found next to the active Node runtime: ${npmCli}`);
+    }
+    return run(process.execPath, [npmCli, ...args]);
   }
-
-  // Create directory structure
-  ensureDir(path.join(mcpServerDest, 'packages', 'mcp-server'));
-  ensureDir(path.join(mcpServerDest, 'shared'));
-
-  // Copy full dist for backend and dependencies
-  console.log('   dY"� Copying MCP server dist (for backend runtime)...');
-  const distSrc = path.join(mcpServerSource, 'dist');
-  const distDst = path.join(mcpServerDest, 'packages', 'mcp-server', 'dist');
-  ensureDir(distDst);
-  copyRecursive(distSrc, distDst);
-
-  // Overwrite wrapper entry with bundled single-file for minimal deps
-  console.log('   dY"� Installing bundled wrapper entry...');
-  fs.copyFileSync(builtBundlePath, path.join(distDst, 'index.cjs'));
-
-  // Also copy bundled backend if present (wrapper prefers it)
-  const backendBundlePath = path.join(mcpServerSource, 'dist', 'backend.bundle.cjs');
-  if (fs.existsSync(backendBundlePath)) {
-    fs.copyFileSync(backendBundlePath, path.join(distDst, 'backend.bundle.cjs'));
-    console.log('   �o" Bundled backend included');
-  }
-
-  // Copy server package.json
-  fs.copyFileSync(
-    path.join(mcpServerSource, 'package.json'),
-    path.join(mcpServerDest, 'packages', 'mcp-server', 'package.json')
-  );
-
-  // Copy shared files to both a direct folder and a node_modules package for runtime resolution
-  console.log('   dY"? Copying shared files...');
-  copyRecursive(path.join(sharedSource, 'dist'), path.join(mcpServerDest, 'shared', 'dist'));
-  fs.copyFileSync(
-    path.join(sharedSource, 'package.json'),
-    path.join(mcpServerDest, 'shared', 'package.json')
-  );
-
-  const sharedPkgDst = path.join(mcpServerDest, 'node_modules', '@foundry-mcp', 'shared');
-  ensureDir(sharedPkgDst);
-  copyRecursive(path.join(sharedSource, 'dist'), path.join(sharedPkgDst, 'dist'));
-  fs.copyFileSync(path.join(sharedSource, 'package.json'), path.join(sharedPkgDst, 'package.json'));
-
-  console.log('   �o" MCP server files prepared');
+  return run('npm', args);
 }
 
-function copyMcpServerFiles() {
-  console.log('📦 Preparing MCP Server files...');
-
-  const rootDir = path.join(__dirname, '..');
-  const mcpServerSource = path.join(rootDir, 'packages', 'mcp-server');
-  const sharedSource = path.join(rootDir, 'shared');
-  const mcpServerDest = path.join(config.outputDir, 'foundry-mcp-server');
-
-  // Ensure MCP server was built and bundled
-  const builtBundlePath = path.join(mcpServerSource, 'dist', 'index.bundle.cjs');
-  if (!fs.existsSync(builtBundlePath)) {
-    console.error(
-      '   ❌ MCP server bundle not found. Run "npm run build:bundle --workspace=packages/mcp-server" first.'
-    );
-    process.exit(1);
-  }
-
-  // Create directory structure
-  ensureDir(path.join(mcpServerDest, 'packages', 'mcp-server'));
-  ensureDir(path.join(mcpServerDest, 'shared'));
-
-  // Copy bundled MCP server (single file with all dependencies included)
-  console.log('   📦 Copying bundled MCP server...');
-  ensureDir(path.join(mcpServerDest, 'packages', 'mcp-server', 'dist'));
-  fs.copyFileSync(
-    builtBundlePath,
-    path.join(mcpServerDest, 'packages', 'mcp-server', 'dist', 'index.cjs')
-  );
-  fs.copyFileSync(
-    path.join(mcpServerSource, 'package.json'),
-    path.join(mcpServerDest, 'packages', 'mcp-server', 'package.json')
-  );
-  console.log('   ✅ Bundled MCP server copied (no node_modules needed!)');
-
-  // Copy shared files (only dist needed for production)
-  console.log('   📁 Copying shared files...');
-  copyRecursive(path.join(sharedSource, 'dist'), path.join(mcpServerDest, 'shared', 'dist'));
-  fs.copyFileSync(
-    path.join(sharedSource, 'package.json'),
-    path.join(mcpServerDest, 'shared', 'package.json')
-  );
-
-  console.log('   ✓ MCP server files prepared');
+function ensureVersionConsistency(options) {
+  console.log(`Verifying all release manifests match ${options.version}...`);
+  run(process.execPath, [
+    path.join(repoRoot, 'scripts', 'check-version-consistency.mjs'),
+    '--expected',
+    options.version,
+  ]);
 }
 
-function copyFoundryModuleFiles() {
-  console.log('📦 Preparing Foundry Module files...');
+function ensureDesktopIcons() {
+  console.log('Verifying desktop icon assets and release wiring...');
+  run(process.execPath, [path.join(repoRoot, 'scripts', 'check-desktop-icons.mjs')]);
+}
 
-  const rootDir = path.join(__dirname, '..');
-  const moduleSource = path.join(rootDir, 'packages', 'foundry-module');
-  const moduleDistPath = path.join(moduleSource, 'dist', 'main.js');
+function ensureServerBundles(options) {
+  if (!options.skipServerBuild) {
+    console.log('Building the MCP server bundles...');
+    runNpm(['run', 'bundle:server']);
+  }
+  for (const file of ['index.bundle.cjs', 'backend.bundle.cjs']) {
+    const bundle = path.join(serverDistDir, file);
+    if (!fs.existsSync(bundle) || !fs.lstatSync(bundle).isFile()) {
+      fail(`Required MCP server bundle is missing: ${bundle}`);
+    }
+  }
+}
 
-  // Build module if not already built
-  if (!fs.existsSync(moduleDistPath)) {
-    console.log('   🔨 Building Foundry module...');
-    try {
-      execSync('npm run build --workspace=packages/foundry-module', {
-        stdio: 'inherit',
-        cwd: rootDir,
+function ensureDesktopPayload(options) {
+  const expectedExe = path.join(options.desktopPayload, PRODUCT_EXE);
+  if (options.desktopPayload === desktopPayloadDir && !options.skipDesktopBuild) {
+    console.log('Building the Electron Windows directory payload...');
+    runNpm(['run', 'pack:win', '--workspace=packages/desktop']);
+  } else if (!fs.existsSync(expectedExe)) {
+    if (options.desktopPayload !== desktopPayloadDir || options.skipDesktopBuild) {
+      fail(`Electron Windows payload is missing ${PRODUCT_EXE}: ${options.desktopPayload}`);
+    }
+  }
+  if (!fs.existsSync(expectedExe)) {
+    fail(`electron-builder did not produce the required executable: ${expectedExe}`);
+  }
+  assertOrdinarySource(options.desktopPayload);
+}
+
+function ensureFoundryModuleBuild() {
+  console.log('Building the bundled Foundry module...');
+  runNpm(['run', 'build', '--workspace=packages/foundry-module']);
+}
+
+function download(url, destination) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, response => {
+      if (
+        response.statusCode >= 300 &&
+        response.statusCode < 400 &&
+        typeof response.headers.location === 'string'
+      ) {
+        response.resume();
+        download(new URL(response.headers.location, url).toString(), destination)
+          .then(resolve)
+          .catch(reject);
+        return;
+      }
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new Error(`Download returned HTTP ${response.statusCode}: ${url}`));
+        return;
+      }
+      ensureDirectory(path.dirname(destination));
+      const stream = fs.createWriteStream(destination, { flags: 'wx' });
+      response.pipe(stream);
+      stream.on('finish', () => stream.close(resolve));
+      stream.on('error', reject);
+    });
+    request.on('error', reject);
+  });
+}
+
+function downloadText(url) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, response => {
+      if (
+        response.statusCode >= 300 &&
+        response.statusCode < 400 &&
+        typeof response.headers.location === 'string'
+      ) {
+        response.resume();
+        downloadText(new URL(response.headers.location, url).toString())
+          .then(resolve)
+          .catch(reject);
+        return;
+      }
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new Error(`Download returned HTTP ${response.statusCode}: ${url}`));
+        return;
+      }
+      response.setEncoding('utf8');
+      let value = '';
+      response.on('data', chunk => {
+        value += chunk;
       });
-      console.log('   ✅ Foundry module built successfully');
-    } catch (error) {
-      console.error('   ❌ Failed to build Foundry module:', error.message);
-      process.exit(1);
+      response.on('end', () => resolve(value));
+    });
+    request.on('error', reject);
+  });
+}
+
+function sha256(file) {
+  const hash = crypto.createHash('sha256');
+  hash.update(fs.readFileSync(file));
+  return hash.digest('hex');
+}
+
+async function stageNodeRuntime(options) {
+  const runtimeDir = path.join(payloadDir, 'runtime');
+  ensureDirectory(runtimeDir);
+  if (options.skipDownload) {
+    if (
+      process.platform === 'win32' &&
+      path.basename(process.execPath).toLowerCase() === 'node.exe'
+    ) {
+      copyRequiredFile(process.execPath, path.join(runtimeDir, 'node.exe'));
+      fs.writeFileSync(
+        path.join(runtimeDir, 'STAGING_ONLY.txt'),
+        `Staging used the developer Node runtime ${process.version}; release builds use pinned Node v${NODE_VERSION}.\n`
+      );
+    } else {
+      fs.writeFileSync(
+        path.join(runtimeDir, 'node.exe'),
+        `STAGING ONLY - replace with official Node v${NODE_VERSION} win-x64 node.exe\n`
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, 'STAGING_ONLY.txt'),
+        'This cross-platform static staging payload is intentionally not release-installable.\n'
+      );
     }
+    return;
   }
 
-  // Verify build completed
-  if (!fs.existsSync(moduleDistPath)) {
-    console.error('   ❌ Foundry module build failed - dist/main.js not found');
-    process.exit(1);
+  console.log(`Downloading and verifying Node.js v${NODE_VERSION}...`);
+  const nodeBaseUrl = `https://nodejs.org/dist/v${NODE_VERSION}`;
+  const archivePath = path.join(buildDir, NODE_ARCHIVE);
+  const checksums = await downloadText(`${nodeBaseUrl}/SHASUMS256.txt`);
+  const checksumLine = checksums
+    .split(/\r?\n/)
+    .find(line => line.trim().endsWith(`  ${NODE_ARCHIVE}`));
+  if (!checksumLine) {
+    fail(`Official checksum is missing for ${NODE_ARCHIVE}`);
+  }
+  const expectedHash = checksumLine.trim().split(/\s+/)[0].toLowerCase();
+  await download(`${nodeBaseUrl}/${NODE_ARCHIVE}`, archivePath);
+  const actualHash = sha256(archivePath);
+  if (actualHash !== expectedHash) {
+    fail(`Node.js checksum mismatch: expected ${expectedHash}, received ${actualHash}`);
   }
 
-  // Copy module files to NSIS staging area
-  const moduleDest = path.join(config.outputDir, 'foundry-module');
-  ensureDir(moduleDest);
-
-  console.log('   📁 Copying module files...');
-
-  // Copy built JavaScript files
-  if (fs.existsSync(path.join(moduleSource, 'dist'))) {
-    copyRecursive(path.join(moduleSource, 'dist'), path.join(moduleDest, 'dist'));
-    console.log('   ✓ Compiled JavaScript files copied');
-  }
-
-  // Copy styles
-  if (fs.existsSync(path.join(moduleSource, 'styles'))) {
-    copyRecursive(path.join(moduleSource, 'styles'), path.join(moduleDest, 'styles'));
-    console.log('   ✓ Style files copied');
-  }
-
-  // Copy language files
-  if (fs.existsSync(path.join(moduleSource, 'lang'))) {
-    copyRecursive(path.join(moduleSource, 'lang'), path.join(moduleDest, 'lang'));
-    console.log('   ✓ Language files copied');
-  }
-
-  // Copy templates
-  if (fs.existsSync(path.join(moduleSource, 'templates'))) {
-    copyRecursive(path.join(moduleSource, 'templates'), path.join(moduleDest, 'templates'));
-    console.log('   ✓ Template files copied');
-  }
-
-  // Copy browser helper scripts shipped by the module
-  if (fs.existsSync(path.join(moduleSource, 'scripts'))) {
-    copyRecursive(path.join(moduleSource, 'scripts'), path.join(moduleDest, 'scripts'));
-    console.log('   ✓ Module scripts copied');
-  }
-
-  // Copy module.json (required)
-  const moduleJsonPath = path.join(moduleSource, 'module.json');
-  if (fs.existsSync(moduleJsonPath)) {
-    fs.copyFileSync(moduleJsonPath, path.join(moduleDest, 'module.json'));
-    console.log('   ✓ Module manifest copied');
-  } else {
-    console.error('   ❌ module.json not found - required for Foundry module');
-    process.exit(1);
-  }
-
-  console.log('   ✅ Foundry module files prepared for installer');
-}
-
-function copyInstallerFiles() {
-  console.log('📦 Copying installer files...');
-
-  // Copy license and readme
-  fs.copyFileSync(
-    path.join(config.nsisDir, 'LICENSE.txt'),
-    path.join(config.outputDir, 'LICENSE.txt')
-  );
-  fs.copyFileSync(
-    path.join(config.nsisDir, 'README.txt'),
-    path.join(config.outputDir, 'README.txt')
-  );
-
-  // Copy icon file
-  const iconSource = path.join(config.nsisDir, 'icon.ico');
-  const iconDest = path.join(config.outputDir, 'icon.ico');
-  if (fs.existsSync(iconSource)) {
-    fs.copyFileSync(iconSource, iconDest);
-    console.log('   ✓ Icon file copied');
-  } else {
-    console.error('   ❌ Icon file not found:', iconSource);
-    throw new Error('Required icon.ico file missing from nsis directory');
-  }
-
-  // Copy PowerShell configuration script
-  const psSource = path.join(config.nsisDir, 'configure-claude.ps1');
-  const psDest = path.join(config.outputDir, 'configure-claude.ps1');
-  if (fs.existsSync(psSource)) {
-    fs.copyFileSync(psSource, psDest);
-    console.log('   ✓ PowerShell script copied');
-  } else {
-    console.error('   ❌ PowerShell script not found:', psSource);
-    throw new Error('Required configure-claude.ps1 file missing from nsis directory');
-  }
-
-  // Copy batch wrapper script
-  const batSource = path.join(config.nsisDir, 'configure-claude-wrapper.bat');
-  const batDest = path.join(config.outputDir, 'configure-claude-wrapper.bat');
-  if (fs.existsSync(batSource)) {
-    fs.copyFileSync(batSource, batDest);
-    console.log('   ✓ Batch wrapper script copied');
-  } else {
-    console.error('   ❌ Batch wrapper script not found:', batSource);
-    throw new Error('Required configure-claude-wrapper.bat file missing from nsis directory');
-  }
-
-  console.log('   ✓ Installer files prepared');
-}
-
-function updateNSISVersion(sourcePath, destPath, version) {
-  // Read the NSIS script
-  let content = fs.readFileSync(sourcePath, 'utf8');
-
-  // Convert version format (remove 'v' prefix if present)
-  const cleanVersion = version.startsWith('v') ? version.slice(1) : version;
-  const versionParts = cleanVersion.split('.');
-
-  // Ensure we have 4 parts for Windows version (e.g., "0.4.9.0")
-  while (versionParts.length < 4) {
-    versionParts.push('0');
-  }
-  const windowsVersion = versionParts.join('.');
-
-  // Update VIProductVersion (needs 4-part version)
-  content = content.replace(/VIProductVersion\s+"[\d.]+"/, `VIProductVersion "${windowsVersion}"`);
-
-  // Update VIAddVersionKey "FileVersion" (needs 4-part version)
-  content = content.replace(
-    /VIAddVersionKey\s+"FileVersion"\s+"[\d.]+"/,
-    `VIAddVersionKey "FileVersion" "${windowsVersion}"`
-  );
-
-  // Update DisplayVersion in registry (can use 3-part version)
-  content = content.replace(
-    /WriteRegStr\s+HKCU\s+"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\FoundryMCPServer"\s+"DisplayVersion"\s+"[\d.]+"/,
-    `WriteRegStr HKCU "Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall\\\\FoundryMCPServer" "DisplayVersion" "${cleanVersion}"`
-  );
-
-  // Write the updated content to destination
-  fs.writeFileSync(destPath, content);
-}
-
-function buildInstaller() {
-  console.log('🔨 Building NSIS installer...');
-
+  const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-mcp-node-extract-'));
   try {
-    // Check if NSIS is available
-    execSync('makensis /VERSION', { stdio: 'pipe' });
-    console.log('   ✓ NSIS found and ready');
-  } catch (error) {
-    console.error('   ❌ NSIS not found. Please install NSIS from https://nsis.sourceforge.io/');
-    console.error(
-      '   After installation, add NSIS to your PATH or run this script from NSIS directory.'
+    const tarCommand = process.platform === 'win32' ? 'tar.exe' : 'tar';
+    const nodeArchiveRoot = `node-v${NODE_VERSION}-win-x64`;
+    run(tarCommand, [
+      '-xf',
+      archivePath,
+      '-C',
+      extractDir,
+      `${nodeArchiveRoot}/node.exe`,
+      `${nodeArchiveRoot}/LICENSE`,
+    ]);
+    const nodeRoot = path.join(extractDir, nodeArchiveRoot);
+    copyRequiredFile(path.join(nodeRoot, 'node.exe'), path.join(runtimeDir, 'node.exe'));
+    copyRequiredFile(path.join(nodeRoot, 'LICENSE'), path.join(runtimeDir, 'LICENSE-node.txt'));
+    fs.writeFileSync(
+      path.join(runtimeDir, 'node-version.txt'),
+      `Node.js v${NODE_VERSION}\n${NODE_ARCHIVE} SHA-256: ${actualHash}\n`
     );
-    return false;
-  }
-
-  try {
-    // Define paths
-    const nsisScript = path.join(config.nsisDir, 'foundry-mcp-server.nsi');
-    const outputPath = path.join(config.buildDir, `FoundryMCPServer-Setup-${version}.exe`);
-
-    console.log(`   📁 NSIS script: ${nsisScript}`);
-    console.log(`   📁 Output path: ${outputPath}`);
-    console.log(`   📁 Working directory: ${config.outputDir}`);
-
-    // List files in output directory before NSIS
-    console.log('   📋 Files before NSIS compilation:');
-    const beforeFiles = fs.readdirSync(config.outputDir);
-    beforeFiles.forEach(file => console.log(`      - ${file}`));
-
-    // Copy NSIS script to output directory and update version numbers
-    const nsisScriptLocal = path.join(config.outputDir, 'foundry-mcp-server.nsi');
-    updateNSISVersion(nsisScript, nsisScriptLocal, version);
-    console.log(`   📋 Copied NSIS script with updated version ${version} to working directory`);
-
-    // Change to output directory so NSIS can find files
-    const originalCwd = process.cwd();
-    process.chdir(config.outputDir);
-    console.log(`   📂 Changed working directory to: ${process.cwd()}`);
-
-    // Run NSIS compiler with verbose output from local script
-    console.log(`   🔨 Running NSIS compiler...`);
-    execSync(
-      `makensis /V4 /DVERSION=${version} /DOUTFILE="${outputPath}" "foundry-mcp-server.nsi"`,
-      {
-        stdio: 'inherit',
-      }
-    );
-
-    // Restore original working directory
-    process.chdir(originalCwd);
-
-    // List files in output directory after NSIS
-    console.log('   📋 Files after NSIS compilation:');
-    const afterFiles = fs.readdirSync(config.outputDir);
-    afterFiles.forEach(file => console.log(`      - ${file}`));
-
-    // Also check build directory
-    console.log('   📋 Files in build directory:');
-    if (fs.existsSync(config.buildDir)) {
-      const buildFiles = fs.readdirSync(config.buildDir);
-      buildFiles.forEach(file => console.log(`      - ${file}`));
-    }
-
-    // Check if installer was created in expected location
-    if (fs.existsSync(outputPath)) {
-      console.log(`   ✓ Installer created: ${outputPath}`);
-
-      // Get file size
-      const stats = fs.statSync(outputPath);
-      const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(1);
-      console.log(`   📊 Installer size: ${fileSizeMB} MB`);
-
-      return true;
-    } else {
-      // Look for the installer in other possible locations
-      console.log('   🔍 Installer not found at expected location, searching...');
-
-      const possibleLocations = [
-        path.join(config.outputDir, 'FoundryMCPServer-Setup.exe'),
-        path.join(config.buildDir, 'FoundryMCPServer-Setup.exe'),
-        path.join(config.nsisDir, 'FoundryMCPServer-Setup.exe'),
-        path.join(__dirname, 'FoundryMCPServer-Setup.exe'),
-      ];
-
-      for (const location of possibleLocations) {
-        if (fs.existsSync(location)) {
-          console.log(`   ✓ Found installer at: ${location}`);
-          fs.renameSync(location, outputPath);
-          console.log(`   ✓ Moved to expected location: ${outputPath}`);
-
-          const stats = fs.statSync(outputPath);
-          const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(1);
-          console.log(`   📊 Installer size: ${fileSizeMB} MB`);
-
-          return true;
-        }
-      }
-
-      console.error('   ❌ Installer not found in any expected location');
-      console.error('   📋 Searched locations:');
-      possibleLocations.forEach(loc => console.error(`      - ${loc}`));
-      return false;
-    }
-  } catch (error) {
-    console.error('   ❌ Failed to build installer:', error.message);
-    console.error('   📋 Error details:', error);
-    return false;
+  } finally {
+    fs.rmSync(extractDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
   }
 }
 
-// Main build process
-async function build() {
-  try {
-    console.log('🔧 Preparing build environment...');
+function stageServerBundles() {
+  const destination = path.join(payloadDir, 'resources', 'server');
+  copyRequiredFile(
+    path.join(serverDistDir, 'index.bundle.cjs'),
+    path.join(destination, 'index.bundle.cjs')
+  );
+  copyRequiredFile(
+    path.join(serverDistDir, 'backend.bundle.cjs'),
+    path.join(destination, 'backend.bundle.cjs')
+  );
+}
 
-    // Clean and create build directories
-    if (fs.existsSync(config.buildDir)) {
-      console.log('   🧹 Cleaning existing build directory...');
-      fs.rmSync(config.buildDir, { recursive: true, force: true });
+function stageInstallerHelpers() {
+  const helperDir = path.join(payloadDir, 'resources', 'installer');
+  for (const file of [
+    'configure-claude.ps1',
+    'configure-claude-wrapper.bat',
+    'configure-codex.mjs',
+    'foundry-module-cleanup.ps1',
+    'install-migration.ps1',
+    'stop-bridge.ps1',
+  ]) {
+    copyRequiredFile(path.join(nsisSourceDir, file), path.join(helperDir, file));
+  }
+  copyRequiredFile(path.join(nsisSourceDir, 'README.txt'), path.join(payloadDir, 'README.txt'));
+  copyRequiredFile(path.join(nsisSourceDir, 'LICENSE.txt'), path.join(payloadDir, 'LICENSE.txt'));
+  copyRequiredFile(
+    path.join(repoRoot, 'packages', 'desktop', 'THIRD_PARTY_NOTICES.md'),
+    path.join(payloadDir, 'THIRD_PARTY_NOTICES.md')
+  );
+  fs.writeFileSync(path.join(payloadDir, 'foundry-vtt-mcp-bridge.install-id'), `${PRODUCT_ID}\n`);
+}
+
+function stageFoundryModule() {
+  const mappings = [
+    ['dist', 'dist'],
+    ['lang', 'lang'],
+    ['scripts', 'scripts'],
+    ['styles', 'styles'],
+    ['templates', 'templates'],
+    ['module.json', 'module.json'],
+  ];
+  for (const [sourceName, destinationName] of mappings) {
+    const source = path.join(moduleSourceDir, sourceName);
+    if (!fs.existsSync(source)) {
+      if (sourceName === 'module.json' || sourceName === 'dist') {
+        fail(`Required Foundry module build output is missing: ${source}`);
+      }
+      continue;
     }
-
-    ensureDir(config.buildDir);
-    ensureDir(config.outputDir);
-    ensureDir(config.tempDir);
-
-    console.log('   ✓ Build environment ready\n');
-
-    // Download and extract Node.js (unless skipped)
-    if (!skipDownload) {
-      downloadAndExtractNode();
-      console.log();
-    } else {
-      console.log('   ⏩ Skipping Node.js runtime download (staging-only)');
-    }
-
-    // Copy MCP server files
-    copyMcpServerFilesV2();
-    console.log();
-
-    // Copy Foundry module files
-    copyFoundryModuleFiles();
-    console.log();
-
-    // Copy installer files
-    copyInstallerFiles();
-    console.log();
-
-    // Build NSIS installer (unless skipped)
-    const success = skipNsis
-      ? (console.log('   dY"< Skipping NSIS compilation (staging-only)'), true)
-      : buildInstaller();
-    console.log();
-
-    if (success) {
-      console.log('🎉 Build completed successfully!');
-      console.log(`📦 Installer: FoundryMCPServer-Setup-${version}.exe`);
-      console.log('📋 Ready for distribution!');
-    } else {
-      console.log('⚠️  Build completed but installer creation failed.');
-      console.log('   Files are prepared in: ' + config.outputDir);
-      console.log('   Run NSIS manually to create installer.');
-    }
-  } catch (error) {
-    console.error('❌ Build failed:', error.message);
-    process.exit(1);
+    copyTree(source, path.join(moduleStageDir, destinationName));
   }
 }
 
-// Run the build
-build();
+function listFilesRecursively(root, current = root) {
+  const files = [];
+  for (const name of fs.readdirSync(current).sort((left, right) => left.localeCompare(right))) {
+    const absolute = path.join(current, name);
+    const stat = assertOrdinarySource(absolute);
+    if (stat.isDirectory()) {
+      files.push(...listFilesRecursively(root, absolute));
+    } else {
+      files.push(path.relative(root, absolute).split(path.sep).join('\\'));
+    }
+  }
+  return files;
+}
+
+function writeOwnedManifest(version) {
+  const manifestName = 'installer-owned-files.json';
+  const manifestPath = path.join(payloadDir, manifestName);
+  const files = listFilesRecursively(payloadDir).filter(file => file !== manifestName);
+  files.push(manifestName);
+  files.sort((left, right) => left.localeCompare(right));
+  const manifest = {
+    schemaVersion: 1,
+    productId: PRODUCT_ID,
+    version,
+    files,
+  };
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+function directorySize(directory) {
+  return listFilesRecursively(directory).reduce(
+    (sum, relative) => sum + fs.statSync(path.join(directory, ...relative.split('\\'))).size,
+    0
+  );
+}
+
+function windowsVersion(version) {
+  const core = version.split(/[-+]/, 1)[0].split('.');
+  while (core.length < 4) core.push('0');
+  return core.slice(0, 4).join('.');
+}
+
+function findMakeNsis() {
+  const candidates = [
+    process.env.MAKENSIS,
+    'makensis',
+    'makensis.exe',
+    process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'NSIS', 'makensis.exe'),
+    process.env['ProgramFiles(x86)'] &&
+      path.join(process.env['ProgramFiles(x86)'], 'NSIS', 'makensis.exe'),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const result = spawnSync(candidate, ['/VERSION'], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+      windowsHide: true,
+    });
+    if (!result.error && result.status === 0) return candidate;
+  }
+  return null;
+}
+
+function compileInstaller(options, estimatedSizeKb) {
+  const makeNsis = findMakeNsis();
+  if (!makeNsis) {
+    fail('NSIS makensis was not found. Install NSIS or set MAKENSIS to its absolute path.');
+  }
+  const outputPath = path.join(buildDir, `FoundryVTT-MCP-Bridge-Setup-${options.versionLabel}.exe`);
+  run(
+    makeNsis,
+    [
+      '/V4',
+      `/DVERSION=${options.version}`,
+      `/DPRODUCT_VERSION=${windowsVersion(options.version)}`,
+      `/DESTIMATED_SIZE_KB=${estimatedSizeKb}`,
+      `/DOUTFILE=${outputPath}`,
+      path.join(nsisSourceDir, 'foundry-mcp-server.nsi'),
+    ],
+    { cwd: stagingDir }
+  );
+  if (!fs.existsSync(outputPath)) {
+    fail(`NSIS reported success but did not create ${outputPath}`);
+  }
+  console.log(`Installer created: ${outputPath}`);
+}
+
+async function main() {
+  const options = parseArguments(process.argv.slice(2));
+  console.log(`Staging Foundry VTT MCP Bridge ${options.version}`);
+  ensureVersionConsistency(options);
+  ensureDesktopIcons();
+  cleanBuildDirectory();
+  ensureServerBundles(options);
+  ensureDesktopPayload(options);
+  ensureFoundryModuleBuild();
+  copyTree(options.desktopPayload, payloadDir);
+  stageServerBundles();
+  await stageNodeRuntime(options);
+  stageInstallerHelpers();
+  stageFoundryModule();
+
+  copyRequiredFile(
+    path.join(repoRoot, 'packages', 'desktop', 'assets', 'app-icon.ico'),
+    path.join(stagingDir, 'icon.ico')
+  );
+  copyRequiredFile(path.join(nsisSourceDir, 'LICENSE.txt'), path.join(stagingDir, 'LICENSE.txt'));
+  copyRequiredFile(path.join(nsisSourceDir, 'README.txt'), path.join(stagingDir, 'README.txt'));
+  writeOwnedManifest(options.version);
+
+  const estimatedSizeKb = Math.max(1, Math.ceil(directorySize(payloadDir) / 1024));
+  const stagedExe = path.join(payloadDir, PRODUCT_EXE);
+  if (!fs.existsSync(stagedExe)) fail(`Staged application executable is missing: ${stagedExe}`);
+  console.log(
+    `Staged ${listFilesRecursively(payloadDir).length} application files (${estimatedSizeKb} KiB).`
+  );
+
+  if (options.skipNsis) {
+    console.log('NSIS compilation skipped; staged payload is static-test only.');
+    return;
+  }
+  compileInstaller(options, estimatedSizeKb);
+}
+
+main().catch(error => {
+  console.error(`Installer build failed: ${error.message}`);
+  process.exitCode = 1;
+});

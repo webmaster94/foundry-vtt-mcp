@@ -10,6 +10,7 @@ const lifecycle = vi.hoisted(() => ({
   failConnectPorts: new Set<number>(),
   connectGates: new Map<number, Promise<void>>(),
   connectedPorts: new Set<number>(),
+  capabilityRefreshPorts: [] as number[],
 }));
 
 vi.mock('./foundry-client.js', () => ({
@@ -42,6 +43,12 @@ vi.mock('./foundry-client.js', () => ({
     }
     getConnectionInfo(): Record<string, never> {
       return {};
+    }
+    getCachedCapabilities(): null {
+      return null;
+    }
+    refreshCapabilitiesInBackground(): void {
+      lifecycle.capabilityRefreshPorts.push(this.port);
     }
   },
 }));
@@ -78,12 +85,70 @@ afterEach(() => {
   lifecycle.failConnectPorts.clear();
   lifecycle.connectGates.clear();
   lifecycle.connectedPorts.clear();
+  lifecycle.capabilityRefreshPorts.length = 0;
   for (const directory of tempDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
 describe('ServerRegistry lifecycle', () => {
+  it('reports the exact override path and never exposes profile auth tokens', () => {
+    const secret = 'super-secret-profile-token';
+    const file = serversFile({
+      defaultServer: 'alpha',
+      servers: {
+        alpha: {
+          port: 32090,
+          connectionType: 'websocket',
+          authToken: secret,
+        },
+      },
+    });
+    const registry = new ServerRegistry(config, logger(), file);
+    (registry.get('alpha')!.client as any).getCachedCapabilities = () => ({
+      moduleId: 'foundry-mcp-bridge',
+      moduleVersion: '0.12.0',
+      foundryVersion: '14',
+      system: { id: 'dnd5e', version: '5', authToken: 'nested-system-secret' },
+      world: { id: 'test', title: 'Test', authToken: 'nested-world-secret' },
+      handlers: ['secretly-large-handler-list'],
+    });
+
+    const status = registry.getStatus();
+    expect(status.config).toEqual({ path: file, exists: true, source: 'file' });
+    expect(status.activeServer).toBe('alpha');
+    expect(JSON.stringify(status)).not.toContain(secret);
+    expect(JSON.stringify(status)).not.toContain('authToken');
+    expect(JSON.stringify(status)).not.toContain('nested-system-secret');
+    expect(JSON.stringify(status)).not.toContain('nested-world-secret');
+    expect(JSON.stringify(status)).not.toContain('handlers');
+    expect(lifecycle.capabilityRefreshPorts).toEqual([]);
+
+    registry.refreshCapabilityCaches();
+    expect(lifecycle.capabilityRefreshPorts).toEqual([32090]);
+  });
+
+  it('retains a constructor config override for later reloads', async () => {
+    const file = serversFile({
+      defaultServer: 'alpha',
+      servers: { alpha: { port: 32091, connectionType: 'websocket' } },
+    });
+    const registry = new ServerRegistry(config, logger(), file);
+    writeFileSync(
+      file,
+      JSON.stringify({
+        defaultServer: 'alpha',
+        servers: { alpha: { port: 32092, connectionType: 'websocket' } },
+      })
+    );
+
+    await expect(registry.reloadConfig(config, logger())).resolves.toMatchObject({
+      changed: ['alpha'],
+    });
+    expect(registry.list().map(server => server.port)).toEqual([32092]);
+    expect(registry.getConfigFilePath()).toBe(file);
+  });
+
   it('rejects main/signaling collisions across profiles', () => {
     const file = serversFile({
       defaultServer: 'alpha',

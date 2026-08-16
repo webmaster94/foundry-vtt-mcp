@@ -27,6 +27,10 @@ vi.mock('../foundry-client.js', () => {
       getConnectionInfo() {
         return { type: null, state: this.connected ? 'connected' : 'disconnected' };
       }
+      getCachedCapabilities() {
+        return null;
+      }
+      refreshCapabilitiesInBackground() {}
       async query(method: string) {
         return { method, port: this.foundryConfig.port };
       }

@@ -1,6 +1,6 @@
 {
   "name": "foundry-mcp-integration",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "MCP server that bridges Foundry VTT game data with Claude Desktop",
   "private": true,
   "workspaces": [
@@ -9,17 +9,26 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace=packages/mcp-server",
+    "dev:desktop": "npm run dev --workspace=@foundry-mcp/desktop",
     "clean": "node scripts/clean-build.mjs",
     "prebuild": "npm run clean",
     "build": "npm run build --workspaces --if-present",
     "build:foundry": "npm run build --workspace=packages/foundry-module",
     "build:server": "npm run build --workspace=packages/mcp-server",
     "build:shared": "npm run build --workspace=shared",
+    "build:desktop": "npm run build --workspace=@foundry-mcp/desktop",
+    "build:desktop-icons": "node scripts/build-desktop-icons.mjs",
     "bundle:server": "npm run build:bundle --workspace=packages/mcp-server",
+    "pack:desktop:win": "npm run bundle:server && npm run pack:win --workspace=@foundry-mcp/desktop",
+    "pack:desktop:mac": "npm run bundle:server && npm run pack:mac --workspace=@foundry-mcp/desktop",
     "build:release": "npm run build:shared && npm run build:server && npm run bundle:server && npm run build:foundry",
     "installer:stage": "node installer/build-nsis.js --skip-download --skip-nsis",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test:desktop-icons && npm run test --workspaces --if-present",
+    "test:desktop": "npm run test --workspace=@foundry-mcp/desktop",
+    "test:desktop:e2e": "npm run test:e2e --workspace=@foundry-mcp/desktop",
+    "test:desktop-icons": "node scripts/check-desktop-icons.mjs",
     "lint": "eslint . --ext .ts,.js",
+    "lint:desktop": "eslint packages/desktop --ext .ts,.js --quiet",
     "lint:fix": "eslint . --ext .ts,.js --fix",
     "format": "prettier --write \"**/*.{ts,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,js,json,md}\"",
@@ -28,6 +37,8 @@
     "test:fork-contract": "node scripts/check-fork-feature-contract.mjs",
     "test:removed-features": "node scripts/check-removed-features.mjs",
     "test:installer-safety": "bash scripts/check-installer-symlink-safety.sh",
+    "test:windows-installer-safety": "node installer/tests/windows-installer-safety.mjs",
+    "test:windows-packaged-lifecycle": "node installer/tests/windows-packaged-lifecycle.mjs",
     "version:check": "node scripts/check-version-consistency.mjs",
     "smoke": "node scripts/bridge-smoke-test.mjs",
     "setup": "node scripts/install.mjs",
@@ -55,7 +66,7 @@
     "vitest": "^3.2.7"
   },
   "engines": {
-    "node": ">=18.0.0",
+    "node": ">=22.12.0",
     "npm": ">=9.0.0"
   },
   "author": "Adam Dooley",
@@ -79,5 +90,8 @@
   },
   "overrides": {
     "vite": "6.4.3"
+  },
+  "allowScripts": {
+    "electron@43.4.0": true
   }
 }

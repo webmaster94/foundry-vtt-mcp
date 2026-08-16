@@ -120,12 +120,47 @@ describe('FoundryClient capability cache ownership', () => {
     };
 
     await expect(client.getCapabilities()).resolves.toMatchObject({ world: { id: 'world-a' } });
+    expect(client.getCachedCapabilities()).toMatchObject({ world: { id: 'world-a' } });
     await expect(client.getCapabilities()).resolves.toMatchObject({ world: { id: 'world-a' } });
     expect(query).toHaveBeenCalledOnce();
 
     generation = 2;
     world = 'world-b';
+    expect(client.getCachedCapabilities()).toBeNull();
     await expect(client.getCapabilities()).resolves.toMatchObject({ world: { id: 'world-b' } });
     expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it('starts at most one background capability refresh without blocking status reads', async () => {
+    const client = new FoundryClient(config.foundry, logger());
+    let resolveQuery!: (value: any) => void;
+    const query = vi.fn(
+      () =>
+        new Promise(resolve => {
+          resolveQuery = resolve;
+        })
+    );
+    (client as any).connector = {
+      isConnected: () => true,
+      getConnectionGeneration: () => 7,
+      query,
+    };
+
+    client.refreshCapabilitiesInBackground();
+    client.refreshCapabilitiesInBackground();
+    expect(query).toHaveBeenCalledOnce();
+    expect(client.getCachedCapabilities()).toBeNull();
+
+    resolveQuery({
+      moduleId: 'foundry-mcp-bridge',
+      moduleVersion: '0.12.0',
+      foundryVersion: '14',
+      system: { id: 'dnd5e', version: '5' },
+      world: { id: 'background', title: 'Background' },
+      handlers: [],
+    });
+    await vi.waitFor(() =>
+      expect(client.getCachedCapabilities()).toMatchObject({ world: { id: 'background' } })
+    );
   });
 });

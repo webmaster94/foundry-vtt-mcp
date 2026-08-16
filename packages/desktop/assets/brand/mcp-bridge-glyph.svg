@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 320" role="img" aria-labelledby="title description">
+  <title id="title">MCP network bridge glyph</title>
+  <desc id="description">Three network ports connected in a simple topology, without lettering.</desc>
+  <defs>
+    <linearGradient id="rim" x1="36" y1="28" x2="484" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFB16B"/>
+      <stop offset="0.5" stop-color="#FF6A2A"/>
+      <stop offset="1" stop-color="#D9411F"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="496" height="296" rx="88" fill="#071015" stroke="#071015" stroke-width="24"/>
+  <rect x="27" y="27" width="466" height="266" rx="73" fill="#0B171F" stroke="url(#rim)" stroke-width="18"/>
+  <path d="M112 224L260 94L408 224" fill="none" stroke="#FFF4EA" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="112" cy="224" r="50" fill="#FFF4EA"/>
+  <circle cx="408" cy="224" r="50" fill="#FFF4EA"/>
+  <circle cx="260" cy="94" r="50" fill="#FF6A2A" stroke="#FFF4EA" stroke-width="14"/>
+</svg>

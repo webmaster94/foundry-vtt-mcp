@@ -1,474 +1,472 @@
 param(
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory = $false)]
     [string]$InstallDir,
 
-    [Parameter(Mandatory=$false)]
-    [switch]$Remove
+    [Parameter(Mandatory = $false)]
+    [switch]$Remove,
+
+    # Fixture hook: production callers omit this and the normal Claude Desktop
+    # locations are discovered. Tests use explicit paths and never touch a real
+    # user configuration.
+    [Parameter(Mandatory = $false)]
+    [string[]]$ConfigPathOverride,
+
+    [Parameter(Mandatory = $false)]
+    [string[]]$ClaudeCodeConfigPathOverride,
+
+    # Fixture-only concurrency hook. Production callers omit both values.
+    [Parameter(Mandatory = $false)]
+    [string]$BeforeWriteSignalPath,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(0, 10000)]
+    [int]$BeforeWriteDelayMilliseconds = 0
 )
 
-# Configure Claude Desktop for Foundry MCP Server
-# This script safely merges MCP server configuration into existing Claude Desktop config
-
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# Enhanced logging with file output
+$OwnerId = "io.github.webmaster94.foundry-vtt-mcp"
+$PrimaryEntryName = "foundry-mcp"
+$KnownEntryNames = @("foundry-mcp", "foundry-vtt-mcp", "foundry-vtt-mcp-bridge")
 $LogFile = Join-Path $env:TEMP "foundry-mcp-claude-config.log"
 
 function Write-LogMessage {
     param([string]$Message, [string]$Level = "INFO")
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logEntry = "[$timestamp] [$Level] $Message"
-    Write-Host $logEntry
-    Add-Content -Path $LogFile -Value $logEntry -ErrorAction SilentlyContinue
+    $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [$Level] $Message"
+    Write-Output $line
+    Add-Content -LiteralPath $LogFile -Value $line -ErrorAction SilentlyContinue
 }
 
-function Test-JsonValid {
-    param([string]$JsonString)
-    try {
-        $JsonString | ConvertFrom-Json | Out-Null
-        return $true
+function Convert-ToFullPath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not [System.IO.Path]::IsPathRooted($Path)) {
+        return $null
     }
-    catch {
+    return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
+}
+
+function Test-PathEqual {
+    param([string]$Left, [string]$Right)
+    $fullLeft = Convert-ToFullPath $Left
+    $fullRight = Convert-ToFullPath $Right
+    if ($null -eq $fullLeft -or $null -eq $fullRight) {
         return $false
     }
+    return [string]::Equals(
+        $fullLeft.TrimEnd("\"),
+        $fullRight.TrimEnd("\"),
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+}
+
+function Get-ObjectPropertyValue {
+    param([object]$Object, [string]$Name)
+    if ($null -eq $Object) {
+        return $null
+    }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+    return $property.Value
+}
+
+function Get-ByteHash {
+    param([byte[]]$Bytes)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($algorithm.ComputeHash($Bytes)).Replace("-", "")
+    }
+    finally {
+        $algorithm.Dispose()
+    }
+}
+
+function Assert-RegularConfigurationFile {
+    param([string]$ConfigPath)
+    $item = Get-Item -LiteralPath $ConfigPath -Force -ErrorAction Stop
+    if ($item.PSIsContainer -or
+        (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        throw "JSON MCP client configuration is linked or not a regular file and was left unchanged: $ConfigPath"
+    }
+    return $item
+}
+
+function Invoke-BeforeWriteFixtureHook {
+    if ([string]::IsNullOrWhiteSpace($BeforeWriteSignalPath)) {
+        return
+    }
+    [System.IO.File]::WriteAllText(
+        $BeforeWriteSignalPath,
+        "ready",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    if ($BeforeWriteDelayMilliseconds -gt 0) {
+        Start-Sleep -Milliseconds $BeforeWriteDelayMilliseconds
+    }
+}
+
+function Get-OnlyArgument {
+    param([object]$Entry)
+    $arguments = Get-ObjectPropertyValue $Entry "args"
+    if ($null -eq $arguments -or @($arguments).Count -ne 1) {
+        return $null
+    }
+    return [string]@($arguments)[0]
+}
+
+function Test-EntryOwnedByBridge {
+    param([object]$Entry, [string]$ExpectedInstallDir)
+    if ($null -eq $Entry -or -not ($Entry -is [PSCustomObject])) {
+        return $false
+    }
+
+    $environment = Get-ObjectPropertyValue $Entry "env"
+    if ($environment -is [PSCustomObject] -and
+        [string](Get-ObjectPropertyValue $environment "FOUNDRY_MCP_MANAGED_BY") -eq $OwnerId) {
+        return $true
+    }
+
+    $command = [string](Get-ObjectPropertyValue $Entry "command")
+    $argument = Get-OnlyArgument $Entry
+    if ([string]::IsNullOrWhiteSpace($command) -or [string]::IsNullOrWhiteSpace($argument)) {
+        return $false
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedInstallDir)) {
+        $desktopCommand = Join-Path $ExpectedInstallDir "FoundryVTT MCP Bridge.exe"
+        $previousCommand = Join-Path $ExpectedInstallDir "runtime\node.exe"
+        $currentArgument = Join-Path $ExpectedInstallDir "resources\server\index.bundle.cjs"
+        $legacyCommand = Join-Path $ExpectedInstallDir "node.exe"
+        $legacyArgument = Join-Path $ExpectedInstallDir "foundry-mcp-server\packages\mcp-server\dist\index.cjs"
+        if (((Test-PathEqual $command $desktopCommand) -and (Test-PathEqual $argument $currentArgument)) -or
+            ((Test-PathEqual $command $previousCommand) -and (Test-PathEqual $argument $currentArgument)) -or
+            ((Test-PathEqual $command $legacyCommand) -and (Test-PathEqual $argument $legacyArgument))) {
+            return $true
+        }
+    }
+
+    # Recognize an entry made by a previous release even after the application
+    # has moved. Both paths must form one exact, product-specific layout.
+    $commandPath = Convert-ToFullPath $command
+    $argumentPath = Convert-ToFullPath $argument
+    if ($null -eq $commandPath -or $null -eq $argumentPath) {
+        return $false
+    }
+    $legacyRoot = Split-Path -Parent $commandPath
+    if ((Split-Path -Leaf $commandPath) -ieq "node.exe" -and
+        (Test-PathEqual $argumentPath (Join-Path $legacyRoot "foundry-mcp-server\packages\mcp-server\dist\index.cjs"))) {
+        return $true
+    }
+    if ((Split-Path -Leaf $commandPath) -ieq "node.exe" -and
+        (Split-Path -Leaf $legacyRoot) -ieq "runtime") {
+        $currentRoot = Split-Path -Parent $legacyRoot
+        return (Test-PathEqual $argumentPath (Join-Path $currentRoot "resources\server\index.bundle.cjs"))
+    }
+    if ((Split-Path -Leaf $commandPath) -ieq "FoundryVTT MCP Bridge.exe") {
+        return (Test-PathEqual $argumentPath (Join-Path $legacyRoot "resources\server\index.bundle.cjs"))
+    }
+    return $false
 }
 
 function Get-ClaudeConfigTargets {
-    # Returns the list of Claude Desktop config directories to configure.
-    #
-    # Standalone Claude Desktop reads %APPDATA%\Claude\.
-    # The Microsoft Store (MSIX) build is filesystem-virtualised and reads
-    # from a sandboxed container instead:
-    #   %LOCALAPPDATA%\Packages\<PackageFamilyName>\LocalCache\Roaming\Claude\
-    # Writing only to %APPDATA% silently fails for Store installs (issue #40),
-    # so we configure every location that exists (or plausibly should).
+    $hasClaudeOverride = $null -ne $ConfigPathOverride -and @($ConfigPathOverride).Count -gt 0
+    $hasClaudeCodeOverride = (
+        $null -ne $ClaudeCodeConfigPathOverride -and
+        @($ClaudeCodeConfigPathOverride).Count -gt 0
+    )
+    if ($hasClaudeOverride -or $hasClaudeCodeOverride) {
+        $fixtureTargets = [System.Collections.Generic.List[object]]::new()
+        if ($hasClaudeOverride) {
+            foreach ($path in @($ConfigPathOverride)) {
+                $fixtureTargets.Add([PSCustomObject]@{
+                    Kind = "Claude Desktop fixture"
+                    Path = Convert-ToFullPath $path
+                    Create = $true
+                })
+            }
+        }
+        if ($hasClaudeCodeOverride) {
+            foreach ($path in @($ClaudeCodeConfigPathOverride)) {
+                $fixtureTargets.Add([PSCustomObject]@{
+                    Kind = "Claude Code fixture"
+                    Path = Convert-ToFullPath $path
+                    Create = $true
+                })
+            }
+        }
+        return @($fixtureTargets)
+    }
 
     $targets = [System.Collections.Generic.List[object]]::new()
-
-    # 1. Standard standalone path (always a candidate)
-    $standardDir = Join-Path $env:APPDATA "Claude"
     $targets.Add([PSCustomObject]@{
-        Kind   = "Standalone"
-        Dir    = $standardDir
-        Create = $true   # safe to create if missing — standalone reads it
+        Kind = "Standalone"
+        Path = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
+        Create = $true
     })
 
-    # 2. MSIX virtualised path(s). The package family name contains "Claude"
-    #    but the exact id varies, so glob for it.
     $packagesRoot = Join-Path $env:LOCALAPPDATA "Packages"
-    if (Test-Path $packagesRoot) {
-        $claudePackages = Get-ChildItem -Path $packagesRoot -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like "*Claude*" }
-        foreach ($pkg in $claudePackages) {
-            $virtualDir = Join-Path $pkg.FullName "LocalCache\Roaming\Claude"
+    if (Test-Path -LiteralPath $packagesRoot -PathType Container) {
+        foreach ($package in Get-ChildItem -LiteralPath $packagesRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "*Claude*" }) {
+            $roaming = Join-Path $package.FullName "LocalCache\Roaming"
+            if (Test-Path -LiteralPath $roaming -PathType Container) {
+                $targets.Add([PSCustomObject]@{
+                    Kind = "MSIX ($($package.Name))"
+                    Path = Join-Path $roaming "Claude\claude_desktop_config.json"
+                    Create = $true
+                })
+            }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $claudeCodeConfig = Join-Path $env:USERPROFILE ".claude.json"
+        if (Test-Path -LiteralPath $claudeCodeConfig -PathType Leaf) {
             $targets.Add([PSCustomObject]@{
-                Kind   = "MSIX ($($pkg.Name))"
-                Dir    = $virtualDir
-                # Only create if the package's LocalCache\Roaming exists — that
-                # confirms it's a real installed Claude container, not noise.
-                Create = (Test-Path (Join-Path $pkg.FullName "LocalCache\Roaming"))
+                Kind = "Claude Code (user scope)"
+                Path = $claudeCodeConfig
+                Create = $false
             })
         }
     }
-
-    return $targets
+    return @($targets)
 }
 
-function Get-ConfigFileState {
-    param([string]$ConfigPath)
-
-    if (-not (Test-Path $ConfigPath)) {
-        return "Missing"
-    }
-    
-    $content = Get-Content $ConfigPath -Raw -ErrorAction SilentlyContinue
-    if (-not $content) {
-        return "Empty"
-    }
-    
-    $content = $content.Trim()
-    
-    # Check for common corruption patterns
-    if ($content -eq "{") {
-        return "PartialOpen"
-    }
-    if ($content -eq "}") {
-        return "PartialClose" 
-    }
-    if ($content.StartsWith("{") -and -not $content.EndsWith("}")) {
-        return "IncompleteJSON"
-    }
-    if (-not $content.StartsWith("{")) {
-        return "InvalidFormat"
-    }
-    
-    # Test if it's valid JSON
-    if (Test-JsonValid $content) {
-        return "ValidJSON"
-    }
-    else {
-        return "CorruptedJSON"
-    }
-}
-
-
-function Set-FoundryMcpConfig {
-    param(
-        [Parameter(Mandatory=$true)][string]$ConfigPath,
-        [Parameter(Mandatory=$true)][string]$NodeExe,
-        [Parameter(Mandatory=$true)][string]$McpServer
-    )
-
-    # Analyze and handle existing configuration
-    $config = $null
-    $backupPath = $null
-
-    $fileState = Get-ConfigFileState $ConfigPath
-    Write-LogMessage "Claude config file state: $fileState"
-
-    switch ($fileState) {
-        "Missing" {
-            Write-LogMessage "No existing configuration found, creating new..."
-            $config = [PSCustomObject]@{
-                mcpServers = [PSCustomObject]@{}
-            }
-        }
-        
-        { $_ -in "Empty", "PartialOpen", "PartialClose", "IncompleteJSON", "InvalidFormat", "CorruptedJSON" } {
-            Write-LogMessage "Configuration file is corrupted ($fileState), recreating from scratch..."
-            
-            # Create backup of corrupted file for troubleshooting
-            if (Test-Path $configPath) {
-                $backupPath = "$configPath.corrupted-backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-                Copy-Item $configPath $backupPath
-                Write-LogMessage "Backed up corrupted file: $backupPath"
-            }
-            
-            # Create fresh configuration
-            $config = [PSCustomObject]@{
-                mcpServers = [PSCustomObject]@{}
-            }
-        }
-        
-        "ValidJSON" {
-            Write-LogMessage "Reading existing valid configuration..."
-            
-            # Create backup
-            $backupPath = "$configPath.backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-            Copy-Item $configPath $backupPath
-            Write-LogMessage "Created backup: $backupPath"
-            
-            try {
-                $configContent = Get-Content $configPath -Raw
-                $config = $configContent | ConvertFrom-Json
-                Write-LogMessage "Existing configuration loaded successfully"
-                
-                # Log basic structure (not full content to avoid huge logs)
-                $propCount = $config.PSObject.Properties.Name.Count
-                Write-LogMessage "Configuration has $propCount top-level properties"
-            }
-            catch {
-                Write-LogMessage "Failed to parse supposedly valid JSON, recreating..." "ERROR"
-                $config = [PSCustomObject]@{
-                    mcpServers = [PSCustomObject]@{}
-                }
-            }
-        }
-    }
-    
-    # Ensure mcpServers section exists and is valid
-    if (-not $config.PSObject.Properties.Name -contains "mcpServers" -or $null -eq $config.mcpServers) {
-        Write-LogMessage "Adding mcpServers section to configuration..."
-        if ($config.PSObject.Properties.Name -contains "mcpServers") {
-            $config.mcpServers = [PSCustomObject]@{}
-        } else {
-            $config | Add-Member -Type NoteProperty -Name "mcpServers" -Value ([PSCustomObject]@{})
-        }
-    }
-    
-    # Configure Foundry MCP Server
-    Write-LogMessage "Configuring Foundry MCP Server..."
-    
-    $foundryMcpConfig = [PSCustomObject]@{
-        command = $nodeExe
-        args = @($mcpServer)
-        env = [PSCustomObject]@{}
-    }
-    
-    # Add or update foundry-mcp server configuration
-    if ($config.mcpServers.PSObject.Properties.Name -contains "foundry-mcp") {
-        Write-LogMessage "Updating existing foundry-mcp configuration..."
-        $config.mcpServers."foundry-mcp" = $foundryMcpConfig
-    }
-    else {
-        Write-LogMessage "Adding new foundry-mcp configuration..."
-        $config.mcpServers | Add-Member -Type NoteProperty -Name "foundry-mcp" -Value $foundryMcpConfig
-    }
-    
-    # Convert to JSON with proper formatting for Claude Desktop
-    Write-LogMessage "Generating new configuration JSON..."
-    
-    # Use PowerShell's ConvertTo-Json - it handles escaping correctly
-    $newConfigJson = $config | ConvertTo-Json -Depth 10
-    
-    # Validate generated JSON
-    if (-not (Test-JsonValid $newConfigJson)) {
-        throw "Generated configuration JSON is invalid"
-    }
-    
-    Write-LogMessage "Generated configuration validated"
-    
-    # Write new configuration
-    try {
-        # Use UTF8 without BOM for better compatibility
-        [System.IO.File]::WriteAllText($configPath, $newConfigJson, [System.Text.UTF8Encoding]::new($false))
-        Write-LogMessage "Claude Desktop configuration updated successfully"
-    }
-    catch {
-        # Restore backup if write failed
-        if ($backupPath -and (Test-Path $backupPath)) {
-            Write-LogMessage "Write failed, restoring backup..."
-            Copy-Item $backupPath $configPath -Force
-        }
-        throw "Failed to write Claude Desktop configuration: $($_.Exception.Message)"
-    }
-    
-    # Verify written file is valid
-    try {
-        $verification = Get-Content $configPath -Raw | ConvertFrom-Json
-        Write-LogMessage "Written configuration verified"
-    }
-    catch {
-        # Restore backup if verification failed
-        if ($backupPath -and (Test-Path $backupPath)) {
-            Write-LogMessage "Verification failed, restoring backup..."
-            Copy-Item $backupPath $configPath -Force
-        }
-        throw "Written configuration file is invalid: $($_.Exception.Message)"
-    }
-
-    Write-LogMessage "Configuration written and verified for: $configPath"
-}
-
-function Remove-FoundryMcpConfig {
-    param([Parameter(Mandatory=$true)][string]$ConfigPath)
-
+function Read-ClaudeConfiguration {
+    param([string]$ConfigPath, [switch]$AllowMissing)
     if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
-        return $false
-    }
-
-    $fileState = Get-ConfigFileState $ConfigPath
-    if ($fileState -ne "ValidJSON") {
-        throw "Claude Desktop configuration is not valid JSON and was left unchanged: $ConfigPath"
-    }
-
-    $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-    if (-not $config -or -not ($config -is [PSCustomObject])) {
-        throw "Claude Desktop configuration root is not a JSON object and was left unchanged: $ConfigPath"
-    }
-
-    if (-not ($config.PSObject.Properties.Name -contains "mcpServers") -or
-        $null -eq $config.mcpServers -or
-        -not ($config.mcpServers -is [PSCustomObject])) {
-        Write-LogMessage "No MCP server object found in: $ConfigPath"
-        return $false
-    }
-
-    $entryNames = @("foundry-mcp", "foundry-vtt-mcp")
-    $removedNames = [System.Collections.Generic.List[string]]::new()
-    foreach ($entryName in $entryNames) {
-        if ($config.mcpServers.PSObject.Properties.Name -contains $entryName) {
-            $config.mcpServers.PSObject.Properties.Remove($entryName)
-            $removedNames.Add($entryName)
+        if ($AllowMissing) {
+            return [PSCustomObject]@{
+                Configuration = [PSCustomObject]@{}
+                Existed = $false
+                OriginalBytes = [byte[]]@()
+                OriginalHash = $null
+            }
         }
+        return $null
     }
-
-    if ($removedNames.Count -eq 0) {
-        Write-LogMessage "No Foundry MCP entry found in: $ConfigPath"
-        return $false
+    $null = Assert-RegularConfigurationFile $ConfigPath
+    $originalBytes = [System.IO.File]::ReadAllBytes($ConfigPath)
+    $memory = [System.IO.MemoryStream]::new($originalBytes, $false)
+    $reader = [System.IO.StreamReader]::new(
+        $memory,
+        [System.Text.UTF8Encoding]::new($false),
+        $true
+    )
+    try {
+        $contents = $reader.ReadToEnd()
     }
-
-    $backupPath = "$ConfigPath.backup-$(Get-Date -Format 'yyyyMMdd-HHmmssfff')"
-    Copy-Item -LiteralPath $ConfigPath -Destination $backupPath
-    Write-LogMessage "Created backup: $backupPath"
-
-    $newConfigJson = $config | ConvertTo-Json -Depth 100
-    if (-not (Test-JsonValid $newConfigJson)) {
-        throw "Generated configuration JSON is invalid; the original file was left unchanged"
+    finally {
+        $reader.Dispose()
+        $memory.Dispose()
     }
+    if ([string]::IsNullOrWhiteSpace($contents)) {
+        throw "JSON MCP client configuration is empty and was left unchanged: $ConfigPath"
+    }
+    try {
+        $config = $contents | ConvertFrom-Json
+    }
+    catch {
+        throw "JSON MCP client configuration is invalid and was left unchanged: $ConfigPath"
+    }
+    if (-not ($config -is [PSCustomObject])) {
+        throw "JSON MCP client configuration root is not an object and was left unchanged: $ConfigPath"
+    }
+    return [PSCustomObject]@{
+        Configuration = $config
+        Existed = $true
+        OriginalBytes = $originalBytes
+        OriginalHash = Get-ByteHash $originalBytes
+    }
+}
 
+function Write-ClaudeConfiguration {
+    param(
+        [string]$ConfigPath,
+        [object]$Configuration,
+        [object]$OriginalDocument
+    )
+    $parent = Split-Path -Parent $ConfigPath
+    [System.IO.Directory]::CreateDirectory($parent) | Out-Null
+    $json = $Configuration | ConvertTo-Json -Depth 100
+    $null = $json | ConvertFrom-Json
     $temporaryPath = "$ConfigPath.tmp-$PID"
     try {
-        [System.IO.File]::WriteAllText(
-            $temporaryPath,
-            $newConfigJson,
-            [System.Text.UTF8Encoding]::new($false)
-        )
-        Get-Content -LiteralPath $temporaryPath -Raw | ConvertFrom-Json | Out-Null
-        Move-Item -LiteralPath $temporaryPath -Destination $ConfigPath -Force
+        [System.IO.File]::WriteAllText($temporaryPath, $json, [System.Text.UTF8Encoding]::new($false))
+        $null = Get-Content -LiteralPath $temporaryPath -Raw | ConvertFrom-Json
+        Invoke-BeforeWriteFixtureHook
+        if ($OriginalDocument.Existed) {
+            $null = Assert-RegularConfigurationFile $ConfigPath
+            $currentBytes = [System.IO.File]::ReadAllBytes($ConfigPath)
+            if ((Get-ByteHash $currentBytes) -ne [string]$OriginalDocument.OriginalHash) {
+                throw "JSON MCP client configuration changed during migration and was left unchanged: $ConfigPath"
+            }
+            $backupPath = "$ConfigPath.backup-$(Get-Date -Format 'yyyyMMdd-HHmmssfff')-$([Guid]::NewGuid().ToString('N'))"
+            if (Test-Path -LiteralPath $backupPath) {
+                throw "Refusing to overwrite an existing JSON MCP client backup: $backupPath"
+            }
+            [System.IO.File]::Replace($temporaryPath, $ConfigPath, $backupPath, $true)
+            Write-LogMessage "Backed up existing configuration to $backupPath"
+        }
+        else {
+            if (Test-Path -LiteralPath $ConfigPath) {
+                throw "JSON MCP client configuration was created concurrently and was left unchanged: $ConfigPath"
+            }
+            [System.IO.File]::Move($temporaryPath, $ConfigPath)
+        }
     }
-    catch {
+    finally {
         Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
-        throw
+    }
+}
+
+function Ensure-McpServersObject {
+    param([object]$Configuration)
+    $mcpServers = Get-ObjectPropertyValue $Configuration "mcpServers"
+    if ($null -eq $mcpServers) {
+        $mcpServers = [PSCustomObject]@{}
+        $Configuration | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value $mcpServers
+    }
+    elseif (-not ($mcpServers -is [PSCustomObject])) {
+        throw "JSON MCP client mcpServers value is not an object and was left unchanged"
+    }
+    return $mcpServers
+}
+
+function Set-OwnedEntry {
+    param([string]$ConfigPath, [string]$ResolvedInstallDir)
+    $document = Read-ClaudeConfiguration -ConfigPath $ConfigPath -AllowMissing
+    $configuration = $document.Configuration
+    $mcpServers = Ensure-McpServersObject $configuration
+    $existingProperty = $mcpServers.PSObject.Properties[$PrimaryEntryName]
+    if ($null -ne $existingProperty -and
+        -not (Test-EntryOwnedByBridge -Entry $existingProperty.Value -ExpectedInstallDir $ResolvedInstallDir)) {
+        throw "The '$PrimaryEntryName' entry is not owned by this bridge and was left unchanged: $ConfigPath"
     }
 
-    Write-LogMessage "Removed only $($removedNames -join ', ') from: $ConfigPath"
+    foreach ($legacyName in @("foundry-vtt-mcp", "foundry-vtt-mcp-bridge")) {
+        $legacyProperty = $mcpServers.PSObject.Properties[$legacyName]
+        if ($null -ne $legacyProperty -and
+            (Test-EntryOwnedByBridge -Entry $legacyProperty.Value -ExpectedInstallDir $ResolvedInstallDir)) {
+            $mcpServers.PSObject.Properties.Remove($legacyName)
+            Write-LogMessage "Removed superseded installer-owned '$legacyName' entry from $ConfigPath"
+        }
+    }
+
+    $canonicalConfig = Join-Path $env:APPDATA "FoundryVTT MCP Bridge\foundry-servers.json"
+    $entry = [PSCustomObject]@{
+        command = Join-Path $ResolvedInstallDir "FoundryVTT MCP Bridge.exe"
+        args = @((Join-Path $ResolvedInstallDir "resources\server\index.bundle.cjs"))
+        env = [PSCustomObject]@{
+            ELECTRON_RUN_AS_NODE = "1"
+            FOUNDRY_SERVERS_CONFIG = $canonicalConfig
+            FOUNDRY_MCP_MANAGED_BY = $OwnerId
+        }
+    }
+    if ($null -eq $existingProperty) {
+        $mcpServers | Add-Member -MemberType NoteProperty -Name $PrimaryEntryName -Value $entry
+    }
+    else {
+        $existingProperty.Value = $entry
+    }
+    Write-ClaudeConfiguration `
+        -ConfigPath $ConfigPath `
+        -Configuration $configuration `
+        -OriginalDocument $document
+    Write-LogMessage "Configured owned '$PrimaryEntryName' entry in $ConfigPath"
+}
+
+function Remove-OwnedEntries {
+    param([string]$ConfigPath, [string]$ResolvedInstallDir)
+    $document = Read-ClaudeConfiguration -ConfigPath $ConfigPath
+    if ($null -eq $document) {
+        return $false
+    }
+    $configuration = $document.Configuration
+    $mcpServers = Get-ObjectPropertyValue $configuration "mcpServers"
+    if (-not ($mcpServers -is [PSCustomObject])) {
+        return $false
+    }
+
+    $removed = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in $KnownEntryNames) {
+        $property = $mcpServers.PSObject.Properties[$name]
+        if ($null -ne $property -and
+            (Test-EntryOwnedByBridge -Entry $property.Value -ExpectedInstallDir $ResolvedInstallDir)) {
+            $mcpServers.PSObject.Properties.Remove($name)
+            $removed.Add($name)
+        }
+    }
+    if ($removed.Count -eq 0) {
+        Write-LogMessage "No installer-owned MCP entry found in $ConfigPath"
+        return $false
+    }
+    Write-ClaudeConfiguration `
+        -ConfigPath $ConfigPath `
+        -Configuration $configuration `
+        -OriginalDocument $document
+    Write-LogMessage "Removed only installer-owned entries ($($removed -join ', ')) from $ConfigPath"
     return $true
 }
 
 try {
-    Write-LogMessage "=============================================="
-    Write-LogMessage "Starting Claude Desktop configuration..."
-    Write-LogMessage "=============================================="
-    Write-LogMessage "Log file location: $LogFile"
-    Write-LogMessage "PowerShell version: $($PSVersionTable.PSVersion)"
-    Write-LogMessage "Current user: $($env:USERNAME)"
-    Write-LogMessage "Install directory: $InstallDir"
-    Write-LogMessage "APPDATA: $($env:APPDATA)"
-    Write-LogMessage "Script parameters: $($PSBoundParameters | ConvertTo-Json)"
+    if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+        throw "InstallDir is required"
+    }
+    $resolvedInstallDir = Convert-ToFullPath $InstallDir
+    if ($null -eq $resolvedInstallDir) {
+        throw "InstallDir must be an absolute path"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($BeforeWriteSignalPath) -and
+        ($null -eq $ConfigPathOverride -or @($ConfigPathOverride).Count -eq 0) -and
+        ($null -eq $ClaudeCodeConfigPathOverride -or @($ClaudeCodeConfigPathOverride).Count -eq 0)) {
+        throw "BeforeWriteSignalPath is available only with an explicit fixture configuration path"
+    }
 
-    if ($Remove) {
-        Write-LogMessage "Removing Foundry MCP entries from every existing Claude Desktop configuration target..."
-        $targets = Get-ClaudeConfigTargets
-        $removedCount = 0
-        $failures = [System.Collections.Generic.List[string]]::new()
-
-        foreach ($target in $targets) {
-            $configPath = Join-Path $target.Dir "claude_desktop_config.json"
-            if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-                Write-LogMessage "No configuration file for $($target.Kind); skipping: $configPath"
-                continue
-            }
-
-            try {
-                if (Remove-FoundryMcpConfig -ConfigPath $configPath) {
-                    $removedCount++
+    $targets = Get-ClaudeConfigTargets
+    $successCount = 0
+    $failures = [System.Collections.Generic.List[string]]::new()
+    foreach ($target in $targets) {
+        if ([string]::IsNullOrWhiteSpace([string]$target.Path)) {
+            $failures.Add("$($target.Kind): invalid configuration path")
+            continue
+        }
+        try {
+            if ($Remove) {
+                if (Remove-OwnedEntries -ConfigPath $target.Path -ResolvedInstallDir $resolvedInstallDir) {
+                    $successCount++
                 }
             }
-            catch {
-                Write-LogMessage "Failed to update $($target.Kind): $($_.Exception.Message)" "ERROR"
-                $failures.Add("$($target.Kind): $($_.Exception.Message)")
+            else {
+                $desktopExe = Join-Path $resolvedInstallDir "FoundryVTT MCP Bridge.exe"
+                $serverBundle = Join-Path $resolvedInstallDir "resources\server\index.bundle.cjs"
+                if (-not (Test-Path -LiteralPath $desktopExe -PathType Leaf)) {
+                    throw "Desktop executable not found: $desktopExe"
+                }
+                if (-not (Test-Path -LiteralPath $serverBundle -PathType Leaf)) {
+                    throw "MCP server bundle not found: $serverBundle"
+                }
+                Set-OwnedEntry -ConfigPath $target.Path -ResolvedInstallDir $resolvedInstallDir
+                $successCount++
             }
-        }
-
-        Write-LogMessage "Removed Foundry MCP entries from $removedCount configuration file(s)."
-        if ($failures.Count -gt 0) {
-            throw "One or more Claude Desktop configurations were left unchanged: $($failures -join '; ')"
-        }
-
-        exit 0
-    }
-
-    if ([string]::IsNullOrWhiteSpace($InstallDir)) {
-        throw "InstallDir is required unless -Remove is used"
-    }
-    
-    # Validate installation directory exists
-    if (-not (Test-Path $InstallDir)) {
-        throw "Installation directory does not exist: $InstallDir"
-    }
-    
-    # Validate required files exist
-    $nodeExe = Join-Path $InstallDir "node.exe"
-    $mcpServer = Join-Path $InstallDir "foundry-mcp-server\packages\mcp-server\dist\index.cjs"
-    
-    if (-not (Test-Path $nodeExe)) {
-        throw "Node.js executable not found: $nodeExe"
-    }
-    
-    if (-not (Test-Path $mcpServer)) {
-        throw "MCP server not found: $mcpServer"
-    }
-    
-    Write-LogMessage "Installation files validated"
-
-    # Determine all Claude Desktop config locations (standalone + MSIX/Store)
-    $targets = Get-ClaudeConfigTargets
-    Write-LogMessage "Discovered $($targets.Count) potential Claude config location(s)"
-
-    $configuredCount = 0
-    $skippedCount = 0
-    $failures = [System.Collections.Generic.List[string]]::new()
-
-    foreach ($target in $targets) {
-        $claudeConfigDir = $target.Dir
-        $configPath = Join-Path $claudeConfigDir "claude_desktop_config.json"
-
-        Write-LogMessage "----------------------------------------------"
-        Write-LogMessage "Target: $($target.Kind)"
-        Write-LogMessage "Claude config path: $configPath"
-
-        $dirExists = Test-Path $claudeConfigDir
-        if (-not $dirExists) {
-            if (-not $target.Create) {
-                Write-LogMessage "Directory missing and not eligible for creation, skipping this target."
-                $skippedCount++
-                continue
-            }
-            Write-LogMessage "Creating Claude Desktop directory..."
-            try {
-                New-Item -ItemType Directory -Path $claudeConfigDir -Force | Out-Null
-            }
-            catch {
-                Write-LogMessage "Failed to create directory: $($_.Exception.Message)" "ERROR"
-                $failures.Add("$($target.Kind): could not create config directory")
-                continue
-            }
-        }
-
-        try {
-            Set-FoundryMcpConfig -ConfigPath $configPath -NodeExe $nodeExe -McpServer $mcpServer
-            $configuredCount++
-            Write-LogMessage "Configured: $($target.Kind)"
         }
         catch {
-            Write-LogMessage "Failed to configure $($target.Kind): $($_.Exception.Message)" "ERROR"
             $failures.Add("$($target.Kind): $($_.Exception.Message)")
+            Write-LogMessage $failures[$failures.Count - 1] "ERROR"
         }
     }
 
-    Write-LogMessage "=============================================="
-    Write-LogMessage "Configured $configuredCount location(s), skipped $skippedCount."
-
-    if ($configuredCount -eq 0) {
-        throw "No Claude Desktop configuration locations could be configured. Failures: $($failures -join '; ')"
+    if (-not $Remove -and $successCount -eq 0) {
+        throw "No Claude Desktop or Claude Code configuration could be updated"
     }
-
     if ($failures.Count -gt 0) {
-        Write-LogMessage "Some locations failed but at least one succeeded: $($failures -join '; ')" "WARN"
+        throw "One or more Claude Desktop or Claude Code configurations were left unchanged: $($failures -join '; ')"
     }
-
-    Write-LogMessage "Claude Desktop configuration completed successfully"
-    Write-LogMessage "Please restart Claude Desktop to load the new configuration"
-
     exit 0
 }
 catch {
-    $errorMsg = $_.Exception.Message
-    Write-LogMessage "Configuration failed: $errorMsg" "ERROR"
-    Write-LogMessage "Full exception details: $($_.Exception | ConvertTo-Json -Depth 3)" "ERROR"
-    Write-LogMessage "Stack trace: $($_.ScriptStackTrace)" "ERROR"
-    if ($Remove) {
-        Write-LogMessage "Failed targets were left unchanged; other targets may already have been cleaned and backed up" "ERROR"
-    }
-    else {
-        Write-LogMessage "The Claude Desktop configuration was not modified" "ERROR"
-    }
-    Write-LogMessage "=============================================="
-    Write-LogMessage "For detailed error information, check: $LogFile" "ERROR"
-    Write-LogMessage "=============================================="
-
-    # Provide concise error message for NSIS/user display
-    $shortError = switch -Wildcard ($errorMsg) {
-        "*MCP server not found*" { "MCP server files missing from installation" }
-        "*Node.js executable not found*" { "Node.js runtime missing from installation" }
-        "*Installation directory does not exist*" { "Installation directory not found" }
-        "*Cannot bind argument*" { "Claude Desktop configuration format error" }
-        "*ConvertFrom-Json*" { "Claude Desktop configuration file corrupted" }
-        "*Access*denied*" { "Permission denied accessing Claude Desktop configuration" }
-        Default { "Claude Desktop configuration failed" }
-    }
-
-    Write-Error "$shortError. Details in log: $LogFile"
+    Write-LogMessage $_.Exception.Message "ERROR"
+    Write-Error "$($_.Exception.Message). Details: $LogFile"
     exit 1
 }

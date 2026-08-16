@@ -18,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20.12.2'
+          node-version: '22.12.0'
           cache: npm
 
       - name: Install dependencies
@@ -30,8 +30,17 @@ jobs:
       - name: Clean build
         run: npm run build
 
+      - name: Strict typecheck
+        run: npm run typecheck
+
+      - name: Desktop lint
+        run: npm run lint:desktop
+
       - name: Unit tests
-        run: npm test -- --run
+        run: npm test
+
+      - name: Desktop Electron lifecycle tests
+        run: xvfb-run --auto-servernum npm run test:desktop:e2e
 
       - name: MCP schema and catalog checks
         run: npm run test:mcp:schema

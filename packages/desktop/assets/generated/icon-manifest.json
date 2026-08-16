@@ -1,0 +1,440 @@
+{
+  "schemaVersion": 1,
+  "design": {
+    "id": "foundry-d20-network-topology-v3",
+    "glyph": {
+      "file": "brand/mcp-bridge-glyph.svg",
+      "sha256": "2E4F56F345873B48861F52A98DC57DCA820E27F5EADA8CC119520BEE543A2526"
+    },
+    "background": {
+      "file": "brand/app-icon-background.svg",
+      "sha256": "2DB91F18CAEBDD9B3FB55658BA255A46A491504DB65CB7946F39140E593DF312"
+    },
+    "generator": {
+      "file": "../../../scripts/build-desktop-icons.mjs",
+      "sha256": "760E40E95F6A894244AC34A3815770B93034DB7CCE1F303E6D90B50BE78BA175"
+    },
+    "foundationOnlySizes": [
+      16,
+      20,
+      24,
+      32
+    ],
+    "topologySizes": [
+      40,
+      48
+    ]
+  },
+  "source": {
+    "file": "vendor/foundry/fvtt-d20.png",
+    "sha256": "6D0156A49AAF82836245F54AEB9BBF80F8B4FFFFCE67ACCE7FB029CCC14558CC",
+    "width": 512,
+    "height": 512
+  },
+  "outputs": [
+    {
+      "file": "app/app-icon-1024.png",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "C37D2E81FAAA0795826E762C153FFECC25368494E3C9797911F7DBC0C8C7DC77"
+    },
+    {
+      "file": "app/app-icon-16.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "5CB34D99844EDE2066733B62E6E9ED233F2FFE051FDA8D31EB3A9BA68A599696"
+    },
+    {
+      "file": "app/app-icon-20.png",
+      "width": 20,
+      "height": 20,
+      "sha256": "314DFE82A1F848C0D5202918B2DBDAEB25801007C215EC5E2BB913BA6D073177"
+    },
+    {
+      "file": "app/app-icon-24.png",
+      "width": 24,
+      "height": 24,
+      "sha256": "17336C444735222274E75E784FF2132B6852DB601CDDA6B086A7EC51333F3A4C"
+    },
+    {
+      "file": "app/app-icon-256.png",
+      "width": 256,
+      "height": 256,
+      "sha256": "069C8147D44CFE2CC104626AED7B86993D005802471BC77F2A6034BCF75DC85E"
+    },
+    {
+      "file": "app/app-icon-32.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "BBAC8537DDDFDB144675234734337F2FDFDE7CFF0F6D342E626C74E2758BB87E"
+    },
+    {
+      "file": "app/app-icon-40.png",
+      "width": 40,
+      "height": 40,
+      "sha256": "49F3D08F58838C5E85B62379AC75135EFF1AA71F3ECC58BDB1FC5051F2C4FA59"
+    },
+    {
+      "file": "app/app-icon-48.png",
+      "width": 48,
+      "height": 48,
+      "sha256": "A7490702E4BBB778C4741C1D4E0950EBCFDFDB70D4C1E1C209960572DC59C09D"
+    },
+    {
+      "file": "app/app-icon-512.png",
+      "width": 512,
+      "height": 512,
+      "sha256": "2151B9C02579BC21786F7E2927B86C8F7D47A56C881289BD13FFE09ED214ED0A"
+    },
+    {
+      "file": "app/app-icon.ico",
+      "sizes": [
+        16,
+        20,
+        24,
+        32,
+        40,
+        48,
+        64,
+        128,
+        256
+      ],
+      "sha256": "751A2D52DD677B4FF9A6D7EF352448D04624DA3A28A2452201469FCABD92C476"
+    },
+    {
+      "file": "app/app-icon.png",
+      "width": 512,
+      "height": 512,
+      "sha256": "2151B9C02579BC21786F7E2927B86C8F7D47A56C881289BD13FFE09ED214ED0A"
+    },
+    {
+      "file": "icon-preview.png",
+      "width": 1072,
+      "height": 616,
+      "sha256": "9D80ED6501369BEE0FC34D94EE5A6AF7028D0C08CD54FFBAD6FB05A9005FD84D"
+    },
+    {
+      "file": "tray/tray-connected-16.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "B2BAAE9B2F50B0E0DBDC81C1950BA93DD80C88C5456C01FE2BEE5680B7956BF1"
+    },
+    {
+      "file": "tray/tray-connected-20.png",
+      "width": 20,
+      "height": 20,
+      "sha256": "C21E3044D42609BA29200E5B055E3C2D0E7F5DBEB59BFDB85D59320BF76C6133"
+    },
+    {
+      "file": "tray/tray-connected-24.png",
+      "width": 24,
+      "height": 24,
+      "sha256": "C3FBD3F322D71D0266319872206773F48AF42B31943B666AFF6DA27DEC3757BA"
+    },
+    {
+      "file": "tray/tray-connected-32.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "2D75413A6844889F80BFD8AC5747D9B0E0181A767DC95F7412945ED4213E2021"
+    },
+    {
+      "file": "tray/tray-connected-40.png",
+      "width": 40,
+      "height": 40,
+      "sha256": "2BD3E2233865A6AFC47A4F9037059E3ABD67E6C5608FCA3C170B21995D253F5A"
+    },
+    {
+      "file": "tray/tray-connected-48.png",
+      "width": 48,
+      "height": 48,
+      "sha256": "3D18B49B2CE478A811290AFFDE6B31FFD7B1E6AEF81F7C8D82E2B01C069444C2"
+    },
+    {
+      "file": "tray/tray-connected.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "B2BAAE9B2F50B0E0DBDC81C1950BA93DD80C88C5456C01FE2BEE5680B7956BF1"
+    },
+    {
+      "file": "tray/tray-connected@2x.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "2D75413A6844889F80BFD8AC5747D9B0E0181A767DC95F7412945ED4213E2021"
+    },
+    {
+      "file": "tray/tray-error-16.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "A82F008C895C507A509BB79003554469D843FDDEC1799FAD9CCE96DD6A68060B"
+    },
+    {
+      "file": "tray/tray-error-20.png",
+      "width": 20,
+      "height": 20,
+      "sha256": "B79A814D1995AB402276E0A5604D9ECB02B1657C7CF1F332B9DE7F33E98D93FC"
+    },
+    {
+      "file": "tray/tray-error-24.png",
+      "width": 24,
+      "height": 24,
+      "sha256": "E4A09BFE1D42639452930A1444436E461E2E9A19EB3442B4D9CF31B23D57A2F4"
+    },
+    {
+      "file": "tray/tray-error-32.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "0BC3693AF4E26386D08A02EA3C66F81EC64B7F5DF744D6FF75617E6D4675EF64"
+    },
+    {
+      "file": "tray/tray-error-40.png",
+      "width": 40,
+      "height": 40,
+      "sha256": "FB444CA96C7FE2CE4868542C72344756D16133B4FC8EC455456B6141E246817E"
+    },
+    {
+      "file": "tray/tray-error-48.png",
+      "width": 48,
+      "height": 48,
+      "sha256": "59BA7617BCD6C44DF94AA7BDE81E4DC6EBA4E19B65D60FC4654B95D3690AF448"
+    },
+    {
+      "file": "tray/tray-error.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "A82F008C895C507A509BB79003554469D843FDDEC1799FAD9CCE96DD6A68060B"
+    },
+    {
+      "file": "tray/tray-error@2x.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "0BC3693AF4E26386D08A02EA3C66F81EC64B7F5DF744D6FF75617E6D4675EF64"
+    },
+    {
+      "file": "tray/tray-waiting-16.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "BF7011D1816054C429F58A23016DE70C80C674E1C2F082ED859EB122D1C5C95D"
+    },
+    {
+      "file": "tray/tray-waiting-20.png",
+      "width": 20,
+      "height": 20,
+      "sha256": "07B3FDF673F21770D231FC15165A70582AB70F3E72DC1EC78578A1D33382F1B3"
+    },
+    {
+      "file": "tray/tray-waiting-24.png",
+      "width": 24,
+      "height": 24,
+      "sha256": "AB2D02148C29981B180C96F3D74D155E1A7CBB6C6494E7C3CE835DC0F8515DF2"
+    },
+    {
+      "file": "tray/tray-waiting-32.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "41D9EBF6C8884B941B95A2E02F7B062A3952CCAB3C848DDF524F8622AA060662"
+    },
+    {
+      "file": "tray/tray-waiting-40.png",
+      "width": 40,
+      "height": 40,
+      "sha256": "456580D7A1C6CE64A0EBA6A0C93792471AA8EA20722578A3ADD169D9B474A975"
+    },
+    {
+      "file": "tray/tray-waiting-48.png",
+      "width": 48,
+      "height": 48,
+      "sha256": "B0B238F9A1F8249C19D0FE08A23CAAFF5CACA81A31945F1A41FC405BB1F9A584"
+    },
+    {
+      "file": "tray/tray-waiting.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "BF7011D1816054C429F58A23016DE70C80C674E1C2F082ED859EB122D1C5C95D"
+    },
+    {
+      "file": "tray/tray-waiting@2x.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "41D9EBF6C8884B941B95A2E02F7B062A3952CCAB3C848DDF524F8622AA060662"
+    }
+  ],
+  "runtimeAliases": [
+    {
+      "file": "app-icon.ico",
+      "sizes": [
+        16,
+        20,
+        24,
+        32,
+        40,
+        48,
+        64,
+        128,
+        256
+      ],
+      "sha256": "751A2D52DD677B4FF9A6D7EF352448D04624DA3A28A2452201469FCABD92C476"
+    },
+    {
+      "file": "app-icon.png",
+      "width": 512,
+      "height": 512,
+      "sha256": "2151B9C02579BC21786F7E2927B86C8F7D47A56C881289BD13FFE09ED214ED0A"
+    },
+    {
+      "file": "tray-icon-connected-16.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "B2BAAE9B2F50B0E0DBDC81C1950BA93DD80C88C5456C01FE2BEE5680B7956BF1"
+    },
+    {
+      "file": "tray-icon-connected-20.png",
+      "width": 20,
+      "height": 20,
+      "sha256": "C21E3044D42609BA29200E5B055E3C2D0E7F5DBEB59BFDB85D59320BF76C6133"
+    },
+    {
+      "file": "tray-icon-connected-24.png",
+      "width": 24,
+      "height": 24,
+      "sha256": "C3FBD3F322D71D0266319872206773F48AF42B31943B666AFF6DA27DEC3757BA"
+    },
+    {
+      "file": "tray-icon-connected-32.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "2D75413A6844889F80BFD8AC5747D9B0E0181A767DC95F7412945ED4213E2021"
+    },
+    {
+      "file": "tray-icon-connected-40.png",
+      "width": 40,
+      "height": 40,
+      "sha256": "2BD3E2233865A6AFC47A4F9037059E3ABD67E6C5608FCA3C170B21995D253F5A"
+    },
+    {
+      "file": "tray-icon-connected-48.png",
+      "width": 48,
+      "height": 48,
+      "sha256": "3D18B49B2CE478A811290AFFDE6B31FFD7B1E6AEF81F7C8D82E2B01C069444C2"
+    },
+    {
+      "file": "tray-icon-connected.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "B2BAAE9B2F50B0E0DBDC81C1950BA93DD80C88C5456C01FE2BEE5680B7956BF1"
+    },
+    {
+      "file": "tray-icon-connected@2x.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "2D75413A6844889F80BFD8AC5747D9B0E0181A767DC95F7412945ED4213E2021"
+    },
+    {
+      "file": "tray-icon-error-16.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "A82F008C895C507A509BB79003554469D843FDDEC1799FAD9CCE96DD6A68060B"
+    },
+    {
+      "file": "tray-icon-error-20.png",
+      "width": 20,
+      "height": 20,
+      "sha256": "B79A814D1995AB402276E0A5604D9ECB02B1657C7CF1F332B9DE7F33E98D93FC"
+    },
+    {
+      "file": "tray-icon-error-24.png",
+      "width": 24,
+      "height": 24,
+      "sha256": "E4A09BFE1D42639452930A1444436E461E2E9A19EB3442B4D9CF31B23D57A2F4"
+    },
+    {
+      "file": "tray-icon-error-32.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "0BC3693AF4E26386D08A02EA3C66F81EC64B7F5DF744D6FF75617E6D4675EF64"
+    },
+    {
+      "file": "tray-icon-error-40.png",
+      "width": 40,
+      "height": 40,
+      "sha256": "FB444CA96C7FE2CE4868542C72344756D16133B4FC8EC455456B6141E246817E"
+    },
+    {
+      "file": "tray-icon-error-48.png",
+      "width": 48,
+      "height": 48,
+      "sha256": "59BA7617BCD6C44DF94AA7BDE81E4DC6EBA4E19B65D60FC4654B95D3690AF448"
+    },
+    {
+      "file": "tray-icon-error.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "A82F008C895C507A509BB79003554469D843FDDEC1799FAD9CCE96DD6A68060B"
+    },
+    {
+      "file": "tray-icon-error@2x.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "0BC3693AF4E26386D08A02EA3C66F81EC64B7F5DF744D6FF75617E6D4675EF64"
+    },
+    {
+      "file": "tray-icon-waiting-16.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "BF7011D1816054C429F58A23016DE70C80C674E1C2F082ED859EB122D1C5C95D"
+    },
+    {
+      "file": "tray-icon-waiting-20.png",
+      "width": 20,
+      "height": 20,
+      "sha256": "07B3FDF673F21770D231FC15165A70582AB70F3E72DC1EC78578A1D33382F1B3"
+    },
+    {
+      "file": "tray-icon-waiting-24.png",
+      "width": 24,
+      "height": 24,
+      "sha256": "AB2D02148C29981B180C96F3D74D155E1A7CBB6C6494E7C3CE835DC0F8515DF2"
+    },
+    {
+      "file": "tray-icon-waiting-32.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "41D9EBF6C8884B941B95A2E02F7B062A3952CCAB3C848DDF524F8622AA060662"
+    },
+    {
+      "file": "tray-icon-waiting-40.png",
+      "width": 40,
+      "height": 40,
+      "sha256": "456580D7A1C6CE64A0EBA6A0C93792471AA8EA20722578A3ADD169D9B474A975"
+    },
+    {
+      "file": "tray-icon-waiting-48.png",
+      "width": 48,
+      "height": 48,
+      "sha256": "B0B238F9A1F8249C19D0FE08A23CAAFF5CACA81A31945F1A41FC405BB1F9A584"
+    },
+    {
+      "file": "tray-icon-waiting.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "BF7011D1816054C429F58A23016DE70C80C674E1C2F082ED859EB122D1C5C95D"
+    },
+    {
+      "file": "tray-icon-waiting@2x.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "41D9EBF6C8884B941B95A2E02F7B062A3952CCAB3C848DDF524F8622AA060662"
+    },
+    {
+      "file": "tray-icon.png",
+      "width": 16,
+      "height": 16,
+      "sha256": "B2BAAE9B2F50B0E0DBDC81C1950BA93DD80C88C5456C01FE2BEE5680B7956BF1"
+    },
+    {
+      "file": "tray-icon@2x.png",
+      "width": 32,
+      "height": 32,
+      "sha256": "2D75413A6844889F80BFD8AC5747D9B0E0181A767DC95F7412945ED4213E2021"
+    }
+  ]
+}

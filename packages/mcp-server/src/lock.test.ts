@@ -1,7 +1,7 @@
 /**
  * Unit tests for lock-file helpers (src/lock.ts).
  *
- * All tests use the injected `checkProcessName` / `checkStaleness` parameters
+ * All tests use the injected `checkProcessName` / `readCommandLine` parameters
  * of `evaluateLockFile` so that no child-process or filesystem calls are made.
  * The lower-level helpers (`isLockStale`, `getProcessName`) are tested with
  * real temporary files and vi.mock where needed.
@@ -12,10 +12,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  acquireBackendLockFile,
   evaluateLockFile,
   isLockStale,
   isNodeProcess,
   getProcessName,
+  parseBackendLockIdentity,
   LOCK_MAX_AGE_MS,
 } from './lock.js';
 
@@ -30,16 +32,14 @@ describe('evaluateLockFile', () => {
   it('returns "orphaned" when process is not node.exe (PID reuse by OS service)', () => {
     const result = evaluateLockFile(26188, FAKE_LOCK, {
       checkProcessName: _pid => false, // not a node process
-      checkStaleness: _p => false, // lock file is fresh
     });
     expect(result).toBe('orphaned');
   });
 
-  // Test 2: PID belongs to a live node process with a fresh lock file
-  it('returns "valid" when process is node.exe and lock file is fresh', () => {
+  // Test 2: PID belongs to a live node process
+  it('returns "valid" for a live legacy node PID regardless of lock age', () => {
     const result = evaluateLockFile(12345, FAKE_LOCK, {
       checkProcessName: _pid => true, // node process alive
-      checkStaleness: _p => false, // lock file is fresh
     });
     expect(result).toBe('valid');
   });
@@ -51,38 +51,191 @@ describe('evaluateLockFile', () => {
   it('returns "orphaned" when checkProcessName returns false for a non-existent PID', () => {
     const result = evaluateLockFile(99999, FAKE_LOCK, {
       checkProcessName: _pid => false, // getProcessName would return null for dead PIDs
-      checkStaleness: _p => false,
     });
     expect(result).toBe('orphaned');
   });
 
-  // Test 4: Lock file older than 60 minutes (stale), even if process is node
-  it('returns "orphaned" when lock file is stale (> 60 min) even if process is node.exe', () => {
-    const result = evaluateLockFile(12345, FAKE_LOCK, {
-      checkProcessName: _pid => true, // node process alive
-      checkStaleness: _p => true, // lock file is stale
-    });
+  it('accepts an hours-old verified backend identity', () => {
+    const entryPath = path.resolve('backend.js');
+    const result = evaluateLockFile(
+      {
+        pid: 12345,
+        instanceId: 'instance-a',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        entryPath,
+      },
+      FAKE_LOCK,
+      {
+        checkProcessName: () => true,
+        readCommandLine: () => `node "${entryPath}"`,
+      }
+    );
+    expect(result).toBe('valid');
+  });
+
+  it('accepts a packaged Electron-as-Node runtime when its command line owns the entry path', () => {
+    const entryPath = path.resolve('backend.bundle.cjs');
+    const checkProcessName = vi.fn().mockReturnValue(false);
+    const result = evaluateLockFile(
+      {
+        pid: 12345,
+        instanceId: 'packaged-instance',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        entryPath,
+      },
+      FAKE_LOCK,
+      {
+        checkProcessName,
+        readCommandLine: () => `"FoundryVTT MCP Bridge.exe" "${entryPath}"`,
+      }
+    );
+    expect(result).toBe('valid');
+    expect(checkProcessName).not.toHaveBeenCalled();
+  });
+
+  it('rejects a reused Node PID whose command line points at another program', () => {
+    const result = evaluateLockFile(
+      {
+        pid: 12345,
+        instanceId: 'instance-a',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        entryPath: '/srv/foundry/backend.js',
+      },
+      FAKE_LOCK,
+      {
+        checkProcessName: () => true,
+        readCommandLine: () => 'node /srv/unrelated/worker.js',
+      }
+    );
     expect(result).toBe('orphaned');
   });
 
-  // Edge: both checks fail simultaneously
-  it('returns "orphaned" when process is not node AND lock file is stale', () => {
+  it('fails safe when a live Node command line cannot be inspected', () => {
+    const result = evaluateLockFile(
+      {
+        pid: 12345,
+        instanceId: 'instance-a',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        entryPath: '/srv/foundry/backend.js',
+      },
+      FAKE_LOCK,
+      {
+        checkProcessName: () => true,
+        readCommandLine: () => null,
+      }
+    );
+    expect(result).toBe('valid');
+  });
+
+  it('requires a Node-named process for a legacy PID-only lock', () => {
+    const readCommandLine = vi.fn();
     const result = evaluateLockFile(26188, FAKE_LOCK, {
       checkProcessName: () => false,
-      checkStaleness: () => true,
+      readCommandLine,
     });
     expect(result).toBe('orphaned');
+    expect(readCommandLine).not.toHaveBeenCalled();
+  });
+});
+
+describe('parseBackendLockIdentity', () => {
+  it('parses current JSON identity metadata', () => {
+    expect(
+      parseBackendLockIdentity(
+        JSON.stringify({
+          pid: 42,
+          instanceId: 'abc',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          entryPath: 'C:\\app\\backend.js',
+        })
+      )
+    ).toEqual({
+      pid: 42,
+      instanceId: 'abc',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      entryPath: 'C:\\app\\backend.js',
+    });
   });
 
-  // Custom maxAgeMs is forwarded to checkStaleness
-  it('forwards custom maxAgeMs to checkStaleness', () => {
-    const checkStaleness = vi.fn().mockReturnValue(false);
-    evaluateLockFile(1, FAKE_LOCK, {
-      checkProcessName: () => true,
-      checkStaleness,
-      maxAgeMs: 999,
+  it('parses legacy PID-only locks without using file age as identity', () => {
+    expect(parseBackendLockIdentity('12345\n')).toEqual({
+      pid: 12345,
+      instanceId: 'legacy-12345',
+      startedAt: '',
+      entryPath: '',
     });
-    expect(checkStaleness).toHaveBeenCalledWith(FAKE_LOCK, 999);
+  });
+
+  it('rejects corrupt or incomplete identities', () => {
+    expect(parseBackendLockIdentity('')).toBeNull();
+    expect(parseBackendLockIdentity('{')).toBeNull();
+    expect(parseBackendLockIdentity('{"pid":42}')).toBeNull();
+    expect(parseBackendLockIdentity('-1')).toBeNull();
+  });
+});
+
+describe('acquireBackendLockFile', () => {
+  it('waits for a simultaneous creator to finish writing an empty recent lock', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-lock-race-'));
+    const lockFile = path.join(directory, 'backend.lock');
+    const holder = {
+      pid: 101,
+      instanceId: 'holder-instance',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      entryPath: '/app/backend.js',
+    };
+    const contender = {
+      pid: 202,
+      instanceId: 'contender-instance',
+      startedAt: '2026-01-01T00:00:01.000Z',
+      entryPath: '/app/backend.js',
+    };
+    fs.writeFileSync(lockFile, '');
+    let waits = 0;
+
+    try {
+      const result = await acquireBackendLockFile(lockFile, contender, {
+        initializationGraceMs: 100,
+        retryDelayMs: 1,
+        isProcessAlive: () => true,
+        evaluateIdentity: () => 'valid',
+        wait: async () => {
+          waits += 1;
+          fs.writeFileSync(lockFile, JSON.stringify(holder));
+        },
+      });
+
+      expect(result).toEqual({ acquired: false, existing: holder });
+      expect(waits).toBe(1);
+      expect(parseBackendLockIdentity(fs.readFileSync(lockFile, 'utf8'))).toEqual(holder);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('replaces an old corrupt lock and writes a complete identity', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-lock-corrupt-'));
+    const lockFile = path.join(directory, 'backend.lock');
+    const identity = {
+      pid: 303,
+      instanceId: 'replacement-instance',
+      startedAt: '2026-01-01T00:00:02.000Z',
+      entryPath: '/app/backend.js',
+    };
+    fs.writeFileSync(lockFile, '{');
+    const old = new Date(Date.now() - 5_000);
+    fs.utimesSync(lockFile, old, old);
+
+    try {
+      const result = await acquireBackendLockFile(lockFile, identity, {
+        initializationGraceMs: 100,
+      });
+      expect(result.acquired).toBe(true);
+      if (result.acquired) fs.closeSync(result.fd);
+      expect(parseBackendLockIdentity(fs.readFileSync(lockFile, 'utf8'))).toEqual(identity);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 

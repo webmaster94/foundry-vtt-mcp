@@ -1,3 +1,25 @@
+## v0.13.0 (2026-08-15)
+
+### Desktop bridge
+
+- Added a Windows desktop controller with a native menu bar, notification-area tray icon, close-to-tray behavior, About dialog, and a connection-first dashboard for every configured Foundry profile.
+- Added a structured server-connection editor with masked token retain/replace/clear controls, atomic saves, conflict detection, live reload, and exact rollback when a listener cannot be applied.
+- Added a text-free Foundry/MCP bridge icon family with crisp taskbar and multi-resolution tray states for connected, waiting, and error conditions.
+- Removed the native close toast that could create a second root-level Start Menu shortcut; upgrades delete only that exact obsolete shortcut when it still targets this installation.
+
+### Windows installer
+
+- Added a per-user NSIS installer with Start Menu shortcuts and a single Programs & Features entry, plus guarded upgrade detection for the previous Foundry MCP Server layout.
+- Migrates only installer-owned Claude Desktop, Claude Code, and Codex entries; foreign/source entries and user profile data remain untouched. Upgrade and uninstall stop only exactly owned processes and refuse unsafe reparse-point or concurrent-config mutations.
+- Installer-managed MCP clients now use the GUI-subsystem desktop executable in Electron Node mode, preventing stdio wrappers from flashing Command Prompt windows. Previous `runtime\\node.exe` and legacy layouts remain recognized for safe migration and cleanup.
+
+### Release and runtime integrity
+
+- Added desktop unit/Electron tests, icon freshness and wiring checks, packaged Windows lifecycle coverage, installer junction/config safety fixtures, strict version gates, and current-source payload attestation.
+- Hardened backend singleton ownership, lock initialization, freshness replacement, desktop status/control RPCs, and transactional multi-profile configuration reloads without removing headless/server compatibility.
+
+---
+
 ## v0.12.0 (2026-08-15)
 
 ### Stability and connection recovery
