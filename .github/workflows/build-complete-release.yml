@@ -173,9 +173,8 @@ jobs:
       - name: Exercise packaged Windows lifecycle
         env:
           FOUNDRY_MCP_ALLOW_PACKAGED_LIFECYCLE_TEST: '1'
-        run: >-
-          npm run test:windows-packaged-lifecycle --
-          --installer "installer\build\FoundryVTT-MCP-Bridge-Setup-${{ env.PACKAGE_VERSION }}.exe"
+          FOUNDRY_MCP_LIFECYCLE_INSTALLER: installer\build\FoundryVTT-MCP-Bridge-Setup-${{ env.PACKAGE_VERSION }}.exe
+        run: npm run test:windows-packaged-lifecycle
 
       - name: Verify installer package
         run: |
