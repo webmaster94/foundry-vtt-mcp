@@ -405,13 +405,59 @@ function sameWindowsPath(left, right) {
   return normalizedLeft !== null && normalizedLeft === normalizedRight;
 }
 
-function isOwned(group) {
+function isVerifiedBridgeSource(group) {
+  const root = group.root[0];
+  const command = readScalar(root, 'command');
+  const argument = readOnlyArgument(root);
+  if (!command || !argument) return false;
+  const commandName = path.win32.basename(command).toLowerCase();
+  if (!['node', 'node.exe'].includes(commandName)) return false;
+
+  const normalizedArgument = normalizeAbsoluteWindowsPath(argument);
+  if (!normalizedArgument || !fs.existsSync(normalizedArgument)) return false;
+  const scriptStat = fs.lstatSync(normalizedArgument);
+  if (!scriptStat.isFile() || scriptStat.isSymbolicLink()) return false;
+  if (!['index.js', 'index.cjs'].includes(path.win32.basename(normalizedArgument))) return false;
+
+  const distRoot = path.win32.dirname(normalizedArgument);
+  const serverRoot = path.win32.dirname(distRoot);
+  const packagesRoot = path.win32.dirname(serverRoot);
+  const repositoryRoot = path.win32.dirname(packagesRoot);
+  if (
+    path.win32.basename(distRoot) !== 'dist' ||
+    path.win32.basename(serverRoot) !== 'mcp-server' ||
+    path.win32.basename(packagesRoot) !== 'packages'
+  ) {
+    return false;
+  }
+
+  try {
+    const rootPackage = JSON.parse(
+      fs.readFileSync(path.win32.join(repositoryRoot, 'package.json'))
+    );
+    const serverPackage = JSON.parse(fs.readFileSync(path.win32.join(serverRoot, 'package.json')));
+    const moduleManifest = JSON.parse(
+      fs.readFileSync(path.win32.join(packagesRoot, 'foundry-module', 'module.json'))
+    );
+    return (
+      rootPackage.name === 'foundry-mcp-integration' &&
+      rootPackage.repository?.url === 'https://github.com/webmaster94/foundry-vtt-mcp.git' &&
+      serverPackage.name === '@foundry-mcp/server' &&
+      moduleManifest.id === 'foundry-mcp-bridge'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isOwned(group, { allowVerifiedSource = false } = {}) {
   const root = group.root[0];
   const env = group.env[0] ?? null;
   if (env && readScalar(env, 'FOUNDRY_MCP_MANAGED_BY') === OWNER_ID) return true;
 
   const command = readScalar(root, 'command');
   const argument = readOnlyArgument(root);
+  if (allowVerifiedSource && isVerifiedBridgeSource(group)) return true;
   const normalizedCommand = normalizeAbsoluteWindowsPath(command);
   if (!normalizedCommand || !argument) return false;
   const commandName = path.win32.basename(normalizedCommand);
@@ -482,7 +528,7 @@ function planInstall(text, installDir) {
   const operations = new Map();
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
   const primary = parsed.groups.get(PRIMARY_NAME);
-  if (primary && !isOwned(primary)) {
+  if (primary && !isOwned(primary, { allowVerifiedSource: true })) {
     fail(`The '${PRIMARY_NAME}' Codex entry is not owned by this bridge and was left unchanged`);
   }
 
@@ -499,7 +545,7 @@ function planInstall(text, installDir) {
   for (const name of KNOWN_NAMES) {
     if (name === PRIMARY_NAME) continue;
     const group = parsed.groups.get(name);
-    if (!group || !isOwned(group)) continue;
+    if (!group || !isOwned(group, { allowVerifiedSource: true })) continue;
     for (const section of group.descendants) operations.set(section.start, '');
   }
 

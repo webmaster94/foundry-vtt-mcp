@@ -31,11 +31,27 @@ $PrimaryEntryName = "foundry-mcp"
 $KnownEntryNames = @("foundry-mcp", "foundry-vtt-mcp", "foundry-vtt-mcp-bridge")
 $LogFile = Join-Path $env:TEMP "foundry-mcp-claude-config.log"
 
+# Windows PowerShell 5.1's ConvertFrom-Json rejects valid objects containing
+# an empty-string property name. Claude Code can legitimately create such
+# properties in ~/.claude.json, so use the .NET Framework JSON parser and
+# retain object maps as dictionaries instead.
+Add-Type -AssemblyName System.Web.Extensions
+$JsonSerializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+$JsonSerializer.MaxJsonLength = [int]::MaxValue
+$JsonSerializer.RecursionLimit = 200
+
 function Write-LogMessage {
     param([string]$Message, [string]$Level = "INFO")
     $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [$Level] $Message"
     Write-Output $line
     Add-Content -LiteralPath $LogFile -Value $line -ErrorAction SilentlyContinue
+}
+
+try {
+    [System.IO.File]::WriteAllText($LogFile, "", [System.Text.UTF8Encoding]::new($false))
+}
+catch {
+    # Logging must never make client configuration fail.
 }
 
 function Convert-ToFullPath {
@@ -65,11 +81,68 @@ function Get-ObjectPropertyValue {
     if ($null -eq $Object) {
         return $null
     }
+    if ($Object -is [System.Collections.IDictionary]) {
+        $hasKey = if ($null -ne $Object.PSObject.Methods["ContainsKey"]) {
+            $Object.ContainsKey($Name)
+        }
+        else {
+            $Object.Contains($Name)
+        }
+        if ($hasKey) {
+            return $Object[$Name]
+        }
+        return $null
+    }
     $property = $Object.PSObject.Properties[$Name]
     if ($null -eq $property) {
         return $null
     }
     return $property.Value
+}
+
+function Test-IsObjectMap {
+    param([object]$Object)
+    return ($Object -is [System.Collections.IDictionary] -or $Object -is [PSCustomObject])
+}
+
+function Test-ObjectPropertyExists {
+    param([object]$Object, [string]$Name)
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($null -ne $Object.PSObject.Methods["ContainsKey"]) {
+            return $Object.ContainsKey($Name)
+        }
+        return $Object.Contains($Name)
+    }
+    return ($null -ne $Object -and $null -ne $Object.PSObject.Properties[$Name])
+}
+
+function Set-ObjectPropertyValue {
+    param([object]$Object, [string]$Name, [object]$Value)
+    if ($Object -is [System.Collections.IDictionary]) {
+        $Object[$Name] = $Value
+        return
+    }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        $Object | Add-Member -MemberType NoteProperty -Name $Name -Value $Value
+    }
+    else {
+        $property.Value = $Value
+    }
+}
+
+function Remove-ObjectProperty {
+    param([object]$Object, [string]$Name)
+    if ($Object -is [System.Collections.IDictionary]) {
+        $Object.Remove($Name)
+        return
+    }
+    $Object.PSObject.Properties.Remove($Name)
+}
+
+function ConvertFrom-CompatibleJson {
+    param([string]$Json)
+    return $JsonSerializer.DeserializeObject($Json)
 }
 
 function Get-ByteHash {
@@ -116,14 +189,65 @@ function Get-OnlyArgument {
     return [string]@($arguments)[0]
 }
 
+function Test-IsVerifiedBridgeSourceEntry {
+    param([string]$Command, [string]$Argument)
+    $commandName = [System.IO.Path]::GetFileName($Command)
+    if ($Command -notin @("node", "node.exe") -and $commandName -ine "node.exe") {
+        return $false
+    }
+
+    $scriptPath = Convert-ToFullPath $Argument
+    if ($null -eq $scriptPath -or -not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        return $false
+    }
+    if ([System.IO.Path]::GetFileName($scriptPath) -notin @("index.js", "index.cjs")) {
+        return $false
+    }
+
+    $distRoot = Split-Path -Parent $scriptPath
+    $serverRoot = Split-Path -Parent $distRoot
+    $packagesRoot = Split-Path -Parent $serverRoot
+    $repositoryRoot = Split-Path -Parent $packagesRoot
+    if ((Split-Path -Leaf $distRoot) -ine "dist" -or
+        (Split-Path -Leaf $serverRoot) -ine "mcp-server" -or
+        (Split-Path -Leaf $packagesRoot) -ine "packages") {
+        return $false
+    }
+
+    $rootPackagePath = Join-Path $repositoryRoot "package.json"
+    $serverPackagePath = Join-Path $serverRoot "package.json"
+    $moduleManifestPath = Join-Path $packagesRoot "foundry-module\module.json"
+    foreach ($path in @($rootPackagePath, $serverPackagePath, $moduleManifestPath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            return $false
+        }
+    }
+
+    try {
+        $rootPackage = ConvertFrom-CompatibleJson ([System.IO.File]::ReadAllText($rootPackagePath))
+        $serverPackage = ConvertFrom-CompatibleJson ([System.IO.File]::ReadAllText($serverPackagePath))
+        $moduleManifest = ConvertFrom-CompatibleJson ([System.IO.File]::ReadAllText($moduleManifestPath))
+        $repository = Get-ObjectPropertyValue $rootPackage "repository"
+        return (
+            [string](Get-ObjectPropertyValue $rootPackage "name") -eq "foundry-mcp-integration" -and
+            [string](Get-ObjectPropertyValue $repository "url") -eq "https://github.com/webmaster94/foundry-vtt-mcp.git" -and
+            [string](Get-ObjectPropertyValue $serverPackage "name") -eq "@foundry-mcp/server" -and
+            [string](Get-ObjectPropertyValue $moduleManifest "id") -eq "foundry-mcp-bridge"
+        )
+    }
+    catch {
+        return $false
+    }
+}
+
 function Test-EntryOwnedByBridge {
-    param([object]$Entry, [string]$ExpectedInstallDir)
-    if ($null -eq $Entry -or -not ($Entry -is [PSCustomObject])) {
+    param([object]$Entry, [string]$ExpectedInstallDir, [switch]$AllowVerifiedSource)
+    if (-not (Test-IsObjectMap $Entry)) {
         return $false
     }
 
     $environment = Get-ObjectPropertyValue $Entry "env"
-    if ($environment -is [PSCustomObject] -and
+    if ((Test-IsObjectMap $environment) -and
         [string](Get-ObjectPropertyValue $environment "FOUNDRY_MCP_MANAGED_BY") -eq $OwnerId) {
         return $true
     }
@@ -132,6 +256,10 @@ function Test-EntryOwnedByBridge {
     $argument = Get-OnlyArgument $Entry
     if ([string]::IsNullOrWhiteSpace($command) -or [string]::IsNullOrWhiteSpace($argument)) {
         return $false
+    }
+
+    if ($AllowVerifiedSource -and (Test-IsVerifiedBridgeSourceEntry $command $argument)) {
+        return $true
     }
 
     if (-not [string]::IsNullOrWhiteSpace($ExpectedInstallDir)) {
@@ -265,12 +393,12 @@ function Read-ClaudeConfiguration {
         throw "JSON MCP client configuration is empty and was left unchanged: $ConfigPath"
     }
     try {
-        $config = $contents | ConvertFrom-Json
+        $config = ConvertFrom-CompatibleJson $contents
     }
     catch {
         throw "JSON MCP client configuration is invalid and was left unchanged: $ConfigPath"
     }
-    if (-not ($config -is [PSCustomObject])) {
+    if (-not (Test-IsObjectMap $config)) {
         throw "JSON MCP client configuration root is not an object and was left unchanged: $ConfigPath"
     }
     return [PSCustomObject]@{
@@ -290,11 +418,11 @@ function Write-ClaudeConfiguration {
     $parent = Split-Path -Parent $ConfigPath
     [System.IO.Directory]::CreateDirectory($parent) | Out-Null
     $json = $Configuration | ConvertTo-Json -Depth 100
-    $null = $json | ConvertFrom-Json
+    $null = ConvertFrom-CompatibleJson $json
     $temporaryPath = "$ConfigPath.tmp-$PID"
     try {
         [System.IO.File]::WriteAllText($temporaryPath, $json, [System.Text.UTF8Encoding]::new($false))
-        $null = Get-Content -LiteralPath $temporaryPath -Raw | ConvertFrom-Json
+        $null = ConvertFrom-CompatibleJson (Get-Content -LiteralPath $temporaryPath -Raw)
         Invoke-BeforeWriteFixtureHook
         if ($OriginalDocument.Existed) {
             $null = Assert-RegularConfigurationFile $ConfigPath
@@ -325,10 +453,10 @@ function Ensure-McpServersObject {
     param([object]$Configuration)
     $mcpServers = Get-ObjectPropertyValue $Configuration "mcpServers"
     if ($null -eq $mcpServers) {
-        $mcpServers = [PSCustomObject]@{}
-        $Configuration | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value $mcpServers
+        $mcpServers = [ordered]@{}
+        Set-ObjectPropertyValue $Configuration "mcpServers" $mcpServers
     }
-    elseif (-not ($mcpServers -is [PSCustomObject])) {
+    elseif (-not (Test-IsObjectMap $mcpServers)) {
         throw "JSON MCP client mcpServers value is not an object and was left unchanged"
     }
     return $mcpServers
@@ -339,37 +467,33 @@ function Set-OwnedEntry {
     $document = Read-ClaudeConfiguration -ConfigPath $ConfigPath -AllowMissing
     $configuration = $document.Configuration
     $mcpServers = Ensure-McpServersObject $configuration
-    $existingProperty = $mcpServers.PSObject.Properties[$PrimaryEntryName]
-    if ($null -ne $existingProperty -and
-        -not (Test-EntryOwnedByBridge -Entry $existingProperty.Value -ExpectedInstallDir $ResolvedInstallDir)) {
+    $hasExistingEntry = Test-ObjectPropertyExists $mcpServers $PrimaryEntryName
+    $existingEntry = Get-ObjectPropertyValue $mcpServers $PrimaryEntryName
+    if ($hasExistingEntry -and
+        -not (Test-EntryOwnedByBridge -Entry $existingEntry -ExpectedInstallDir $ResolvedInstallDir -AllowVerifiedSource)) {
         throw "The '$PrimaryEntryName' entry is not owned by this bridge and was left unchanged: $ConfigPath"
     }
 
     foreach ($legacyName in @("foundry-vtt-mcp", "foundry-vtt-mcp-bridge")) {
-        $legacyProperty = $mcpServers.PSObject.Properties[$legacyName]
-        if ($null -ne $legacyProperty -and
-            (Test-EntryOwnedByBridge -Entry $legacyProperty.Value -ExpectedInstallDir $ResolvedInstallDir)) {
-            $mcpServers.PSObject.Properties.Remove($legacyName)
+        $legacyEntry = Get-ObjectPropertyValue $mcpServers $legacyName
+        if ((Test-ObjectPropertyExists $mcpServers $legacyName) -and
+            (Test-EntryOwnedByBridge -Entry $legacyEntry -ExpectedInstallDir $ResolvedInstallDir -AllowVerifiedSource)) {
+            Remove-ObjectProperty $mcpServers $legacyName
             Write-LogMessage "Removed superseded installer-owned '$legacyName' entry from $ConfigPath"
         }
     }
 
     $canonicalConfig = Join-Path $env:APPDATA "FoundryVTT MCP Bridge\foundry-servers.json"
-    $entry = [PSCustomObject]@{
+    $entry = [ordered]@{
         command = Join-Path $ResolvedInstallDir "FoundryVTT MCP Bridge.exe"
         args = @((Join-Path $ResolvedInstallDir "resources\server\index.bundle.cjs"))
-        env = [PSCustomObject]@{
+        env = [ordered]@{
             ELECTRON_RUN_AS_NODE = "1"
             FOUNDRY_SERVERS_CONFIG = $canonicalConfig
             FOUNDRY_MCP_MANAGED_BY = $OwnerId
         }
     }
-    if ($null -eq $existingProperty) {
-        $mcpServers | Add-Member -MemberType NoteProperty -Name $PrimaryEntryName -Value $entry
-    }
-    else {
-        $existingProperty.Value = $entry
-    }
+    Set-ObjectPropertyValue $mcpServers $PrimaryEntryName $entry
     Write-ClaudeConfiguration `
         -ConfigPath $ConfigPath `
         -Configuration $configuration `
@@ -385,16 +509,16 @@ function Remove-OwnedEntries {
     }
     $configuration = $document.Configuration
     $mcpServers = Get-ObjectPropertyValue $configuration "mcpServers"
-    if (-not ($mcpServers -is [PSCustomObject])) {
+    if (-not (Test-IsObjectMap $mcpServers)) {
         return $false
     }
 
     $removed = [System.Collections.Generic.List[string]]::new()
     foreach ($name in $KnownEntryNames) {
-        $property = $mcpServers.PSObject.Properties[$name]
-        if ($null -ne $property -and
-            (Test-EntryOwnedByBridge -Entry $property.Value -ExpectedInstallDir $ResolvedInstallDir)) {
-            $mcpServers.PSObject.Properties.Remove($name)
+        $entry = Get-ObjectPropertyValue $mcpServers $name
+        if ((Test-ObjectPropertyExists $mcpServers $name) -and
+            (Test-EntryOwnedByBridge -Entry $entry -ExpectedInstallDir $ResolvedInstallDir)) {
+            Remove-ObjectProperty $mcpServers $name
             $removed.Add($name)
         }
     }

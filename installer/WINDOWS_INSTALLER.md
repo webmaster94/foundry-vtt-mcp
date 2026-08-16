@@ -138,8 +138,11 @@ root in either layout:
 ```
 
 Foreign same-name entries, relative commands, extra arguments, mixed roots, and
-source/development registrations such as `command = "node"` with a repository
-`dist\index.js` are not claimed. A refused install mutation writes no backup and
+unverifiable source/development registrations are not claimed. During install
+only, `command = "node"` or `node.exe` with one absolute
+`packages\mcp-server\dist\index.js`/`index.cjs` argument is migratable when the
+root package, server package, and Foundry module manifests exactly identify this
+project. The source checkout is never modified or removed. A refused install mutation writes no backup and
 leaves the file byte-for-byte unchanged. JSON and TOML inputs must be regular,
 non-reparse files. Successful mutations recheck the originally parsed byte hash
 immediately before an atomic same-directory replacement and preserve a

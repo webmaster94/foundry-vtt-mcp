@@ -5,10 +5,12 @@ installer-owned **Claude Desktop**, **Claude Code**, and **Codex** MCP entries,
 preserves connection profiles, and replaces the older Foundry MCP Server
 installation without creating a second Programs and Features entry.
 
-For safety, setup does not claim a same-name entry that points at a source
-checkout, a custom launcher, or another installation. Use the agent instruction
-below after setup when you intentionally want to replace those preserved entries
-with the installed bridge too.
+Setup can migrate a source-checkout entry automatically when its one script
+argument has this repository's exact `packages\mcp-server\dist\index.js` layout
+and the root, server, and Foundry module manifests identify this project. It
+never deletes or changes that checkout. For safety, setup does not claim custom
+launchers, incomplete checkouts, or another installation. Use the instruction
+below when you intentionally want to replace one of those preserved entries.
 
 ## Copy this instruction to your agent
 

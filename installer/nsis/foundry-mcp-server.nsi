@@ -47,6 +47,9 @@ VIAddVersionKey "LegalCopyright" "MIT licensed; Foundry VTT trademarks belong to
 !define MUI_ABORTWARNING
 !define MUI_ICON "${STAGE_DIR}\icon.ico"
 !define MUI_UNICON "${STAGE_DIR}\icon.ico"
+!define MUI_WELCOMEPAGE_TEXT "Setup will install ${PRODUCT_NAME} on this computer.$\r$\n$\r$\nYou will be able to review or change the install location before any files are copied."
+!define MUI_DIRECTORYPAGE_TEXT_TOP "Choose where ${PRODUCT_NAME} will be installed. The default is your per-user Programs folder; use Browse to select a different location."
+!define MUI_DIRECTORYPAGE_TEXT_DESTINATION "Install location:"
 !define MUI_FINISHPAGE_TITLE "${PRODUCT_NAME} is ready"
 !define MUI_FINISHPAGE_TEXT "The bridge can stay in the notification area and keep its backend available to MCP clients. Your server profiles are stored separately from the application and survive upgrades and uninstall."
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXE}"
@@ -69,6 +72,7 @@ Var UpgradeFromLegacy
 Var CanonicalConfigPath
 Var MigrationStatePath
 Var ClientConfigMigrationSafe
+Var ClientConfigFailureSummary
 Var un.FoundryPath
 Var un.FoundryDataPath
 Var un.CanonicalConfigPath
@@ -192,6 +196,7 @@ FunctionEnd
 
 Function UpdateClaudeConfig
   StrCpy $ClientConfigMigrationSafe "1"
+  StrCpy $ClientConfigFailureSummary ""
   DetailPrint "Registering the MCP wrapper with Claude Desktop and Claude Code..."
   nsExec::ExecToStack 'powershell.exe -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\installer\configure-claude.ps1" -InstallDir "$INSTDIR"'
   Pop $0
@@ -207,6 +212,7 @@ Function UpdateClaudeConfig
   claude_config_failed:
   DetailPrint "$1"
   StrCpy $ClientConfigMigrationSafe "0"
+  StrCpy $ClientConfigFailureSummary "Claude Desktop or Claude Code (details: $TEMP\foundry-mcp-claude-config.log)"
 
   claude_config_done:
   DetailPrint "Migrating the owned Codex MCP registration..."
@@ -220,10 +226,16 @@ Function UpdateClaudeConfig
 
   codex_config_failed:
   StrCpy $ClientConfigMigrationSafe "0"
+  StrCmp $ClientConfigFailureSummary "" 0 codex_append_failure
+  StrCpy $ClientConfigFailureSummary "Codex"
+  Goto client_config_checked
+
+  codex_append_failure:
+  StrCpy $ClientConfigFailureSummary "$ClientConfigFailureSummary and Codex"
 
   client_config_checked:
   StrCmp $ClientConfigMigrationSafe "1" config_done
-  MessageBox MB_ICONEXCLAMATION "One or more MCP client registrations could not be migrated automatically. Existing unrelated entries were left unchanged, and the previous bridge payload was preserved so no owned registration points to a deleted executable.$\r$\n$\r$\nSee the project documentation for manual client setup, then remove the previous installation after confirming your clients use the new path." /SD IDOK
+  MessageBox MB_ICONEXCLAMATION "Automatic MCP client setup could not update: $ClientConfigFailureSummary.$\r$\n$\r$\nExisting unrelated entries were left unchanged. Open the Setup details window for the exact error before closing Setup." /SD IDOK
 
   config_done:
 FunctionEnd
