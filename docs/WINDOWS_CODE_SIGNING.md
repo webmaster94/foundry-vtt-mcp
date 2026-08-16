@@ -12,6 +12,11 @@ The [Microsoft Store](https://learn.microsoft.com/windows/apps/publish/) is the 
 
 ## Azure setup
 
+The regional `https://*.codesigning.azure.net` value is a signing API endpoint,
+not a signup or account-management website. Opening it directly in a browser can
+return `403 Forbidden`; create and manage the account through
+[the Azure portal](https://portal.azure.com/) instead.
+
 1. Follow Microsoft's [Artifact Signing quickstart](https://learn.microsoft.com/azure/artifact-signing/quickstart) to create an account, complete public identity validation, and create a **Public Trust** certificate profile.
 2. Create a Microsoft Entra application or managed identity for GitHub Actions.
 3. Add a federated credential restricted to this repository and its release workflow or release environment.
