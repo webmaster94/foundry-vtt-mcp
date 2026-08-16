@@ -48,17 +48,24 @@ function parseArguments(argv) {
   return { installer: path.resolve(installer) };
 }
 
+function canonicalPathForComparison(value) {
+  let existing = path.resolve(value);
+  const missingSegments = [];
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    missingSegments.unshift(path.basename(existing));
+    existing = parent;
+  }
+  const canonicalBase = fs.existsSync(existing) ? fs.realpathSync.native(existing) : existing;
+  return path
+    .join(canonicalBase, ...missingSegments)
+    .replace(/[\\/]+$/, '')
+    .toLowerCase();
+}
+
 function sameWindowsPath(left, right) {
-  return (
-    path
-      .resolve(left)
-      .replace(/[\\/]+$/, '')
-      .toLowerCase() ===
-    path
-      .resolve(right)
-      .replace(/[\\/]+$/, '')
-      .toLowerCase()
-  );
+  return canonicalPathForComparison(left) === canonicalPathForComparison(right);
 }
 
 function isWithin(candidate, root) {
