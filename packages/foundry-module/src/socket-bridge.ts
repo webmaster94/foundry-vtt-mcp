@@ -491,6 +491,7 @@ export class SocketBridge {
     callback: (response: any) => Promise<void>
   ): Promise<void> {
     let response: any;
+    const startedAt = performance.now();
     try {
       this.log(`Handling MCP query: ${data.method}`);
 
@@ -516,6 +517,8 @@ export class SocketBridge {
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
+    // Envelope-only timing keeps handler results and older servers compatible.
+    response.timing = { executionMs: Math.max(0, performance.now() - startedAt) };
     await callback(response);
   }
 

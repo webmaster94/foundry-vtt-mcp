@@ -1,0 +1,600 @@
+{
+  "measuredAt": "2026-09-23T14:42:01.532Z",
+  "description": "Synthetic evaluation cases derived from bridge error classes and common API failures. No real user incidents; not a production accuracy benchmark or training dataset.",
+  "limitation": "Small labeled fixture check; synthetic cases are not real incidents. No training or calibration fitting, no end-to-end recovery or follow-up-call measurement. Confidence thresholds are experimental.",
+  "checkpoint": "english",
+  "cases": 25,
+  "validResponses": 25,
+  "baseline": {
+    "accuracy": 0.92,
+    "coverage": 0.72,
+    "precisionWhenAnswered": 1,
+    "p50Ms": 0.006699999999909778
+  },
+  "laya": {
+    "accuracyOnValidResponses": 0.76,
+    "threshold": 0.8,
+    "coverage": 0.04,
+    "precisionWhenAnswered": 1,
+    "falseAdviceCount": 0,
+    "categoryPrecision": {
+      "connection": {
+        "predictions": 4,
+        "precision": 0.75
+      },
+      "compatibility": {
+        "predictions": 5,
+        "precision": 1
+      },
+      "permission": {
+        "predictions": 4,
+        "precision": 1
+      },
+      "validation": {
+        "predictions": 3,
+        "precision": 1
+      },
+      "unknown": {
+        "predictions": 9,
+        "precision": 0.4444444444444444
+      }
+    },
+    "selectedProbabilityEce": 0.30241999999999997,
+    "multiclassBrier": 0.4776255616,
+    "firstRequestMs": 279.4151,
+    "subsequentP50Ms": 220.42090000000007,
+    "subsequentP95Ms": 236.85159999999996
+  },
+  "rows": [
+    {
+      "id": "connection-1",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "connection",
+      "baseline": "connection",
+      "baselineMs": 0.06370000000000431,
+      "result": {
+        "status": "ok",
+        "category": "connection",
+        "probability": 0.4809,
+        "probabilities": {
+          "connection": 0.4809,
+          "compatibility": 0.1333,
+          "permission": 0.097,
+          "validation": 0.1113,
+          "unknown": 0.1774
+        },
+        "confidence": 0.1313,
+        "durationMs": 279.4151
+      }
+    },
+    {
+      "id": "connection-2",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "connection",
+      "baseline": "connection",
+      "baselineMs": 0.010800000000017462,
+      "result": {
+        "status": "ok",
+        "category": "connection",
+        "probability": 0.4809,
+        "probabilities": {
+          "connection": 0.4809,
+          "compatibility": 0.1333,
+          "permission": 0.097,
+          "validation": 0.1113,
+          "unknown": 0.1774
+        },
+        "confidence": 0.1313,
+        "durationMs": 236.5201
+      }
+    },
+    {
+      "id": "connection-3",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "connection",
+      "baseline": "connection",
+      "baselineMs": 0.023500000000012733,
+      "result": {
+        "status": "ok",
+        "category": "unknown",
+        "probability": 0.2749,
+        "probabilities": {
+          "connection": 0.1234,
+          "compatibility": 0.1909,
+          "permission": 0.175,
+          "validation": 0.2358,
+          "unknown": 0.2749
+        },
+        "confidence": 0.0214,
+        "durationMs": 236.85159999999996
+      }
+    },
+    {
+      "id": "connection-4",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "connection",
+      "baseline": "connection",
+      "baselineMs": 0.006799999999998363,
+      "result": {
+        "status": "ok",
+        "category": "connection",
+        "probability": 0.4809,
+        "probabilities": {
+          "connection": 0.4809,
+          "compatibility": 0.1333,
+          "permission": 0.097,
+          "validation": 0.1113,
+          "unknown": 0.1774
+        },
+        "confidence": 0.1313,
+        "durationMs": 235.23519999999996
+      }
+    },
+    {
+      "id": "connection-5",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "connection",
+      "baseline": "unknown",
+      "baselineMs": 0.006200000000035288,
+      "result": {
+        "status": "ok",
+        "category": "unknown",
+        "probability": 0.4133,
+        "probabilities": {
+          "connection": 0.0841,
+          "compatibility": 0.1846,
+          "permission": 0.1359,
+          "validation": 0.1822,
+          "unknown": 0.4133
+        },
+        "confidence": 0.0887,
+        "durationMs": 227.6045999999999
+      }
+    },
+    {
+      "id": "compatibility-1",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "compatibility",
+      "baseline": "compatibility",
+      "baselineMs": 0.006200000000035288,
+      "result": {
+        "status": "ok",
+        "category": "compatibility",
+        "probability": 0.425,
+        "probabilities": {
+          "connection": 0.0586,
+          "compatibility": 0.425,
+          "permission": 0.073,
+          "validation": 0.1171,
+          "unknown": 0.3264
+        },
+        "confidence": 0.169,
+        "durationMs": 228.16060000000016
+      }
+    },
+    {
+      "id": "compatibility-2",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "compatibility",
+      "baseline": "compatibility",
+      "baselineMs": 0.006600000000162254,
+      "result": {
+        "status": "ok",
+        "category": "compatibility",
+        "probability": 0.4079,
+        "probabilities": {
+          "connection": 0.0654,
+          "compatibility": 0.4079,
+          "permission": 0.0851,
+          "validation": 0.1352,
+          "unknown": 0.3064
+        },
+        "confidence": 0.1384,
+        "durationMs": 233.53100000000018
+      }
+    },
+    {
+      "id": "compatibility-3",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "compatibility",
+      "baseline": "compatibility",
+      "baselineMs": 0.008299999999962893,
+      "result": {
+        "status": "ok",
+        "category": "compatibility",
+        "probability": 0.425,
+        "probabilities": {
+          "connection": 0.0586,
+          "compatibility": 0.425,
+          "permission": 0.073,
+          "validation": 0.1171,
+          "unknown": 0.3264
+        },
+        "confidence": 0.169,
+        "durationMs": 223.4251999999999
+      }
+    },
+    {
+      "id": "compatibility-4",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "compatibility",
+      "baseline": "compatibility",
+      "baselineMs": 0.016200000000026193,
+      "result": {
+        "status": "ok",
+        "category": "compatibility",
+        "probability": 0.4079,
+        "probabilities": {
+          "connection": 0.0654,
+          "compatibility": 0.4079,
+          "permission": 0.0851,
+          "validation": 0.1352,
+          "unknown": 0.3064
+        },
+        "confidence": 0.1384,
+        "durationMs": 230.16280000000006
+      }
+    },
+    {
+      "id": "compatibility-5",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "compatibility",
+      "baseline": "compatibility",
+      "baselineMs": 0.011000000000422006,
+      "result": {
+        "status": "ok",
+        "category": "compatibility",
+        "probability": 0.4377,
+        "probabilities": {
+          "connection": 0.0719,
+          "compatibility": 0.4377,
+          "permission": 0.1235,
+          "validation": 0.1371,
+          "unknown": 0.2298
+        },
+        "confidence": 0.118,
+        "durationMs": 216.17499999999973
+      }
+    },
+    {
+      "id": "permission-1",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "permission",
+      "baseline": "permission",
+      "baselineMs": 0.005999999999858119,
+      "result": {
+        "status": "ok",
+        "category": "permission",
+        "probability": 0.7593,
+        "probabilities": {
+          "connection": 0.0346,
+          "compatibility": 0.0643,
+          "permission": 0.7593,
+          "validation": 0.0721,
+          "unknown": 0.0698
+        },
+        "confidence": 0.4549,
+        "durationMs": 222.9015000000004
+      }
+    },
+    {
+      "id": "permission-2",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "permission",
+      "baseline": "permission",
+      "baselineMs": 0.004899999999906868,
+      "result": {
+        "status": "ok",
+        "category": "permission",
+        "probability": 0.8008,
+        "probabilities": {
+          "connection": 0.0258,
+          "compatibility": 0.0566,
+          "permission": 0.8008,
+          "validation": 0.0593,
+          "unknown": 0.0576
+        },
+        "confidence": 0.5237,
+        "durationMs": 220.42090000000007
+      }
+    },
+    {
+      "id": "permission-3",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "permission",
+      "baseline": "permission",
+      "baselineMs": 0.004799999999704596,
+      "result": {
+        "status": "ok",
+        "category": "permission",
+        "probability": 0.7593,
+        "probabilities": {
+          "connection": 0.0346,
+          "compatibility": 0.0643,
+          "permission": 0.7593,
+          "validation": 0.0721,
+          "unknown": 0.0698
+        },
+        "confidence": 0.4549,
+        "durationMs": 227.40300000000025
+      }
+    },
+    {
+      "id": "permission-4",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "permission",
+      "baseline": "permission",
+      "baselineMs": 0.0048000000001593435,
+      "result": {
+        "status": "ok",
+        "category": "permission",
+        "probability": 0.7593,
+        "probabilities": {
+          "connection": 0.0346,
+          "compatibility": 0.0643,
+          "permission": 0.7593,
+          "validation": 0.0721,
+          "unknown": 0.0698
+        },
+        "confidence": 0.4549,
+        "durationMs": 232.3096999999998
+      }
+    },
+    {
+      "id": "permission-5",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "permission",
+      "baseline": "unknown",
+      "baselineMs": 0.004799999999704596,
+      "result": {
+        "status": "ok",
+        "category": "unknown",
+        "probability": 0.383,
+        "probabilities": {
+          "connection": 0.1008,
+          "compatibility": 0.1846,
+          "permission": 0.1493,
+          "validation": 0.1822,
+          "unknown": 0.383
+        },
+        "confidence": 0.0649,
+        "durationMs": 215.61640000000034
+      }
+    },
+    {
+      "id": "validation-1",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "validation",
+      "baseline": "validation",
+      "baselineMs": 0.007799999999861029,
+      "result": {
+        "status": "ok",
+        "category": "validation",
+        "probability": 0.405,
+        "probabilities": {
+          "connection": 0.0754,
+          "compatibility": 0.1444,
+          "permission": 0.1401,
+          "validation": 0.405,
+          "unknown": 0.2352
+        },
+        "confidence": 0.0953,
+        "durationMs": 183.18499999999995
+      }
+    },
+    {
+      "id": "validation-2",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "validation",
+      "baseline": "validation",
+      "baselineMs": 0.0059000000001105946,
+      "result": {
+        "status": "ok",
+        "category": "validation",
+        "probability": 0.4125,
+        "probabilities": {
+          "connection": 0.0644,
+          "compatibility": 0.1363,
+          "permission": 0.153,
+          "validation": 0.4125,
+          "unknown": 0.2338
+        },
+        "confidence": 0.105,
+        "durationMs": 174.0918999999999
+      }
+    },
+    {
+      "id": "validation-3",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "validation",
+      "baseline": "validation",
+      "baselineMs": 0.010300000000370346,
+      "result": {
+        "status": "ok",
+        "category": "unknown",
+        "probability": 0.3898,
+        "probabilities": {
+          "connection": 0.0836,
+          "compatibility": 0.1686,
+          "permission": 0.1701,
+          "validation": 0.188,
+          "unknown": 0.3898
+        },
+        "confidence": 0.074,
+        "durationMs": 159.69219999999996
+      }
+    },
+    {
+      "id": "validation-4",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "validation",
+      "baseline": "validation",
+      "baselineMs": 0.008499999999912689,
+      "result": {
+        "status": "ok",
+        "category": "validation",
+        "probability": 0.405,
+        "probabilities": {
+          "connection": 0.0754,
+          "compatibility": 0.1444,
+          "permission": 0.1401,
+          "validation": 0.405,
+          "unknown": 0.2352
+        },
+        "confidence": 0.0953,
+        "durationMs": 162.67159999999967
+      }
+    },
+    {
+      "id": "validation-5",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "validation",
+      "baseline": "validation",
+      "baselineMs": 0.00650000000041473,
+      "result": {
+        "status": "ok",
+        "category": "unknown",
+        "probability": 0.3898,
+        "probabilities": {
+          "connection": 0.0836,
+          "compatibility": 0.1686,
+          "permission": 0.1701,
+          "validation": 0.188,
+          "unknown": 0.3898
+        },
+        "confidence": 0.074,
+        "durationMs": 166.3748000000005
+      }
+    },
+    {
+      "id": "unknown-1",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "unknown",
+      "baseline": "unknown",
+      "baselineMs": 0.00650000000041473,
+      "result": {
+        "status": "ok",
+        "category": "unknown",
+        "probability": 0.7872,
+        "probabilities": {
+          "connection": 0.0369,
+          "compatibility": 0.0648,
+          "permission": 0.038,
+          "validation": 0.0732,
+          "unknown": 0.7872
+        },
+        "confidence": 0.501,
+        "durationMs": 167.3716000000004
+      }
+    },
+    {
+      "id": "unknown-2",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "unknown",
+      "baseline": "unknown",
+      "baselineMs": 0.006699999999909778,
+      "result": {
+        "status": "ok",
+        "category": "unknown",
+        "probability": 0.3045,
+        "probabilities": {
+          "connection": 0.13,
+          "compatibility": 0.2186,
+          "permission": 0.1536,
+          "validation": 0.1933,
+          "unknown": 0.3045
+        },
+        "confidence": 0.0275,
+        "durationMs": 169.22090000000026
+      }
+    },
+    {
+      "id": "unknown-3",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "unknown",
+      "baseline": "unknown",
+      "baselineMs": 0.006999999999607098,
+      "result": {
+        "status": "ok",
+        "category": "connection",
+        "probability": 0.3491,
+        "probabilities": {
+          "connection": 0.3491,
+          "compatibility": 0.1357,
+          "permission": 0.2359,
+          "validation": 0.1217,
+          "unknown": 0.1575
+        },
+        "confidence": 0.0514,
+        "durationMs": 252.39570000000003
+      }
+    },
+    {
+      "id": "unknown-4",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "unknown",
+      "baseline": "unknown",
+      "baselineMs": 0.0072000000000116415,
+      "result": {
+        "status": "ok",
+        "category": "unknown",
+        "probability": 0.3045,
+        "probabilities": {
+          "connection": 0.13,
+          "compatibility": 0.2186,
+          "permission": 0.1536,
+          "validation": 0.1933,
+          "unknown": 0.3045
+        },
+        "confidence": 0.0275,
+        "durationMs": 202.01980000000003
+      }
+    },
+    {
+      "id": "unknown-5",
+      "source": "synthetic",
+      "errorCode": "QUERY_FAILED",
+      "expected": "unknown",
+      "baseline": "unknown",
+      "baselineMs": 0.006400000000212458,
+      "result": {
+        "status": "ok",
+        "category": "unknown",
+        "probability": 0.7872,
+        "probabilities": {
+          "connection": 0.0369,
+          "compatibility": 0.0648,
+          "permission": 0.038,
+          "validation": 0.0732,
+          "unknown": 0.7872
+        },
+        "confidence": 0.501,
+        "durationMs": 185.59649999999965
+      }
+    }
+  ]
+}

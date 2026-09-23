@@ -3,6 +3,8 @@ import { config } from './config.js';
 import { FoundryClient } from './foundry-client.js';
 import { QueryOutcomeUnknownError, QueryTimeoutError } from './foundry-connector.js';
 import { Logger } from './logger.js';
+import { getOperationSafety } from '@foundry-mcp/shared';
+import { readFileSync } from 'node:fs';
 
 function logger(): Logger {
   return {
@@ -19,6 +21,30 @@ function logger(): Logger {
 afterEach(() => vi.useRealTimers());
 
 describe('FoundryClient timeout classification', () => {
+  it('requires explicit semantics for every registered module handler', () => {
+    const source = readFileSync(
+      new URL('../../foundry-module/src/queries.ts', import.meta.url),
+      'utf8'
+    );
+    const methods = [...source.matchAll(/\$\{modulePrefix\}\.([^`]+)`/g)].map(match => match[1]);
+    expect(methods.length).toBeGreaterThan(90);
+    for (const method of methods) {
+      expect(getOperationSafety(`foundry-mcp-bridge.${method}`), method).not.toBe('unknown');
+    }
+  });
+  it('does not infer retry safety from a new handler name', async () => {
+    const client = new FoundryClient(config.foundry, logger());
+    (client as any).connector = {
+      isConnected: () => true,
+      query: async (method: string) => {
+        throw new QueryTimeoutError(method, 45_000);
+      },
+    };
+    await expect(client.query('foundry-mcp-bridge.getAndDeleteDocument')).rejects.toMatchObject({
+      code: 'UNKNOWN_OUTCOME',
+    });
+    expect(getOperationSafety('other-module.getDocument')).toBe('unknown');
+  });
   it('marks timed-out writes as unknown outcome while retaining ordinary read timeouts', async () => {
     const client = new FoundryClient(config.foundry, logger());
     (client as any).connector = {

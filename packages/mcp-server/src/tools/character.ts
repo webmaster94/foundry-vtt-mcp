@@ -51,7 +51,8 @@ export class CharacterTools {
           properties: {
             identifier: {
               type: 'string',
-              description: 'Character name or ID to look up',
+              description:
+                'Actor name, ID or UUID; unique Token ID or Scene Token UUID for token-local state',
             },
           },
           required: ['identifier'],
@@ -753,6 +754,8 @@ export class CharacterTools {
   private async formatCharacterResponse(characterData: any): Promise<any> {
     const response: any = {
       id: characterData.id,
+      ...(characterData.uuid ? { uuid: characterData.uuid } : {}),
+      ...(characterData.tokenUuid ? { tokenUuid: characterData.tokenUuid } : {}),
       name: characterData.name,
       type: characterData.type,
       basicInfo: await this.extractBasicInfo(characterData),

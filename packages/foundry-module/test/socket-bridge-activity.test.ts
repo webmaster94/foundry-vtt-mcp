@@ -56,6 +56,29 @@ class FakeWebSocket {
 }
 
 describe('SocketBridge query activity callbacks', () => {
+  it.each([true, false])(
+    'reports execution time without altering handler data, success=%s',
+    async success => {
+      vi.stubGlobal('CONFIG', {
+        queries: {
+          test: async () => {
+            if (!success) throw new Error('expected');
+            return { value: 42 };
+          },
+        },
+      });
+      const bridge = new SocketBridge(config);
+      const callback = vi.fn(async () => {});
+      await (bridge as any).handleMCPQuery({ method: 'test' }, callback);
+      expect(callback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success,
+          timing: { executionMs: expect.any(Number) },
+          ...(success ? { data: { value: 42 } } : { error: 'expected' }),
+        })
+      );
+    }
+  );
   it('wraps a real MCP query and starts capture before its handler runs', async () => {
     const order: string[] = [];
     vi.stubGlobal('CONFIG', {

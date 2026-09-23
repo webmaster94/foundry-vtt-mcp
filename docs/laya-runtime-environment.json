@@ -1,0 +1,34 @@
+{
+  "capturedAt": "2026-09-23T14:44:06.3774835Z",
+  "python": "3.12",
+  "packageSource": "https://pypi.org/project/laya/0.3.7/",
+  "inspectedUpstreamRevision": "839784f7c9b45139e0fb7ef60051ae9c3c9bab16",
+  "modelRepository": "convaiinnovations/laya",
+  "modelRevision": "5e7b2b1b8ca2ecdd3f2322d94069c9b6ce7e844b",
+  "checkpoint": "english",
+  "versions": {
+    "laya": "0.3.7",
+    "torch": "2.14.0",
+    "transformers": "5.17.0",
+    "huggingface_hub": "1.32.0",
+    "fastapi": "0.141.1",
+    "uvicorn": "0.53.0"
+  },
+  "hardware": {
+    "interOperationThreads": 1,
+    "intraOperationThreads": 8,
+    "device": "cpu",
+    "cpu": "Intel(R) Core(TM) i7-9800X CPU @ 3.80GHz"
+  },
+  "memory": {
+    "note": "Observed after evaluation, before shutdown. Current memory, not peak.",
+    "workingSetBytes": 2067378176,
+    "privateBytes": 3268116480
+  },
+  "service": {
+    "authentication": "bearer",
+    "status": "stopped after evaluation",
+    "bind": "127.0.0.1",
+    "port": 31881
+  }
+}

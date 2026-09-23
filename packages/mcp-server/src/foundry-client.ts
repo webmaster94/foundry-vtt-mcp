@@ -1,5 +1,8 @@
 import { Logger } from './logger.js';
 import { Config } from './config.js';
+import { BridgeError } from './bridge-errors.js';
+import { getOperationSafety } from '@foundry-mcp/shared';
+export { BridgeError, type BridgeErrorCode } from './bridge-errors.js';
 import {
   FoundryConnector,
   QueryOutcomeUnknownError,
@@ -15,25 +18,6 @@ export interface FoundryResponse {
   success: boolean;
   data?: any;
   error?: string;
-}
-
-export type BridgeErrorCode =
-  | 'NOT_CONNECTED'
-  | 'NO_HANDLER'
-  | 'VERSION_MISMATCH'
-  | 'TIMEOUT'
-  | 'UNKNOWN_OUTCOME'
-  | 'QUERY_FAILED';
-
-/** Error with a machine-readable code so agents can branch on failure class. */
-export class BridgeError extends Error {
-  constructor(
-    public code: BridgeErrorCode,
-    message: string
-  ) {
-    super(`[${code}] ${message}`);
-    this.name = 'BridgeError';
-  }
 }
 
 export interface ModuleCapabilities {
@@ -202,10 +186,7 @@ export class FoundryClient {
   }
 
   private isReadOnlyMethod(method: string): boolean {
-    const operation = method.split('.').pop() || method;
-    return /^(get|list|search|find|browse|check|validate|resolve|preview|ping|inspect|read|query|wait|audit)/i.test(
-      operation
-    );
+    return getOperationSafety(method) === 'read';
   }
 
   /**

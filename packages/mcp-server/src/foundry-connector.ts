@@ -3,6 +3,7 @@ import { createServer, type Server } from 'http';
 import { randomUUID } from 'crypto';
 import { Logger } from './logger.js';
 import { Config } from './config.js';
+import { beginQueryTiming } from './diagnostics/query-timing.js';
 import { WebRTCPeer, type WebRTCSendOptions } from './webrtc-peer.js';
 
 export interface FoundryConnectorOptions {
@@ -35,6 +36,7 @@ export interface FoundryConnectionInfo {
 }
 
 interface PendingQuery {
+  finishTiming: ReturnType<typeof beginQueryTiming>;
   method: string;
   sendAttempted: boolean;
   abortController: AbortController;
@@ -63,8 +65,11 @@ export class QueryTimeoutError extends Error {
 
 /** The transport vanished after a query may already have reached Foundry. */
 export class QueryOutcomeUnknownError extends Error {
-  constructor(public readonly method: string) {
-    super(`Connection lost after query send; outcome is unknown: ${method}`);
+  constructor(
+    public readonly method: string,
+    reason = 'Connection lost after query send; outcome is unknown'
+  ) {
+    super(`${reason}: ${method}`);
     this.name = 'QueryOutcomeUnknownError';
   }
 }
@@ -436,6 +441,10 @@ export class FoundryConnector {
         pending.abortController.abort(new Error('Query response received'));
         this.pendingQueries.delete(message.id);
 
+        pending.finishTiming(
+          message.data.success ? 'success' : 'error',
+          message.data.timing?.executionMs
+        );
         if (message.data.success) {
           this.logger.debug('Query response received', {
             id: message.id,
@@ -621,8 +630,7 @@ export class FoundryConnector {
   }
 
   private createWebRTCPeer(transitionSocket: WebSocket | null = null): WebRTCPeer {
-    let peer!: WebRTCPeer;
-    peer = new WebRTCPeer({
+    const peer: WebRTCPeer = new WebRTCPeer({
       config: this.config.webrtc,
       logger: this.logger,
       onMessage: async message => {
@@ -631,6 +639,21 @@ export class FoundryConnector {
         await this.handleMessage(message);
       },
       onConnectionStateChange: connected => this.handleWebRTCConnectionState(peer, connected),
+      onResponseFailure: requestId => {
+        if (this.webrtcPeer !== peer || this.activeConnectionType !== 'webrtc') return;
+        const pending = this.pendingQueries.get(requestId);
+        if (!pending) return;
+        clearTimeout(pending.timeout);
+        this.pendingQueries.delete(requestId);
+        const error = pending.sendAttempted
+          ? new QueryOutcomeUnknownError(
+              pending.method,
+              'Incomplete or invalid WebRTC response; outcome is unknown'
+            )
+          : new Error('WebRTC response failed before query dispatch');
+        pending.abortController.abort(error);
+        pending.reject(error);
+      },
     });
     this.webrtcPeer = peer;
     this.webrtcTransitionSocket = transitionSocket;
@@ -877,6 +900,7 @@ export class FoundryConnector {
     });
 
     return new Promise((resolve, reject) => {
+      const finishTiming = beginQueryTiming(method);
       const abortController = new AbortController();
       const timeout = setTimeout(() => {
         const pending = this.pendingQueries.get(queryId);
@@ -884,15 +908,23 @@ export class FoundryConnector {
         this.pendingQueries.delete(queryId);
         const error = new QueryTimeoutError(method, this.queryTimeoutMs);
         abortController.abort(error);
+        finishTiming('error');
         reject(error);
       }, this.queryTimeoutMs);
 
       const pending: PendingQuery = {
+        finishTiming,
         method,
         sendAttempted: false,
         abortController,
-        resolve,
-        reject,
+        resolve: value => {
+          finishTiming('success');
+          resolve(value);
+        },
+        reject: error => {
+          finishTiming('error');
+          reject(error);
+        },
         timeout,
       };
       this.pendingQueries.set(queryId, pending);
@@ -917,6 +949,7 @@ export class FoundryConnector {
         const sendError = error instanceof Error ? error : new Error(String(error));
         const rejection = pending.sendAttempted ? new QueryOutcomeUnknownError(method) : sendError;
         abortController.abort(rejection);
+        finishTiming('error');
         reject(rejection);
       });
     });

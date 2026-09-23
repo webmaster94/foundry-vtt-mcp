@@ -19,6 +19,8 @@ export interface MCPResponse {
  */
 export interface CharacterInfo {
   id: string;
+  uuid?: string;
+  tokenUuid?: string;
   name: string;
   type: string;
   img?: string;

@@ -19,6 +19,8 @@ export interface WebRTCPeerOptions {
   logger: Logger;
   onMessage: (message: any) => Promise<void>;
   onConnectionStateChange?: (connected: boolean) => void;
+  /** Response reassembly failed; this does not establish write completion. */
+  onResponseFailure?: (requestId: string) => void;
 }
 
 export interface WebRTCSendOptions {
@@ -37,6 +39,7 @@ export class WebRTCPeer {
   private config: Config['foundry']['webrtc'];
   private onMessageHandler: (message: any) => Promise<void>;
   private onConnectionStateChange: ((connected: boolean) => void) | undefined;
+  private onResponseFailure: ((requestId: string) => void) | undefined;
   private isConnected = false;
   private hasReportedConnectionState = false;
   private pendingChunks: Map<
@@ -56,11 +59,18 @@ export class WebRTCPeer {
   private disconnectGraceTimer: NodeJS.Timeout | null = null;
   private sendChain: Promise<void> = Promise.resolve();
 
-  constructor({ config, logger, onMessage, onConnectionStateChange }: WebRTCPeerOptions) {
+  constructor({
+    config,
+    logger,
+    onMessage,
+    onConnectionStateChange,
+    onResponseFailure,
+  }: WebRTCPeerOptions) {
     this.config = config;
     this.logger = logger.child({ component: 'WebRTCPeer' });
     this.onMessageHandler = onMessage;
     this.onConnectionStateChange = onConnectionStateChange;
+    this.onResponseFailure = onResponseFailure;
 
     // Start cleanup interval for timed-out chunks
     this.startChunkCleanup();
@@ -329,6 +339,32 @@ export class WebRTCPeer {
    * Validates chunks, stores them, and reassembles when all pieces arrive
    */
   private async handleChunkedMessage(chunkMessage: any): Promise<void> {
+    const tracked = this.pendingChunks.get(chunkMessage?.chunkId);
+    try {
+      await this.acceptChunk(chunkMessage);
+    } catch (error) {
+      this.pendingChunks.delete(chunkMessage?.chunkId);
+      this.reportResponseFailure(tracked ?? chunkMessage);
+      throw error;
+    }
+  }
+
+  private reportResponseFailure(metadata: { originalType?: unknown; originalId?: unknown }): void {
+    if (
+      metadata?.originalType !== 'mcp-response' ||
+      typeof metadata.originalId !== 'string' ||
+      metadata.originalId.length === 0 ||
+      metadata.originalId.length > 128
+    )
+      return;
+    try {
+      this.onResponseFailure?.(metadata.originalId);
+    } catch {
+      this.logger.warn('Response failure callback failed');
+    }
+  }
+
+  private async acceptChunk(chunkMessage: any): Promise<void> {
     const {
       chunkId,
       chunkIndex,
@@ -494,7 +530,9 @@ export class WebRTCPeer {
           });
 
           // Send error response to client if we have a requestId
-          if (pending.originalId) {
+          if (pending.originalType === 'mcp-response') {
+            this.reportResponseFailure(pending);
+          } else if (pending.originalId) {
             void this.sendMessage({
               type: 'error',
               requestId: pending.originalId,

@@ -104,17 +104,29 @@ try {
 console.log('Foundry MCP bridge smoke test');
 console.log('=============================');
 
+await step('invalid tool arguments retain structured recovery advice', async () => {
+  const response = await control.send('call_tool', { name: 'get-document', args: {} });
+  if (!response?.isError) throw new Error('Expected invalid arguments to fail');
+  const body = JSON.parse(response.content?.[0]?.text ?? '{}');
+  if (body.recovery?.automaticRetry !== false || !body.recovery?.action) {
+    throw new Error('Missing deterministic recovery advice');
+  }
+  return { action: body.recovery.action };
+});
+
 // --- connectivity & capabilities
 const tools = await step('list_tools returns a healthy tool count', async () => {
   const res = await control.send('list_tools', {});
-  if (!res?.tools || res.tools.length < 50) throw new Error(`Only ${res?.tools?.length ?? 0} tools`);
+  if (!res?.tools || res.tools.length < 50)
+    throw new Error(`Only ${res?.tools?.length ?? 0} tools`);
   return { toolCount: res.tools.length };
 });
 
 await step('tool catalog stays inside the context budget (<70KB)', async () => {
   const res = await control.send('list_tools', {});
   const chars = JSON.stringify(res.tools).length;
-  if (chars > 70_000) throw new Error(`Catalog is ${chars} chars — budget regression (was 86KB pre-trim)`);
+  if (chars > 70_000)
+    throw new Error(`Catalog is ${chars} chars — budget regression (was 86KB pre-trim)`);
   return { chars, estTokens: Math.round(chars / 4), tools: res.tools.length };
 });
 
@@ -154,8 +166,11 @@ await step('update-document dryRun returns diff without applying', async () => {
   });
   const dry = res?.document ?? res;
   if (!dry?.dryRun || !dry?.diff?.name) throw new Error('No diff in dry-run response');
-  const check = await control.callTool('get-document', { ref: { documentType: 'Folder', id: folderId } });
-  if ((check?.document ?? check)?.name !== 'Smoke Test Folder') throw new Error('Dry run APPLIED the change!');
+  const check = await control.callTool('get-document', {
+    ref: { documentType: 'Folder', id: folderId },
+  });
+  if ((check?.document ?? check)?.name !== 'Smoke Test Folder')
+    throw new Error('Dry run APPLIED the change!');
   return dry.diff;
 });
 
@@ -172,7 +187,9 @@ await step('update-document applies for real', async () => {
 await step('undo-last-mcp-operation reverts the rename', async () => {
   const res = await control.callTool('undo-last-mcp-operation', { confirmUndo: true });
   if (!res?.success) throw new Error('Undo did not report success');
-  const check = await control.callTool('get-document', { ref: { documentType: 'Folder', id: folderId } });
+  const check = await control.callTool('get-document', {
+    ref: { documentType: 'Folder', id: folderId },
+  });
   const name = (check?.document ?? check)?.name;
   if (name !== 'Smoke Test Folder') throw new Error(`Name is "${name}" after undo`);
   return res.undoneEntry;
@@ -193,6 +210,64 @@ await step('build-actor-from-spec creates a complete NPC', async () => {
   actorUuid = res?.actor?.uuid;
   if (!actorUuid) throw new Error('No actor uuid returned');
   return { uuid: actorUuid, items: res.itemCount, unresolved: res.unresolved?.length ?? 0 };
+});
+
+await step('get-character resolves an explicit Actor UUID', async () => {
+  const result = await control.callTool('get-character', { identifier: actorUuid });
+  if (result?.uuid !== actorUuid) throw new Error('Actor UUID identity was not retained');
+  return { uuid: result.uuid };
+});
+
+await step('journal rename preserves the existing page and supports undo', async () => {
+  const created = await control.callTool('create-document', {
+    documentType: 'JournalEntry',
+    data: { name: 'Smoke Rename Journal' },
+  });
+  const journal = created?.document ?? created;
+  if (!journal?.uuid || !journal.id) throw new Error('No journal identity returned');
+  try {
+    const createdPage = await control.callTool('create-embedded-document', {
+      parentUuid: journal.uuid,
+      embeddedType: 'JournalEntryPage',
+      data: { name: 'Original', type: 'text', text: { content: '<p>Original</p>' } },
+    });
+    const page = createdPage?.document ?? createdPage;
+    if (!page?.id) throw new Error('No page ID returned');
+    await control.callTool('update-quest-journal', {
+      journalId: journal.id,
+      pageId: page.id,
+      newPageName: 'Renamed',
+      newContent: 'New progress',
+      updateType: 'progress',
+    });
+    const listPages = () =>
+      control.callTool('list-embedded-documents', {
+        parentUuid: journal.uuid,
+        embeddedType: 'JournalEntryPage',
+        includeSource: true,
+        fields: ['name', '_source.text.content'],
+      });
+    const updated = await listPages();
+    if (updated?.documents?.length !== 1 || updated.documents[0].name !== 'Renamed') {
+      throw new Error('Rename created another page or lost the name');
+    }
+    if (!JSON.stringify(updated.documents[0]).includes('New progress'))
+      throw new Error('Content update missing');
+    await control.callTool('undo-last-mcp-operation', { confirmUndo: true });
+    const undone = await listPages();
+    if (
+      undone?.documents?.[0]?.name !== 'Original' ||
+      JSON.stringify(undone).includes('New progress')
+    ) {
+      throw new Error('Undo did not restore original page data');
+    }
+    return { pageId: page.id };
+  } finally {
+    await control.callTool('delete-document', {
+      ref: { uuid: journal.uuid },
+      confirmDeletion: true,
+    });
+  }
 });
 
 await step('create-embedded-documents adds several items at once', async () => {
@@ -225,7 +300,8 @@ await step('get-document-schema returns clean field paths', async () => {
   const res = await control.callTool('get-document-schema', { documentType: 'Actor' });
   const paths = res?.schema?.fields?.map(f => f.path) ?? [];
   if (!paths.includes('name')) throw new Error('Schema fields missing "name"');
-  if (JSON.stringify(res).includes('[Circular]')) throw new Error('Schema still contains [Circular] noise');
+  if (JSON.stringify(res).includes('[Circular]'))
+    throw new Error('Schema still contains [Circular] noise');
   return { fieldCount: paths.length, types: res.schema.types };
 });
 
@@ -248,7 +324,8 @@ await step('macro create/execute/delete round-trip', async () => {
   const id = created?.document?.id;
   if (!id) throw new Error('No macro id');
   const executed = await control.callTool('execute-macro', { id });
-  if (executed?.result?.value !== 42) throw new Error(`Macro returned ${JSON.stringify(executed?.result)}`);
+  if (executed?.result?.value !== 42)
+    throw new Error(`Macro returned ${JSON.stringify(executed?.result)}`);
   await control.callTool('delete-macro', { ref: { id }, confirmDeletion: true });
   return { value: 42 };
 });
@@ -263,11 +340,22 @@ await step('execute-foundry-script runs in GM browser', async () => {
 
 // --- v0.11: combat, effects, events, undo groups, assets, logs, scene builder
 await step('apply-damage / apply-healing round-trip with undo', async () => {
-  const before = await control.callTool('get-document', { ref: { uuid: actorUuid }, fields: ['system.attributes.hp'] });
-  const damaged = await control.callTool('apply-damage', { target: { uuid: actorUuid }, amount: 7 });
-  if (damaged?.hp?.value !== 26) throw new Error(`Expected HP 26 after 7 damage from 33, got ${damaged?.hp?.value}`);
-  const healed = await control.callTool('apply-healing', { target: { uuid: actorUuid }, amount: 3 });
-  if (healed?.hp?.value !== 29) throw new Error(`Expected HP 29 after heal, got ${healed?.hp?.value}`);
+  const before = await control.callTool('get-document', {
+    ref: { uuid: actorUuid },
+    fields: ['system.attributes.hp'],
+  });
+  const damaged = await control.callTool('apply-damage', {
+    target: { uuid: actorUuid },
+    amount: 7,
+  });
+  if (damaged?.hp?.value !== 26)
+    throw new Error(`Expected HP 26 after 7 damage from 33, got ${damaged?.hp?.value}`);
+  const healed = await control.callTool('apply-healing', {
+    target: { uuid: actorUuid },
+    amount: 3,
+  });
+  if (healed?.hp?.value !== 29)
+    throw new Error(`Expected HP 29 after heal, got ${healed?.hp?.value}`);
   const undo = await control.callTool('undo-last-mcp-operation', { confirmUndo: true });
   if (!undo?.success) throw new Error('Undo of healing failed');
   return { damaged: damaged.hp, healed: healed.hp, undone: true };
@@ -286,7 +374,10 @@ await step('add-active-effect creates an undoable effect', async () => {
 });
 
 await step('combat: create, roll initiative, advance, cleanup', async () => {
-  const combat = await control.callTool('create-document', { documentType: 'Combat', data: { scene: null } });
+  const combat = await control.callTool('create-document', {
+    documentType: 'Combat',
+    data: { scene: null },
+  });
   const combatId = combat?.document?.id;
   if (!combatId) throw new Error('No combat id');
   const actorId = actorUuid.split('.').pop();
@@ -295,10 +386,16 @@ await step('combat: create, roll initiative, advance, cleanup', async () => {
     embeddedType: 'Combatant',
     data: { actorId },
   });
-  const rolled = await control.callTool('roll-initiative', { combatRef: { id: combatId }, mode: 'all' });
+  const rolled = await control.callTool('roll-initiative', {
+    combatRef: { id: combatId },
+    mode: 'all',
+  });
   if (!rolled?.order?.length) throw new Error('No initiative order returned');
   if (typeof rolled.order[0].initiative !== 'number') throw new Error('Initiative not rolled');
-  await control.callTool('delete-document', { ref: { documentType: 'Combat', id: combatId }, confirmDeletion: true });
+  await control.callTool('delete-document', {
+    ref: { documentType: 'Combat', id: combatId },
+    confirmDeletion: true,
+  });
   return { order: rolled.order };
 });
 
@@ -309,7 +406,11 @@ await step('events: chat message produces a bridge event', async () => {
     documentType: 'ChatMessage',
     data: { content: 'Smoke test event ping' },
   });
-  const waited = await control.callTool('wait-for-event', { sinceSeq, types: ['chat-message'], timeoutMs: 8000 });
+  const waited = await control.callTool('wait-for-event', {
+    sinceSeq,
+    types: ['chat-message'],
+    timeoutMs: 8000,
+  });
   if (!waited?.matched) throw new Error('chat-message event not received within 8s');
   return { events: waited.events.map(e => e.type) };
 });
@@ -327,8 +428,12 @@ await step('build-actors-from-spec creates a party under one undo group', async 
       { name: 'Smoke Grunt B', type: 'npc' },
     ],
   });
-  if (res?.succeeded !== 2 || !res?.groupId) throw new Error(`Party build failed: ${JSON.stringify(res)}`);
-  const undo = await control.callTool('undo-last-mcp-operation', { confirmUndo: true, groupId: res.groupId });
+  if (res?.succeeded !== 2 || !res?.groupId)
+    throw new Error(`Party build failed: ${JSON.stringify(res)}`);
+  const undo = await control.callTool('undo-last-mcp-operation', {
+    confirmUndo: true,
+    groupId: res.groupId,
+  });
   const undone = undo?.undone?.filter(u => u.success)?.length ?? 0;
   if (undone !== 2) throw new Error(`Group undo reverted ${undone}/2 actors`);
   return { built: 2, groupUndone: undone };
@@ -342,7 +447,8 @@ await step('browse-assets lists the data tree', async () => {
 
 await step('upload-asset stores a tiny PNG and returns its path', async () => {
   // 1x1 transparent PNG
-  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const png =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
   const res = await control.callTool('upload-asset', { filename: 'smoke-test.png', base64: png });
   if (!res?.path) throw new Error('No path returned');
   return { path: res.path, bytes: res.bytes };
@@ -358,7 +464,10 @@ await step('build-scene-from-spec creates and deletes a scene', async () => {
     },
   });
   if (!res?.scene?.id) throw new Error('No scene id');
-  await control.callTool('delete-document', { ref: { documentType: 'Scene', id: res.scene.id }, confirmDeletion: true });
+  await control.callTool('delete-document', {
+    ref: { documentType: 'Scene', id: res.scene.id },
+    confirmDeletion: true,
+  });
   return { scene: res.scene.name, lights: 1 };
 });
 
@@ -381,7 +490,10 @@ await step('get-mcp-audit-log recorded this run', async () => {
 // --- cleanup
 await step('cleanup: delete actor and folder', async () => {
   await control.callTool('delete-document', { ref: { uuid: actorUuid }, confirmDeletion: true });
-  await control.callTool('delete-folder', { ref: { documentType: 'Folder', id: folderId }, confirmDeletion: true });
+  await control.callTool('delete-folder', {
+    ref: { documentType: 'Folder', id: folderId },
+    confirmDeletion: true,
+  });
   return { cleaned: true };
 });
 

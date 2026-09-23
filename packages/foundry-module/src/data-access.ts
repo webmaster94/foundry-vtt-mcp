@@ -2,9 +2,12 @@ import { MODULE_ID, ERROR_MESSAGES, TOKEN_DISPOSITIONS } from './constants.js';
 import { permissionManager } from './permissions.js';
 import { transactionManager } from './transaction-manager.js';
 import { auditService } from './audit-service.js';
+import { documentService } from './document-service.js';
 // Local type definitions to avoid shared package import issues
 interface CharacterInfo {
   id: string;
+  uuid?: string;
+  tokenUuid?: string;
   name: string;
   type: string;
   img?: string;
@@ -208,15 +211,31 @@ export class FoundryDataAccess {
    */
   async getCharacterInfo(identifier: string): Promise<CharacterInfo> {
     let actor: Actor | undefined;
-
-    // Try to find by ID first, then by name
-    if (identifier.length === 16) {
-      // Foundry ID length
+    let tokenUuid: string | undefined;
+    const tokenRef = /^Scene\.([^.]+)\.Token\.([^.]+)$/.exec(identifier);
+    const actorRef = /^Actor\.([^.]+)$/.exec(identifier);
+    if (tokenRef) {
+      const token = game.scenes.get(tokenRef[1])?.tokens.get(tokenRef[2]);
+      actor = token?.actor ?? undefined;
+      tokenUuid = token?.uuid;
+    } else if (actorRef) {
+      actor = game.actors.get(actorRef[1]);
+    } else if (!identifier.startsWith('Scene.') && !identifier.startsWith('Actor.')) {
+      // World IDs always refer to the base actor, even when unlinked tokens exist.
       actor = game.actors.get(identifier);
-    }
-
-    if (!actor) {
-      actor = game.actors.find(a => a.name?.toLowerCase() === identifier.toLowerCase());
+      actor ??= game.actors.find(a => a.name?.toLowerCase() === identifier.toLowerCase());
+      if (!actor) {
+        const matches = (game.scenes.contents ?? []).flatMap(scene => {
+          const token = scene.tokens.get(identifier);
+          return token ? [token] : [];
+        });
+        if (matches.length > 1) throw new Error('Ambiguous token ID; use its Scene Token UUID');
+        if (matches.length === 1) {
+          actor = matches[0].actor ?? undefined;
+          tokenUuid = matches[0].uuid;
+          if (!actor) throw new Error(`Token has no actor: ${identifier}`);
+        }
+      }
     }
 
     if (!actor) {
@@ -226,6 +245,8 @@ export class FoundryDataAccess {
     // Build character data structure
     const characterData: CharacterInfo = {
       id: actor.id || '',
+      ...(actor.uuid ? { uuid: actor.uuid } : {}),
+      ...(tokenUuid ? { tokenUuid } : {}),
       name: actor.name || '',
       type: actor.type,
       ...(actor.img ? { img: actor.img } : {}),
@@ -236,7 +257,7 @@ export class FoundryDataAccess {
           name: item.name,
           type: item.type,
           ...(item.img ? { img: item.img } : {}),
-          system: this.sanitizeData(item.system),
+          system: this.sanitizeDocumentSystem(item),
         };
       }),
       effects: actor.effects.map(effect => {
@@ -1675,7 +1696,7 @@ export class FoundryDataAccess {
   /**
    * Sanitize data to remove sensitive information and make it JSON-safe
    */
-  private sanitizeData(data: any): any {
+  private sanitizeData(data: any, serializedSource = false): any {
     if (data === null || data === undefined) {
       return data;
     }
@@ -1686,7 +1707,7 @@ export class FoundryDataAccess {
 
     try {
       // removeSensitiveFields now returns a sanitized copy
-      const sanitized = this.removeSensitiveFields(data);
+      const sanitized = this.removeSensitiveFields(data, new WeakSet(), 0, [], serializedSource);
 
       // Use custom JSON serializer to avoid deprecated property warnings
       const jsonString = this.safeJSONStringify(sanitized);
@@ -1704,7 +1725,9 @@ export class FoundryDataAccess {
   private removeSensitiveFields(
     obj: any,
     visited: WeakSet<object> = new WeakSet(),
-    depth: number = 0
+    depth: number = 0,
+    path: string[] = [],
+    serializedSource = false
   ): any {
     // Handle primitives
     if (obj === null || typeof obj !== 'object') {
@@ -1728,7 +1751,15 @@ export class FoundryDataAccess {
     try {
       // Handle arrays
       if (Array.isArray(obj)) {
-        return obj.map(item => this.removeSensitiveFields(item, visited, depth + 1));
+        return obj.map((item, index) =>
+          this.removeSensitiveFields(
+            item,
+            visited,
+            depth + 1,
+            [...path, String(index)],
+            serializedSource
+          )
+        );
       }
 
       // Create a new sanitized object
@@ -1750,6 +1781,15 @@ export class FoundryDataAccess {
         if (this.isSensitiveOrProblematicField(key)) {
           continue;
         }
+        // Live Advancement objects can cycle into actors; source data is safe to traverse.
+        if (key === 'advancement' && !serializedSource) continue;
+        if (
+          key === 'save' &&
+          game.system?.id === 'dnd5e' &&
+          path[path.length - 2] === 'abilities' &&
+          Object.getOwnPropertyDescriptor(obj, key)?.get
+        )
+          continue;
 
         // Skip most private properties except essential ones.
         // _stats (Foundry document audit metadata) and _source (raw stored data
@@ -1763,7 +1803,13 @@ export class FoundryDataAccess {
         }
 
         // Recursively sanitize the value (read only after filter to avoid getter-triggered warnings)
-        sanitized[key] = this.removeSensitiveFields(obj[key], visited, depth + 1);
+        sanitized[key] = this.removeSensitiveFields(
+          obj[key],
+          visited,
+          depth + 1,
+          [...path, key],
+          serializedSource
+        );
       }
 
       return sanitized;
@@ -1801,19 +1847,9 @@ export class FoundryDataAccess {
       '__proto__',
       'valueOf',
       'toString',
-      // dnd5e item leveling metadata; full of cycles back to the actor and other items.
-      // Not gameplay-relevant for LLM consumers.
-      'advancement',
     ];
 
-    // Skip deprecated ability save properties that trigger warnings
-    const deprecatedKeys = [
-      'save', // Skip the deprecated 'save' property on abilities
-    ];
-
-    return (
-      sensitiveKeys.includes(key) || problematicKeys.includes(key) || deprecatedKeys.includes(key)
-    );
+    return sensitiveKeys.includes(key) || problematicKeys.includes(key);
   }
 
   /**
@@ -1821,14 +1857,7 @@ export class FoundryDataAccess {
    */
   private safeJSONStringify(obj: any): string {
     try {
-      return JSON.stringify(obj, (key, value) => {
-        // Skip deprecated properties during JSON serialization
-        if (key === 'save' && typeof value === 'object' && value !== null) {
-          // If this looks like a deprecated ability save object, skip it
-          return undefined;
-        }
-        return value;
-      });
+      return JSON.stringify(obj);
     } catch (error) {
       console.warn(`[${this.moduleId}] JSON stringify failed, using fallback:`, error);
       return '{}';
@@ -1845,6 +1874,15 @@ export class FoundryDataAccess {
 
     // Default to neutral if unknown
     return TOKEN_DISPOSITIONS.NEUTRAL;
+  }
+
+  /** Retain prepared values, restoring Advancement only from serialized document data. */
+  private sanitizeDocumentSystem(document: any, source = document.toObject?.()): any {
+    const system = this.sanitizeData(document.system || {});
+    if (Object.prototype.hasOwnProperty.call(source?.system ?? {}, 'advancement')) {
+      system.advancement = this.sanitizeData(source.system.advancement, true);
+    }
+    return system;
   }
 
   /**
@@ -2106,7 +2144,7 @@ export class FoundryDataAccess {
       }
 
       // Mode 1: Create a new page
-      if (request.newPageName) {
+      if (request.newPageName && !request.pageId) {
         const created = await journal.createEmbeddedDocuments('JournalEntryPage', [
           {
             type: 'text',
@@ -2127,8 +2165,13 @@ export class FoundryDataAccess {
         if (!page) {
           throw new Error(`Page not found: ${request.pageId}`);
         }
-        await page.update({
-          'text.content': request.content,
+        await documentService.updateEmbeddedDocument({
+          ref: { parentUuid: journal.uuid, embeddedType: 'JournalEntryPage', embeddedId: page.id },
+          updates: {
+            'text.content': request.content,
+            ...(request.newPageName !== undefined ? { name: request.newPageName } : {}),
+          },
+          fields: ['name'],
         });
         this.auditLog('updateJournalContent', request, 'success');
         return { success: true, pageId: page.id, pageName: page.name };
@@ -2938,6 +2981,7 @@ export class FoundryDataAccess {
     if (!document) {
       throw new Error(`Document ${documentId} not found in pack ${packId}`);
     }
+    const source = document.toObject();
 
     // Build comprehensive data structure
     const fullEntry: CompendiumEntryFull = {
@@ -2947,8 +2991,8 @@ export class FoundryDataAccess {
       img: (document as any).img || undefined,
       pack: packId,
       packLabel: pack.metadata.label,
-      system: this.sanitizeData((document as any).system || {}),
-      fullData: this.sanitizeData(document.toObject()),
+      system: this.sanitizeDocumentSystem(document, source),
+      fullData: this.sanitizeData(source, true),
     };
 
     // Add items if the actor has them
@@ -2958,7 +3002,7 @@ export class FoundryDataAccess {
         name: item.name,
         type: item.type,
         img: item.img || undefined,
-        system: this.sanitizeData(item.system || {}),
+        system: this.sanitizeDocumentSystem(item),
       }));
     }
 
@@ -5111,7 +5155,7 @@ export class FoundryDataAccess {
             type: entity.type,
             img: entity.img,
             description: entity.system?.description?.value || entity.system?.description || '',
-            system: entity.system,
+            system: this.sanitizeDocumentSystem(entity),
           },
         };
       }

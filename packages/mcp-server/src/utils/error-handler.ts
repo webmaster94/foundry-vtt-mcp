@@ -1,4 +1,5 @@
 import { Logger } from '../logger.js';
+import { BridgeError } from '../bridge-errors.js';
 
 export interface MCPError {
   type: 'user' | 'system' | 'permission' | 'validation' | 'connection';
@@ -226,6 +227,8 @@ export class ErrorHandler {
    * Handle tool execution error with proper formatting
    */
   handleToolError(error: any, toolName: string, context: string = ''): never {
+    // Never replace an unknown write outcome with advice to replay the write.
+    if (error instanceof BridgeError) throw error;
     const mcpError = this.mapFoundryError(error, `${toolName} ${context}`.trim());
     this.logError(mcpError, toolName, error);
 

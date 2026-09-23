@@ -21,6 +21,40 @@ afterEach(() => {
 });
 
 describe('WebRTCPeer readiness', () => {
+  it('reports expired and invalid response fragments to the local caller once', async () => {
+    vi.useFakeTimers();
+    const failures = vi.fn();
+    const peer = new WebRTCPeer({
+      config: config.foundry.webrtc,
+      logger: logger(),
+      onMessage: async () => {},
+      onResponseFailure: failures,
+    });
+    const chunk = {
+      type: 'chunked-message',
+      chunkId: 'partial',
+      chunkIndex: 0,
+      totalChunks: 2,
+      chunk: '{',
+      originalType: 'mcp-response',
+      originalId: 'query-one',
+    };
+    await (peer as any).handleChunkedMessage(chunk);
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(failures).toHaveBeenCalledExactlyOnceWith('query-one');
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(failures).toHaveBeenCalledTimes(1);
+    await expect(
+      (peer as any).handleChunkedMessage({
+        ...chunk,
+        chunkId: 'bad-json',
+        totalChunks: 1,
+        originalId: 'query-two',
+      })
+    ).rejects.toThrow();
+    expect(failures).toHaveBeenCalledWith('query-two');
+    peer.disconnect();
+  });
   it('does not report ready until the data channel is open and propagates send failures', async () => {
     const states: boolean[] = [];
     const peer = new WebRTCPeer({

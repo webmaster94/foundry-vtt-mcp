@@ -14,6 +14,9 @@ import {
 } from './lock.js';
 
 import { config } from './config.js';
+import { createToolErrorResult } from './bridge-errors.js';
+import { observeTool } from './diagnostics/query-timing.js';
+import { createToolObserver } from './diagnostics/tool-observer.js';
 
 import { Logger } from './logger.js';
 
@@ -139,6 +142,7 @@ async function startBackend(): Promise<void> {
     filePath: path.join(os.tmpdir(), 'foundry-mcp-server', 'mcp-server.log'),
   });
 
+  const toolObserver = createToolObserver(process.env, logger);
   logger.info('Starting Foundry MCP Backend', {
     version: config.server.version,
 
@@ -689,9 +693,11 @@ async function startBackend(): Promise<void> {
               const pinnedServer =
                 serverOverride ??
                 (changesGlobalRouting ? undefined : serverRegistry.getActiveName());
-              const result = pinnedServer
-                ? await runWithServer(pinnedServer, dispatch)
-                : await dispatch();
+              const execute = async () =>
+                pinnedServer ? await runWithServer(pinnedServer, dispatch) : await dispatch();
+              const result = toolObserver
+                ? await observeTool(name, execute, toolObserver)
+                : await execute();
 
               const payload = {
                 content: [
@@ -704,17 +710,10 @@ async function startBackend(): Promise<void> {
 
               socket.write(JSON.stringify({ id: msg.id, result: payload }) + '\n');
             } catch (e: any) {
-              const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
-              const errorCode = (e as any)?.code;
-
               socket.write(
                 JSON.stringify({
                   id: msg.id,
-                  result: {
-                    content: [{ type: 'text', text: `Error: ${errorMessage}` }],
-                    isError: true,
-                    ...(errorCode ? { errorCode } : {}),
-                  },
+                  result: createToolErrorResult(e),
                 }) + '\n'
               );
             }

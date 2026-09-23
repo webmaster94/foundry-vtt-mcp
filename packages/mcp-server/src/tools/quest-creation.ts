@@ -179,8 +179,7 @@ export class QuestCreationTools {
             },
             newPageName: {
               type: 'string',
-              description:
-                'If provided (without pageId), creates a new page with this name instead of updating an existing one.',
+              description: 'With pageId, renames that page; without pageId, creates a new page.',
             },
           },
           required: ['journalId', 'newContent', 'updateType'],
@@ -367,7 +366,7 @@ export class QuestCreationTools {
       request.newContent = this.convertMarkdownToPlainText(request.newContent);
 
       // If creating a new page, skip the read-modify-write cycle
-      if (request.newPageName) {
+      if (request.newPageName && !request.pageId) {
         const formattedContent = this.formatNewPageContent(request.newContent, request.updateType);
         const result = await this.foundryClient.query('foundry-mcp-bridge.updateJournalContent', {
           journalId: request.journalId,
@@ -441,6 +440,7 @@ export class QuestCreationTools {
         journalId: request.journalId,
         content: updatedContent,
         pageId: request.pageId,
+        ...(request.newPageName !== undefined ? { newPageName: request.newPageName } : {}),
       });
 
       if (!result) {

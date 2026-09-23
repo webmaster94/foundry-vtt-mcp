@@ -7,6 +7,8 @@ import {
   QueryTimeoutError,
 } from './foundry-connector.js';
 import { Logger } from './logger.js';
+import { FoundryClient } from './foundry-client.js';
+import { observeTool, type ToolObservation } from './diagnostics/query-timing.js';
 
 const connectors: FoundryConnector[] = [];
 const sockets: WebSocket[] = [];
@@ -51,6 +53,108 @@ afterEach(async () => {
 });
 
 describe('FoundryConnector WebSocket lifecycle', () => {
+  it.each([
+    ['updateDocument', 'UNKNOWN_OUTCOME'],
+    ['getDocument', 'QUERY_FAILED'],
+  ])(
+    'rejects an unrecoverable response promptly for %s without losing write safety',
+    async (operation, code) => {
+      const client = new FoundryClient(config.foundry, logger());
+      const connector = (client as any).connector as FoundryConnector;
+      connectors.push(connector);
+      (connector as any).isStarted = true;
+      const peer = (connector as any).createWebRTCPeer();
+      const channel = {
+        readyState: 'open',
+        bufferedAmount: 0,
+        send: vi.fn(),
+        close: vi.fn(),
+      } as any;
+      peer.dataChannel = channel;
+      peer.setupDataChannelHandlers();
+      const pending = client.query(`foundry-mcp-bridge.${operation}`, {});
+      const settled = pending.catch(error => error);
+      await vi.waitFor(() => expect(channel.send).toHaveBeenCalled());
+      const query = JSON.parse(channel.send.mock.calls[0][0]);
+      await channel.onmessage({
+        data: JSON.stringify({
+          type: 'chunked-message',
+          chunkId: 'bad',
+          chunkIndex: 0,
+          totalChunks: 1,
+          chunk: '{',
+          originalType: 'mcp-response',
+          originalId: query.id,
+        }),
+      });
+      expect(await settled).toMatchObject({ code });
+      expect((connector as any).pendingQueries.size).toBe(0);
+      expect(peer.getIsConnected()).toBe(true);
+      // A late response cannot resurrect the rejected operation or affect another request.
+      await channel.onmessage({
+        data: JSON.stringify({ type: 'mcp-response', id: query.id, data: { success: true } }),
+      });
+      expect((connector as any).pendingQueries.size).toBe(0);
+    }
+  );
+  it.each([true, false])(
+    'correlates module timing with the real response, timing=%s',
+    async includeTiming => {
+      const connector = new FoundryConnector({
+        config: {
+          ...config.foundry,
+          port: 0,
+          namespace: '/timing-test',
+          connectionType: 'websocket',
+        },
+        logger: logger(),
+      });
+      connectors.push(connector);
+      await connector.start();
+      const socket = new WebSocket(
+        `ws://127.0.0.1:${connector.getConnectionInfo().config.port}/timing-test`
+      );
+      sockets.push(socket);
+      await waitForOpen(socket);
+      await waitUntil(() => connector.isConnected());
+      socket.on('message', data => {
+        const bytes = Array.isArray(data)
+          ? Buffer.concat(data)
+          : Buffer.isBuffer(data)
+            ? data
+            : Buffer.from(data);
+        const message = JSON.parse(bytes.toString('utf8'));
+        if (message.type === 'mcp-query')
+          socket.send(
+            JSON.stringify({
+              type: 'mcp-response',
+              id: message.id,
+              data: {
+                success: true,
+                data: { value: 42 },
+                ...(includeTiming ? { timing: { executionMs: 0 } } : {}),
+              },
+            })
+          );
+      });
+      let observed: ToolObservation | undefined;
+      const result = await observeTool(
+        'get-document',
+        () => connector.query('foundry-mcp-bridge.getDocument'),
+        value => {
+          observed = value;
+        }
+      );
+      expect(result).toEqual({ value: 42 });
+      expect(observed?.queries).toHaveLength(1);
+      expect(observed?.queries[0]).toMatchObject({
+        operation: 'foundry-mcp-bridge.getDocument',
+        outcome: 'success',
+      });
+      if (includeTiming) expect(observed?.queries[0]?.foundryExecutionMs).toBe(0);
+      else expect(observed?.queries[0]).not.toHaveProperty('foundryExecutionMs');
+    }
+  );
   it.each(['websocket', 'webrtc'] as const)(
     'refuses an unauthenticated remote %s listener before binding',
     async connectionType => {
